@@ -11,6 +11,20 @@ import { Rpc } from './rpc';
 const RANGE = 500n;
 /** Stop a catch-up loop after this long and reschedule, to stay well within alarm limits. */
 const BUDGET_MS = 20_000;
+/** A poll step that takes longer than this is treated as hung (see resetDb). */
+const STEP_TIMEOUT_MS = 90_000;
+
+class StepTimeout extends Error {
+  override name = 'StepTimeout';
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new StepTimeout(`${what} took over ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => timer !== undefined && clearTimeout(timer));
+}
 /** Live logs are written in small batches this often. */
 const FLUSH_MS = 200;
 /** Once caught up, polling only confirms what the live path already wrote. */
@@ -63,7 +77,16 @@ export class ChainPoller extends DurableObject<Env> {
 
   private init() {
     if (!this.pipeline) {
-      this.sql = postgres(dbUrl(this.env), { max: 6, fetch_types: false, prepare: false });
+      // This object lives for hours, but Hyperdrive can drop idle connections without the client noticing
+      // (the next query on that socket then never returns). Keep connections short-lived.
+      this.sql = postgres(dbUrl(this.env), {
+        max: 6,
+        fetch_types: false,
+        prepare: false,
+        idle_timeout: 15,
+        max_lifetime: 300,
+        connect_timeout: 10,
+      });
       this.pipeline = new Pipeline(this.sql, new Rpc(this.env.RPC_URL));
       this.livePipeline = new Pipeline(this.sql, new Rpc(this.env.RPC_URL));
     }
@@ -118,27 +141,53 @@ export class ChainPoller extends DurableObject<Env> {
       running: (await this.ctx.storage.getAlarm()) !== null,
       live: this.live,
       last: this.last ?? null,
+      attempt: (await this.ctx.storage.get('attempt')) ?? null,
+      stage: (await this.ctx.storage.get('stage')) ?? null,
+      alarmAt: await this.ctx.storage.getAlarm(),
+      lastError: (await this.ctx.storage.get('lastError')) ?? null,
     };
   }
 
+  /** Where the alarm loop is, for /health (a hang shows up as a stage that stops changing). */
+  private async stage(name: string) {
+    await this.ctx.storage.put('stage', { name, at: new Date().toISOString() });
+  }
+
   override async alarm(): Promise<void> {
+    await this.stage('alarm');
     if (!(await this.ctx.storage.get<boolean>('enabled'))) return;
     const pipeline = this.init();
     await this.openSocket();
+    await this.stage('socket');
     const rpc = new Rpc(this.env.RPC_URL);
     const started = Date.now();
     let caughtUp = false;
     try {
       const head = (await rpc.blockNumber()) - BigInt(ROBINHOOD_CHAIN.confirmations);
+      await this.stage('head');
       let cursor: bigint = (await pipeline.cursor()) ?? head - BigInt(this.env.START_BLOCKS_BACK ?? '33000');
+      // A range that never finished (the isolate was killed mid-step, e.g. on a huge airdrop) is retried
+      // at half the size, so one heavy range can't stall indexing.
+      // The range then grows back (doubling per finished step) once the busy stretch is behind us.
+      const unfinished = await this.ctx.storage.get<{ from: string; range: string }>('attempt');
+      let range =
+        unfinished && BigInt(unfinished.from) === cursor + 1n
+          ? BigInt(unfinished.range) / 2n || 1n
+          : BigInt((await this.ctx.storage.get<string>('range')) ?? RANGE.toString());
+      if (unfinished) console.warn(`poller: retrying ${cursor + 1n} with a ${range}-block range`);
       while (Date.now() - started < BUDGET_MS) {
         if (cursor >= head) {
           caughtUp = true;
           break;
         }
         const from = cursor + 1n;
-        const to: bigint = cursor + RANGE > head ? head : cursor + RANGE;
-        const stats = await this.serial(() => pipeline.run(from, to));
+        const to: bigint = cursor + range > head ? head : cursor + range;
+        await this.ctx.storage.put('attempt', { from: from.toString(), range: range.toString() });
+        await this.stage(`step ${from}-${to}`);
+        const stats = await withTimeout(this.serial(() => pipeline.run(from, to)), STEP_TIMEOUT_MS, `poll ${from}-${to}`);
+        range = range * 2n > RANGE ? RANGE : range * 2n;
+        await this.ctx.storage.put('range', range.toString());
+        await this.ctx.storage.delete('attempt');
         cursor = to;
         await this.queueSignals([...stats.newTokens, ...stats.touched]);
         await this.queueMetadata(stats.newTokens);
@@ -155,10 +204,24 @@ export class ChainPoller extends DurableObject<Env> {
       }
     } catch (err) {
       console.error('poller error', err);
+      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      await this.ctx.storage.put('lastError', { at: new Date().toISOString(), message: message.slice(0, 500) });
+      if (err instanceof StepTimeout) await this.resetDb();
       await this.ctx.storage.setAlarm(Date.now() + 5_000);
       return;
     }
     await this.ctx.storage.setAlarm(Date.now() + (caughtUp ? POLL_MS : 10));
+  }
+
+  /** Drop every connection and start over (after a hung step). In-flight work on the old pool is abandoned. */
+  private async resetDb() {
+    const old = this.sql;
+    this.sql = undefined;
+    this.pipeline = undefined;
+    this.livePipeline = undefined;
+    this.queue = Promise.resolve();
+    this.liveQueue = Promise.resolve();
+    await old?.end({ timeout: 0 }).catch(() => undefined);
   }
 
   /** Open (or keep) the eth_subscribe socket. Called on every alarm, so a drop reconnects within ~2s. */

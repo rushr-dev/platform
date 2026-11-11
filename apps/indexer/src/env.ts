@@ -21,7 +21,7 @@ export interface Env {
 export type EnrichMessage =
   | { kind: 'wallet-funding'; wallet: string }
   | { kind: 'token-signals'; token: string }
-  | { kind: 'token-metadata'; token: string };
+  | { kind: 'token-metadata'; token: string; /** Only check DexScreener (no RPC): used for periodic retries. */ dexOnly?: boolean };
 
 export function dbUrl(env: Env): string {
   const url = env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL;

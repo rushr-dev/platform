@@ -15,13 +15,15 @@ import {
   type RawLog,
   type PoolInfo,
 } from '@rushr/core';
-import type { Rpc } from './rpc';
+import { HistoryTooLarge, type Rpc } from './rpc';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
 const ZERO = NATIVE_ETH;
 const QUOTE_SET = new Set<string>([NATIVE_ETH, QUOTES.WETH, QUOTES.USDG, ...Object.values(STOCK_QUOTES)]);
 /** Only start tracking tokens discovered mid-life if they were created within this window. */
 const DISCOVER_MAX_AGE_S = 7 * 24 * 3600;
+/** Cap on the Transfer history fetched when a live token is discovered mid-life. */
+const HISTORY_BUDGET = { maxLogs: 20_000, maxMs: 15_000 };
 /** First ~66s after launch (0.11s blocks): enough for bundle (first blocks) and sniper (first 5s) signals. */
 const LAUNCH_WINDOW_BLOCKS = 600n;
 /** PONS curve graduation target (observed: ~4.2 ETH). */
@@ -397,7 +399,17 @@ export class Pipeline {
 
     const meta = await this.rpc.tokenMetadata(newTokens.map((n) => n.token));
     const creators = await this.rpc.launchers([...new Set(newTokens.map((n) => n.origin.tx))]);
-    const history = await Promise.all(newTokens.map((n) => this.rpc.transferLogs(n.token, n.origin.block, beforeBlock - 1n)));
+    // Past history is a nice-to-have (holder counts). A token with a huge one (spam airdrops, busy old
+    // tokens) is tracked from now on instead, so discovery never stalls the live indexer.
+    const history = await Promise.all(
+      newTokens.map((n, i) =>
+        this.rpc.transferLogs(n.token, n.origin.block, beforeBlock - 1n, this.opts.historical ? undefined : HISTORY_BUDGET).catch((err) => {
+          if (!(err instanceof HistoryTooLarge)) throw err;
+          console.warn(`discover: skipped transfer history for ${meta[i]?.symbol ?? n.token} (too large)`);
+          return [];
+        }),
+      ),
+    );
 
     await this.sql.begin(async (tx) => {
       if (newTokens.length) {

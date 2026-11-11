@@ -17,7 +17,19 @@ interface RawReceipt {
  * Resolve a token's icon, socials and description from its launchpad data and store them.
  * Safe to re-run: existing values are only replaced by non-empty ones.
  */
-export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string): Promise<boolean> {
+export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string, opts: { dexOnly?: boolean } = {}): Promise<boolean> {
+  if (opts.dexOnly) {
+    const dex = await dexProfile(token);
+    await sql`
+      update tokens set
+        image_url = coalesce(image_url, ${dex?.image ?? null}),
+        website = coalesce(website, ${dex?.website ?? null}),
+        twitter = coalesce(twitter, ${dex?.twitter ?? null}),
+        telegram = coalesce(telegram, ${dex?.telegram ?? null}),
+        metadata_at = now()
+      where address = ${token}`;
+    return Boolean(dex?.image);
+  }
   const [row] = await sql<{ name: string; symbol: string; created_block: string }[]>`
     select name, symbol, created_block from tokens where address = ${token}`;
   if (!row) return false;
@@ -64,6 +76,16 @@ export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string): Promis
   }
 
   const links = classifyLinks(strings, docs, { name: row.name, symbol: row.symbol });
+  // Plain Uniswap tokens carry no launchpad metadata; established ones often have a DexScreener profile.
+  if (!links.image || !(links.website || links.twitter || links.telegram)) {
+    const dex = await dexProfile(token);
+    if (dex) {
+      links.image ??= dex.image;
+      links.website ??= dex.website;
+      links.twitter ??= dex.twitter;
+      links.telegram ??= dex.telegram;
+    }
+  }
   await sql`
     update tokens set
       image_url = coalesce(${links.image}, image_url),
@@ -74,6 +96,30 @@ export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string): Promis
       metadata_at = now()
     where address = ${token}`;
   return Boolean(links.image || links.website || links.twitter || links.telegram);
+}
+
+/** Icon and links from the token's DexScreener profile, if it has one. */
+async function dexProfile(token: string) {
+  try {
+    const res = await fetch(`https://api.dexscreener.com/tokens/v1/robinhood/${token}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const pairs = (await res.json()) as {
+      info?: { imageUrl?: string; websites?: { url: string }[]; socials?: { url: string; type: string }[] };
+    }[];
+    const info = pairs.find((p) => p.info?.imageUrl || p.info?.socials?.length)?.info;
+    if (!info) return null;
+    const social = (type: string) => info.socials?.find((s) => s.type === type)?.url ?? null;
+    return {
+      image: info.imageUrl ?? null,
+      website: info.websites?.[0]?.url ?? null,
+      twitter: social('twitter'),
+      telegram: social('telegram'),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Fetch a metadata document, trying each gateway for ipfs:// links. Data URIs are decoded inline. */

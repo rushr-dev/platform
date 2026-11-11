@@ -212,9 +212,14 @@ export class Rpc {
   }
 
   /** All Transfer logs of one token in [from, to]. Tries the whole range, halving whenever the response is too big. */
-  async transferLogs(token: Address, from: bigint, to: bigint): Promise<RawLog[]> {
+  /**
+   * A token's Transfer history. With a budget, gives up (HistoryTooLarge) past `maxLogs` logs or
+   * `maxMs`, so a token with an enormous history can't stall the live indexer.
+   */
+  async transferLogs(token: Address, from: bigint, to: bigint, budget?: { maxLogs: number; maxMs: number }): Promise<RawLog[]> {
     const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-    return this.filteredLogs(from, to, { address: token, topics: [TRANSFER] });
+    const b = budget ? { left: budget.maxLogs, deadline: Date.now() + budget.maxMs } : undefined;
+    return this.filteredLogs(from, to, { address: token, topics: [TRANSFER] }, b);
   }
 
   /**
@@ -225,15 +230,20 @@ export class Rpc {
     from: bigint,
     to: bigint,
     filter: { address?: string | string[]; topics: (Hex | Hex[] | null)[] },
+    budget?: { left: number; deadline: number },
   ): Promise<RawLog[]> {
+    if (budget && (budget.left < 0 || Date.now() > budget.deadline)) throw new HistoryTooLarge();
     try {
-      return await this.call<RawLog[]>('eth_getLogs', [
+      const logs = await this.call<RawLog[]>('eth_getLogs', [
         { fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}`, ...filter },
       ]);
+      if (budget && (budget.left -= logs.length) < 0) throw new HistoryTooLarge();
+      return logs;
     } catch (err) {
+      if (err instanceof HistoryTooLarge) throw err;
       if (to - from < 2n || !/response size|exceed|too many|limit|range/i.test(String(err))) throw err;
       const mid = (from + to) / 2n;
-      return [...(await this.filteredLogs(from, mid, filter)), ...(await this.filteredLogs(mid + 1n, to, filter))];
+      return [...(await this.filteredLogs(from, mid, filter, budget)), ...(await this.filteredLogs(mid + 1n, to, filter, budget))];
     }
   }
 
@@ -286,4 +296,8 @@ export class Rpc {
       await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
     }
   }
+}
+
+export class HistoryTooLarge extends Error {
+  override name = 'HistoryTooLarge';
 }

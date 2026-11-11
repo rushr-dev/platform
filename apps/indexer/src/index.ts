@@ -31,6 +31,10 @@ app.get('/health', async (c) => {
     running: status.running,
     live: status.live,
     last: status.last,
+    attempt: status.attempt,
+    stage: status.stage,
+    alarmAt: status.alarmAt,
+    lastError: status.lastError,
   });
 });
 
@@ -94,9 +98,16 @@ app.get('/admin/backfill', async (c) => {
 app.post('/admin/metadata/all', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
-    const rows = await sql<{ address: string }[]>`select address from tokens where metadata_at is null order by created_at desc`;
+    // ?missing=1 also retries tokens that were checked but still have no icon (e.g. a DexScreener profile appeared since).
+    const missing = c.req.query('missing') === '1';
+    const rows = await sql<{ address: string; tried: boolean }[]>`
+      select address, metadata_at is not null as tried from tokens
+      where metadata_at is null ${missing ? sql`or image_url is null` : sql``}
+      order by holders desc`;
     for (let i = 0; i < rows.length; i += 100) {
-      await c.env.ENRICH_QUEUE.sendBatch(rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address } })));
+      await c.env.ENRICH_QUEUE.sendBatch(
+        rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried } })),
+      );
     }
     return c.json({ queued: rows.length });
   } finally {
@@ -114,13 +125,32 @@ app.get('/ws', (c) => {
 export default {
   fetch: app.fetch,
   // Cron keeps the poller alive in case its alarm chain ever stops.
-  async scheduled(_event, env) {
+  async scheduled(event, env) {
     const poller = env.CHAIN_POLLER.get(env.CHAIN_POLLER.idFromName('main'));
     await poller.start();
+    // Every 15 minutes: retry metadata for active tokens that still have no icon, and any never tried.
+    if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const rows = await sql<{ address: string; tried: boolean }[]>`
+          select address, metadata_at is not null as tried from tokens
+          where metadata_at is null
+             or (image_url is null and metadata_at < now() - interval '6 hours' and (holders >= 20 or volume_24h_usd >= 1000))
+          order by holders desc limit 200`;
+        for (let i = 0; i < rows.length; i += 100) {
+          await env.ENRICH_QUEUE.sendBatch(
+            rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried } })),
+          );
+        }
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
   },
   // Recompute safety signals for tokens the poller saw trading (deduped within the batch).
   async queue(batch, env) {
-    const sql = postgres(dbUrl(env), { max: 6, fetch_types: false, prepare: false });
+    // Two consumers at most (wrangler.jsonc), three connections each, so the Hyperdrive pool always has room for the poller.
+    const sql = postgres(dbUrl(env), { max: 3, fetch_types: false, prepare: false });
     const rpc = new Rpc(env.RPC_URL);
     const done = new Set<string>();
     // Tokens whose card changed (signals or metadata), pushed to open terminals at the end.
@@ -128,12 +158,12 @@ export default {
     try {
       // Metadata lookups are mostly network waits (RPC + launchpad CDNs), so run them 8 at a time.
       const metadata = batch.messages.filter((m) => m.body.kind === 'token-metadata');
-      for (let i = 0; i < metadata.length; i += 8) {
+      for (let i = 0; i < metadata.length; i += 6) {
         await Promise.all(
-          metadata.slice(i, i + 8).map(async (msg) => {
-            const token = (msg.body as { token: string }).token;
+          metadata.slice(i, i + 6).map(async (msg) => {
+            const { token, dexOnly } = msg.body as { token: string; dexOnly?: boolean };
             try {
-              await resolveMetadata(sql, rpc, token);
+              await resolveMetadata(sql, rpc, token, { dexOnly });
               refreshed.add(token);
               msg.ack();
             } catch (err) {
