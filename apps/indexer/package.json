@@ -1,0 +1,25 @@
+{
+  "name": "@rushr/indexer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "cf-typegen": "wrangler types"
+  },
+  "dependencies": {
+    "@rushr/core": "workspace:*",
+    "@rushr/db": "workspace:*",
+    "hono": "^4.13.17",
+    "postgres": "^4.1.0",
+    "viem": "^2.57.17"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261110.1",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.159.0"
+  }
+}

@@ -1,0 +1,19 @@
+# Local development database. Production uses Neon via Cloudflare Hyperdrive.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: rushr-postgres
+    environment:
+      POSTGRES_USER: rushr
+      POSTGRES_PASSWORD: rushr
+      POSTGRES_DB: rushr
+    ports:
+      - '5433:5432'
+    volumes:
+      - rushr-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U rushr']
+      interval: 2s
+      retries: 20
+volumes:
+  rushr-pg:

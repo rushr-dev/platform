@@ -1,0 +1,96 @@
+import { describe, expect, it } from 'vitest';
+import { computeSignals, type TokenSnapshot } from '../src/signals/compute';
+
+const E18 = 10n ** 18n;
+const SUPPLY = 1_000_000_000n * E18;
+const T0 = 1_800_000_000;
+
+function base(over: Partial<TokenSnapshot> = {}): TokenSnapshot {
+  // 100 holders with 0.5% each = 50% held by the crowd; the rest sits in the pool.
+  const holders = Array.from({ length: 100 }, (_, i) => ({ wallet: `w${i}`, amount: (SUPPLY * 5n) / 1000n }));
+  return {
+    address: 'tok', symbol: 'GOOD', totalSupply: SUPPLY, deployer: 'dev', createdAt: T0, createdBlock: 1000n,
+    holders, holderCount: 100, earlyBuys: [], launchIndexed: true, wallets: { dev: { firstFunder: 'cex', firstSeen: T0 - 90 * 86400 } },
+    airdropped: [], devTokens: [], sameSymbolEarlier: 0, launchpad: 'pons', now: T0 + 3600, ...over,
+  };
+}
+
+describe('computeSignals', () => {
+  it('reports bundle and sniper as not measured when launch trades are missing', () => {
+    const s = computeSignals(base({ launchIndexed: false }));
+    expect(s.bundledPct).toBeNull();
+    expect(s.snipersPct).toBeNull();
+    expect(s.risk).toBe('low');
+    expect(s.reasons.map((r) => r.text)).toContain('launch trades not indexed: bundle and sniper not measured');
+  });
+
+  it('rates an evenly held token from a fresh-start dev as low risk', () => {
+    const s = computeSignals(base());
+    expect(s.top10Pct).toBe(5);
+    expect(s.risk).toBe('low');
+    expect(s.verdict).toMatch(/^Low risk/);
+  });
+
+  it('flags a copycat clone with airdropped holders from a serial launcher as high risk', () => {
+    const devTokens = Array.from({ length: 12 }, (_, i) => ({
+      address: `clone${i}`, createdAt: T0 - i * 60, athMarketCapUsd: 28_000, marketCapUsd: 900, migrated: false,
+    }));
+    const s = computeSignals(
+      base({
+        symbol: 'ZOLVA',
+        sameSymbolEarlier: 8,
+        airdropped: Array.from({ length: 209 }, (_, i) => `a${i}`),
+        devTokens,
+      }),
+    );
+    expect(s.copycat).toBe(true);
+    expect(s.spam).toBe(false); // launched through a launchpad, so not an airdrop-farm clone
+    expect(s.dev.serialLauncher).toBe(true);
+    expect(s.dev.rugs).toBe(12);
+    expect(s.risk).toBe('high');
+    expect(s.verdict).toContain('copycat: 8 earlier $ZOLVA tokens');
+    expect(s.verdict).toContain('dev launched 12 tokens this week');
+  });
+
+  it('marks a plain-pool clone with a padded holder count as spam', () => {
+    const airdropped = Array.from({ length: 206 }, (_, i) => `a${i}`);
+    expect(computeSignals(base({ launchpad: 'uniswap-v4', airdropped })).spam).toBe(true);
+    expect(computeSignals(base({ launchpad: 'uniswap-v4', airdropped: airdropped.slice(0, 5) })).spam).toBe(false);
+    expect(computeSignals(base({ launchpad: 'pons', airdropped })).spam).toBe(false);
+  });
+
+  it('measures the launch bundle, snipers and insiders', () => {
+    const big = (SUPPLY * 10n) / 100n; // 10% each
+    const s = computeSignals(
+      base({
+        holders: [
+          { wallet: 'b1', amount: big },
+          { wallet: 'b2', amount: big },
+          { wallet: 'ins', amount: big / 2n },
+          { wallet: 'late', amount: SUPPLY / 100n },
+        ],
+        holderCount: 4,
+        earlyBuys: [
+          { trader: 'b1', block: 1000n, time: T0, tokenAmount: big },
+          { trader: 'b2', block: 1001n, time: T0, tokenAmount: big },
+          { trader: 'late', block: 1200n, time: T0 + 30, tokenAmount: SUPPLY / 100n },
+        ],
+        wallets: {
+          dev: { firstFunder: 'mixer', firstSeen: T0 - 3600 },
+          b1: { firstFunder: 'mixer', firstSeen: T0 - 600 },
+          b2: { firstFunder: 'other', firstSeen: T0 - 600 },
+          ins: { firstFunder: 'dev', firstSeen: T0 - 300 },
+          late: { firstFunder: 'cex', firstSeen: T0 - 400 * 86400 },
+        },
+      }),
+    );
+    expect(s.bundledPct).toBe(20);
+    expect(s.bundledStillHeldPct).toBe(20);
+    expect(s.snipersPct).toBe(20);
+    expect(s.sniperCount).toBe(2);
+    expect(s.insidersPct).toBe(15); // b1 shares the dev's funder, ins was funded by the dev
+    expect(s.freshWalletsPct).toBe(75);
+    expect(s.risk).toBe('high');
+    expect(s.reasons.map((r) => r.text)).toContain('20% still held by the launch bundle');
+  });
+});

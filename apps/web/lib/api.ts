@@ -1,0 +1,116 @@
+/** Server-side reads from the Rushr indexer API. Every call degrades to null so pages still render. */
+
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'https://api.rushr.trade';
+
+export type RiskLevel = 'low' | 'medium' | 'high' | 'unknown';
+
+export interface TokenCard {
+  address: string;
+  symbol: string;
+  name: string;
+  launchpad: string | null;
+  status: 'new' | 'bonding' | 'migrated';
+  created_at: string;
+  market_cap_usd: number | null;
+  volume_24h_usd: number | null;
+  holders: number;
+  bonding_progress: number | null;
+  risk: RiskLevel | null;
+  verdict: string | null;
+  top10_pct: number | null;
+  dev_pct: number | null;
+  bundled_pct: number | null;
+  snipers_pct: number | null;
+  insiders_pct: number | null;
+  fresh_pct: number | null;
+  airdropped: number | null;
+  copycat: boolean | null;
+  serial_launcher: boolean | null;
+  /** Airdrop-farm clone (plain pool, padded holder count). Hidden in the terminal by default. */
+  spam?: boolean | null;
+  image_url?: string | null;
+  website?: string | null;
+  twitter?: string | null;
+  telegram?: string | null;
+  price_usd?: number | null;
+  ath_market_cap_usd?: number | null;
+  migrated_at?: string | null;
+  /** Block time (unix seconds) of the trade that triggered a live update. */
+  block_time?: number | null;
+}
+
+export interface SignalReason {
+  text: string;
+  level: 'high' | 'medium' | 'low' | 'info';
+}
+
+export interface TokenDetail extends TokenCard {
+  deployer: string;
+  total_supply: string;
+  decimals: number;
+  created_block: string;
+  launch_indexed: boolean;
+  description: string | null;
+  signals: {
+    reasons?: SignalReason[];
+    sniperCount?: number;
+    dev?: { launches: number; launches7d: number; rugs: number; migrated: number; serialLauncher: boolean; bestAthMarketCapUsd: number | null };
+  } | null;
+  dev: { launches: number; launches_7d: number; rugs: number; migrated: number; best_peak_mcap_usd: string | null } | null;
+  trades_24h: number;
+}
+
+export interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface Stats {
+  tokens_tracked: number;
+  launches_24h: number;
+  safety_checks: number;
+  flagged_high_risk: number;
+  trades_24h: number;
+}
+
+async function get<T>(path: string, revalidate: number): Promise<T | null> {
+  try {
+    const res = await fetch(`${API_URL}${path}`, { next: { revalidate } });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+export const getStats = () => get<Stats>('/stats', 30);
+export const getToken = (address: string) => get<TokenCard>(`/tokens/${address}`, 60);
+
+export interface Trade {
+  tx: string;
+  log_index: number;
+  time: string;
+  trader: string;
+  side: 'buy' | 'sell';
+  price_usd: number | null;
+  usd: number | null;
+}
+
+export const getColumn = async (column: 'new' | 'almost' | 'migrated', limit = 8, revalidate = 30, extra = '') =>
+  ((await get<{ tokens: (TokenCard | null)[] }>(`/tokens?column=${column}&limit=${limit}${extra}`, revalidate))?.tokens ?? []).filter(
+    (t): t is TokenCard => t != null,
+  );
+
+export const getTrades = async (address: string, limit = 200, revalidate = 60) =>
+  (await get<{ trades: Trade[] }>(`/tokens/${address}/trades?limit=${limit}`, revalidate))?.trades ?? [];
+
+export type Column = 'new' | 'almost' | 'migrated';
+
+export const getTokenDetail = (address: string) => get<TokenDetail>(`/tokens/${address}`, 0);
+
+export const getCandles = async (address: string, interval = '1m', hours = 24) =>
+  (await get<{ candles: Candle[] }>(`/tokens/${address}/candles?interval=${interval}&hours=${hours}`, 0))?.candles ?? [];

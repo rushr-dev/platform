@@ -1,0 +1,1 @@
+ALTER TABLE "tokens" ADD COLUMN "launch_indexed" boolean DEFAULT true NOT NULL;

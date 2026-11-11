@@ -1,0 +1,4 @@
+# Copy to .dev.vars (gitignored) and fill in.
+RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/<your-key>
+DATABASE_URL=postgres://user:pass@host/db
+START_BLOCKS_BACK=33000

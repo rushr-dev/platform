@@ -1,0 +1,88 @@
+@import 'tailwindcss';
+
+/*
+ * Rushr tokens. Dark, near-black with a green cast; one accent (Rushr green) plus lime for
+ * positive numbers. The landing page and the terminal share these.
+ */
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --color-bg: #050706;
+  --color-surface: #0c100d;
+  --color-surface-2: #121813;
+  --color-line: #1d241e;
+  --color-ink: #eef2ec;
+  --color-muted: #8a958a;
+  --color-brand: #36d42a;
+  --color-brand-deep: #13820f;
+  --color-lime: #a6ff4d;
+  --color-risk-high: #ff6b5b;
+  --color-risk-medium: #ffb547;
+  --color-risk-low: #36d42a;
+}
+
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+::selection {
+  background: var(--color-lime);
+  color: #050706;
+}
+
+/* Hero entrance: pure CSS so the hero is visible in server HTML (no JS needed for LCP). */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Slow drift for the avatars orbiting the closing call to action. */
+@keyframes bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .rise {
+    animation: rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .bob {
+    animation: bob 6s ease-in-out infinite;
+  }
+}
+
+/* Terminal: a row lights up briefly when its token launches or its market cap moves. */
+@keyframes row-flash {
+  from {
+    background: rgba(54, 212, 42, 0.14);
+  }
+  to {
+    background: transparent;
+  }
+}
+.row-flash {
+  animation: row-flash 1.2s ease-out forwards;
+}

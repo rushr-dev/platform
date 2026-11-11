@@ -1,0 +1,21 @@
+node_modules
+dist
+.next
+.open-next
+.wrangler
+.turbo
+coverage
+*.tsbuildinfo
+.DS_Store
+# secrets
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+!.env.example
+!.dev.vars.example
+
+# local tooling (not part of the product)
+.claude/
+.mcp.json
+skills-lock.json

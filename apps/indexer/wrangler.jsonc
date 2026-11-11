@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rushr-indexer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "dev": { "port": 8788 },
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAIN_POLLER", "class_name": "ChainPoller" },
+      { "name": "LIVE_FEED", "class_name": "LiveFeed" },
+      { "name": "BACKFILLER", "class_name": "Backfiller" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChainPoller", "LiveFeed"] },
+    { "tag": "v2", "new_sqlite_classes": ["Backfiller"] }
+  ],
+  "queues": {
+    "producers": [{ "binding": "ENRICH_QUEUE", "queue": "rushr-enrich" }],
+    "consumers": [{ "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2 }]
+  },
+  // Fill in after `wrangler hyperdrive create rushr-db --connection-string=...`.
+  // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<id>", "localConnectionString": "postgres://..." }],
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": {
+    "CHAIN_ID": "4663",
+    "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2"
+  }
+  // Secrets (set with `wrangler secret put`, locally in .dev.vars): RPC_URL, DATABASE_URL
+}

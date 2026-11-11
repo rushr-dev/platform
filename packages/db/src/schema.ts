@@ -1,0 +1,187 @@
+import {
+  pgTable,
+  text,
+  integer,
+  bigint,
+  numeric,
+  boolean,
+  jsonb,
+  timestamp,
+  primaryKey,
+  index,
+} from 'drizzle-orm/pg-core';
+
+// Addresses and hashes are stored lowercase hex. Token/ETH amounts are raw integers (numeric(78,0)).
+const amount = (name: string) => numeric(name, { precision: 78, scale: 0 });
+
+export const tokens = pgTable(
+  'tokens',
+  {
+    address: text('address').primaryKey(),
+    name: text('name').notNull(),
+    symbol: text('symbol').notNull(),
+    decimals: integer('decimals').notNull(),
+    totalSupply: amount('total_supply').notNull(),
+    deployer: text('deployer').notNull(),
+    launchpad: text('launchpad'),
+    createdBlock: bigint('created_block', { mode: 'bigint' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+    status: text('status', { enum: ['new', 'bonding', 'migrated'] }).notNull().default('new'),
+    taxBps: integer('tax_bps'),
+    quote: text('quote'), // quote asset address of the main pool (0x0 = native ETH)
+    mainPool: text('main_pool'), // v4 pool id, or PONS curve address
+    priceUsd: numeric('price_usd'),
+    /** Block time of the swap that set price_usd; prices only move forward in time. */
+    priceAt: timestamp('price_at', { withTimezone: true }),
+    athMarketCapUsd: numeric('ath_market_cap_usd'),
+    imageUrl: text('image_url'),
+    website: text('website'),
+    twitter: text('twitter'),
+    telegram: text('telegram'),
+    description: text('description'),
+    /** When launchpad metadata (icon, socials) was last resolved; null = not tried yet. */
+    metadataAt: timestamp('metadata_at', { withTimezone: true }),
+    // Rolling market stats, updated by the indexer.
+    priceEth: numeric('price_eth'),
+    marketCapUsd: numeric('market_cap_usd'),
+    liquidityUsd: numeric('liquidity_usd'),
+    volume24hUsd: numeric('volume_24h_usd'),
+    holders: integer('holders').notNull().default(0),
+    bondingProgress: numeric('bonding_progress'),
+    migratedAt: timestamp('migrated_at', { withTimezone: true }),
+    /** False when the token was discovered mid-life and its first trades couldn't be indexed. */
+    launchIndexed: boolean('launch_indexed').notNull().default(true),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('tokens_deployer_idx').on(t.deployer),
+    index('tokens_status_created_idx').on(t.status, t.createdAt),
+  ],
+);
+
+export const pools = pgTable(
+  'pools',
+  {
+    id: text('id').primaryKey(), // pool address, or v4 pool id
+    token: text('token').notNull(),
+    quote: text('quote').notNull(), // 0x0 (native ETH), WETH, USDG or a stock token
+    tokenIsCurrency0: boolean('token_is_currency0').notNull().default(false),
+    dex: text('dex').notNull(), // 'uniswap-v4' | 'pons-curve'
+    launchpad: text('launchpad'),
+    hooks: text('hooks'),
+    createdBlock: bigint('created_block', { mode: 'bigint' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [index('pools_token_idx').on(t.token)],
+);
+
+export const swaps = pgTable(
+  'swaps',
+  {
+    tx: text('tx').notNull(),
+    logIndex: integer('log_index').notNull(),
+    token: text('token').notNull(),
+    pool: text('pool').notNull(),
+    block: bigint('block', { mode: 'bigint' }).notNull(),
+    time: timestamp('time', { withTimezone: true }).notNull(),
+    trader: text('trader').notNull(),
+    side: text('side', { enum: ['buy', 'sell'] }).notNull(),
+    tokenAmount: amount('token_amount').notNull(),
+    quote: text('quote').notNull(),
+    quoteAmount: amount('quote_amount').notNull(),
+    priceUsd: numeric('price_usd'),
+    usd: numeric('usd'),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tx, t.logIndex] }),
+    index('swaps_token_time_idx').on(t.token, t.time),
+    index('swaps_trader_idx').on(t.trader),
+  ],
+);
+
+export const transfers = pgTable(
+  'transfers',
+  {
+    tx: text('tx').notNull(),
+    logIndex: integer('log_index').notNull(),
+    token: text('token').notNull(),
+    block: bigint('block', { mode: 'bigint' }).notNull(),
+    time: timestamp('time', { withTimezone: true }).notNull(),
+    from: text('from').notNull(),
+    to: text('to').notNull(),
+    amount: amount('amount').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tx, t.logIndex] }),
+    index('transfers_token_idx').on(t.token, t.block),
+  ],
+);
+
+export const balances = pgTable(
+  'balances',
+  {
+    token: text('token').notNull(),
+    wallet: text('wallet').notNull(),
+    amount: amount('amount').notNull(),
+    // Largest balance ever held and when the wallet first received the token: used by signals.
+    firstReceivedAt: timestamp('first_received_at', { withTimezone: true }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.token, t.wallet] }), index('balances_wallet_idx').on(t.wallet)],
+);
+
+export const wallets = pgTable(
+  'wallets',
+  {
+    address: text('address').primaryKey(),
+    firstSeen: timestamp('first_seen', { withTimezone: true }),
+    firstFunder: text('first_funder'),
+    fundedAt: timestamp('funded_at', { withTimezone: true }),
+    fundingCheckedAt: timestamp('funding_checked_at', { withTimezone: true }),
+    isContract: boolean('is_contract'),
+    labels: text('labels').array().notNull().default([]),
+  },
+  (t) => [index('wallets_funder_idx').on(t.firstFunder)],
+);
+
+export const candles = pgTable(
+  'candles',
+  {
+    token: text('token').notNull(),
+    interval: text('interval', { enum: ['1m'] }).notNull(), // coarser intervals are aggregated at query time
+    bucket: timestamp('bucket', { withTimezone: true }).notNull(),
+    open: numeric('open').notNull(),
+    high: numeric('high').notNull(),
+    low: numeric('low').notNull(),
+    close: numeric('close').notNull(),
+    volumeUsd: numeric('volume_usd').notNull(),
+    trades: integer('trades').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.token, t.interval, t.bucket] })],
+);
+
+export const signals = pgTable('signals', {
+  token: text('token').primaryKey(),
+  data: jsonb('data').notNull(), // TokenSignals from @rushr/core
+  riskLevel: text('risk_level', { enum: ['low', 'medium', 'high', 'unknown'] }).notNull(),
+  verdict: text('verdict').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const deployerStats = pgTable('deployer_stats', {
+  deployer: text('deployer').primaryKey(),
+  cluster: text('cluster'), // shared first funder, if any
+  launches: integer('launches').notNull().default(0),
+  launches7d: integer('launches_7d').notNull().default(0),
+  rugs: integer('rugs').notNull().default(0),
+  migrated: integer('migrated').notNull().default(0),
+  avgSecondsToDevSell: integer('avg_seconds_to_dev_sell'),
+  bestPeakMcapUsd: numeric('best_peak_mcap_usd'),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const indexerState = pgTable('indexer_state', {
+  key: text('key').primaryKey(),
+  value: jsonb('value').notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

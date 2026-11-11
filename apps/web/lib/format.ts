@@ -1,0 +1,50 @@
+/** Number and time formatting shared by the terminal. */
+
+export const nf = new Intl.NumberFormat('en-US');
+
+export function usd(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (a >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  if (a >= 1) return `$${n.toFixed(0)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+/** Tiny token prices: $0.0₄5321 style, like most trenches terminals. */
+export function price(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n) || n <= 0) return '—';
+  if (n >= 1) return `$${n.toFixed(4)}`;
+  const s = n.toFixed(20);
+  const zeros = s.slice(2).search(/[1-9]/);
+  if (zeros < 4) return `$${n.toPrecision(4)}`;
+  const sub = String(zeros).split('').map((d) => '₀₁₂₃₄₅₆₇₈₉'[Number(d)]).join('');
+  return `$0.0${sub}${s.slice(2 + zeros, 2 + zeros + 4)}`;
+}
+
+export const pct = (n: number | null | undefined, digits = 1) => (n == null ? '—' : `${Number(n.toFixed(digits))}%`);
+
+export const short = (a: string, head = 4, tail = 4) => `${a.slice(0, head + 2)}…${a.slice(-tail)}`;
+
+export function age(fromMs: number, nowMs: number): string {
+  const s = Math.max(0, Math.floor((nowMs - fromMs) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+const HUES = ['#36d42a', '#ffb547', '#5ec8ff', '#ff7ab6', '#b58cff', '#ff6b5b', '#a6ff4d', '#4de0c2'];
+export const hue = (address: string) => HUES[parseInt(address.slice(2, 6), 16) % HUES.length]!;
+
+export const LAUNCHPAD_LABEL: Record<string, string> = {
+  pons: 'PONS',
+  doppler: 'Doppler',
+  'lift.fun': 'lift.fun',
+  lift: 'lift.fun',
+  'uniswap-v4': 'Uniswap',
+  vorta: 'Vorta',
+};
