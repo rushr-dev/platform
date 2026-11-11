@@ -27,14 +27,9 @@
     "producers": [{ "binding": "ENRICH_QUEUE", "queue": "rushr-enrich" }],
     "consumers": [{ "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 2 }]
   },
-  // Neon (aws-ap-southeast-1) through Hyperdrive. Locally: the docker-compose Postgres.
-  "hyperdrive": [
-    {
-      "binding": "HYPERDRIVE",
-      "id": "0f02eaf63063426a96a49de0829525bf",
-      "localConnectionString": "postgres://rushr:rushr@localhost:5433/rushr"
-    }
-  ],
+  // Database: Neon's pooled endpoint (aws-ap-southeast-1) via the DATABASE_URL secret. Hyperdrive config
+  // rushr-db (0f02eaf6…) exists but is unused: long-lived Durable Object connections through it hung
+  // mid-query (ClientRead) and stalled the poller.
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "CHAIN_ID": "4663",
