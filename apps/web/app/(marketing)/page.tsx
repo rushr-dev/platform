@@ -1,49 +1,68 @@
-import { Closing, Footer, Hero, Nav, ProductShot, Social } from '@/components/landing/sections';
 import type { Viewport } from 'next';
-import { getColumn, getStats, getToken, getTrades, type TokenCard } from '@/lib/api';
+import { Closing, Footer, Hero, Nav, ProductShot, Social } from '@/components/landing/sections';
+import { API_URL, getColumn, getStats, getTrades, type TokenCard } from '@/lib/api';
+import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 
 export const revalidate = 30;
 export const viewport: Viewport = { themeColor: '#f7f5f2' };
 
-/** The real $ZOLVA (graduated from PONS) and one of its same-name clones, read live from the indexer. */
-const REAL_ZOLVA = '0x8e04549484d0612be8373a0263b11928a5f7681f';
-const CLONE_ZOLVA = '0x88b53a468fdbba5339295121d81d8f00f7e0aace';
+/** What's trending on Robinhood Chain. Market data comes from DexScreener (all pools, all DEXes). */
+const PONS = '0x39dbed3a2bd333467115de45665cc57f813c4571';
+const CASHCAT = '0x020bfc650a365f8bb26819deaabf3e21291018b4';
+const PRIORS = '0xedbf91223639800bcd5756815caf908df3b890be';
+const TRENDING = [PONS, CASHCAT, PRIORS];
 
-// Snapshot from the indexer on 2026-11-11, used only if the API is unreachable at build time.
-const FALLBACK: Record<string, TokenCard> = {
-  [REAL_ZOLVA]: {
-    address: REAL_ZOLVA, symbol: 'ZOLVA', name: 'Zolva Agent', launchpad: 'pons', status: 'migrated',
-    created_at: '2026-11-10T16:51:00Z', market_cap_usd: 67614, volume_24h_usd: null, holders: 317, bonding_progress: 1,
-    risk: 'medium', verdict: 'Medium risk: 15.9% bought in the launch bundle, top 10 wallets hold 34.3%, snipers bought 34.5% in the first seconds',
-    top10_pct: 34.3, dev_pct: 0, bundled_pct: 15.9, snipers_pct: 34.5, insiders_pct: 0, fresh_pct: 1, airdropped: 0,
-    copycat: false, serial_launcher: false,
+// Snapshot from DexScreener on 2026-11-11, used only if it is unreachable.
+const FALLBACK: Record<string, DexToken> = {
+  [PONS]: {
+    address: PONS, symbol: 'PONS', name: 'Pons', price_usd: 0.1536, market_cap_usd: 102_968_248, volume_24h_usd: 6_766_915,
+    liquidity_usd: 5_229_649, change_24h: -1.6, image_url: 'https://cdn.dexscreener.com/cms/images/dkmXs8KYMyMXjuU1?width=800&height=800&quality=95&format=auto',
+    website: 'https://ponsfamily.com/launchpad', twitter: 'https://x.com/ponsdotfamily', telegram: null,
   },
-  [CLONE_ZOLVA]: {
-    address: CLONE_ZOLVA, symbol: 'ZOLVA', name: 'Zolva Agent', launchpad: 'uniswap-v4', status: 'new',
-    created_at: '2026-11-11T06:10:23Z', market_cap_usd: 28377, volume_24h_usd: null, holders: 209, bonding_progress: null,
-    risk: 'high', verdict: 'High risk: copycat: 1 earlier $ZOLVA token this week, 206 holders were airdropped (fake holder count), dev still holds 22.1%',
-    top10_pct: 22.1, dev_pct: 22.1, bundled_pct: 0, snipers_pct: 0, insiders_pct: 0, fresh_pct: 0, airdropped: 206,
-    copycat: true, serial_launcher: false,
+  [CASHCAT]: {
+    address: CASHCAT, symbol: 'CASHCAT', name: 'Cash Cat', price_usd: null, market_cap_usd: 59_004_629, volume_24h_usd: 4_245_030,
+    liquidity_usd: 3_855_323, change_24h: null, image_url: null, website: null, twitter: null, telegram: null,
+  },
+  [PRIORS]: {
+    address: PRIORS, symbol: 'PRIORS', name: 'Priors Agents', price_usd: null, market_cap_usd: 8_205_827, volume_24h_usd: 362_782,
+    liquidity_usd: 1_186_062, change_24h: null, image_url: null, website: null, twitter: null, telegram: null,
   },
 };
 
+/** Anyone can launch any name, so the marketing page only shows new pairs that look presentable. */
+const BLOCKED = /fag|nig+(a|er)|retard|rape|nazi|hitler|porn|sex|cum|dick|cock|pussy|fuck|shit|cunt|whore|slut|kike|spic/i;
+const presentable = (t: TokenCard) => !!t.image_url && t.risk !== 'high' && !BLOCKED.test(`${t.symbol} ${t.name}`);
+
+/** Same-ticker clones of a token, as flagged by our safety checks. */
+async function getClones(symbol: string, original: string): Promise<TokenCard[]> {
+  try {
+    const res = await fetch(`${API_URL}/search?q=${symbol}`, { next: { revalidate: 300 } });
+    if (!res.ok) return [];
+    const { tokens } = (await res.json()) as { tokens: TokenCard[] };
+    return tokens
+      .filter((t) => t.symbol.toUpperCase() === symbol && t.address !== original && t.risk === 'high')
+      .sort((a, b) => b.holders - a.holders);
+  } catch {
+    return [];
+  }
+}
+
 export default async function Home() {
-  const [stats, real, clone, fresh, trades] = await Promise.all([
+  const [stats, dex, fresh, trades, clones] = await Promise.all([
     getStats(),
-    getToken(REAL_ZOLVA),
-    getToken(CLONE_ZOLVA),
-    getColumn('new', 8),
-    getTrades(REAL_ZOLVA, 200),
+    getDexTokens(TRENDING),
+    getColumn('new', 60),
+    getTrades(PONS, 200),
+    getClones('PONS', PONS),
   ]);
-  const realCard = real ?? FALLBACK[REAL_ZOLVA]!;
-  const cloneCard = clone ?? FALLBACK[CLONE_ZOLVA]!;
+  const trending = TRENDING.map((a) => dex[a] ?? FALLBACK[a]!);
   return (
     <div className="theme-paper min-h-dvh">
       <Nav />
       <main>
         <Hero stats={stats} />
-        <ProductShot fresh={fresh} focus={realCard} trades={trades} />
-        <Social real={realCard} clone={cloneCard} />
+        <ProductShot trending={trending} fresh={fresh.filter(presentable)} focus={trending[0]!} trades={trades} clones={clones} />
+        <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
         <Closing />
       </main>
       <Footer />

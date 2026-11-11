@@ -2,6 +2,8 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { ArrowRight, Robot, TelegramLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
 import type { RiskLevel, Stats, TokenCard, Trade } from '@/lib/api';
+import type { DexToken } from '@/lib/dexscreener';
+import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Reveal } from './reveal';
 
 const X_URL = 'https://x.com/rushrtrade';
@@ -25,18 +27,11 @@ const age = (iso: string) => {
   return m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
 };
 
-/* Token avatars: no logos are indexed yet, so each ticker gets a stable colour from its address. */
-const HUES = ['#36d42a', '#ffb547', '#5ec8ff', '#ff7ab6', '#b58cff', '#ff6b5b', '#a6ff4d', '#4de0c2'];
-const hue = (a: string) => HUES[parseInt(a.slice(2, 6), 16) % HUES.length]!;
-function TokenAvatar({ t, size = 28 }: { t: Pick<TokenCard, 'address' | 'symbol'>; size?: number }) {
-  return (
-    <span
-      className="grid shrink-0 place-items-center rounded-full font-semibold text-[#0b120c]"
-      style={{ width: size, height: size, background: hue(t.address), fontSize: size * 0.4 }}
-    >
-      {t.symbol.slice(0, 1)}
-    </span>
-  );
+const chg = (n: number | null | undefined) => (n == null ? '' : `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`);
+
+/** Token icon (launchpad or DexScreener metadata), falling back to a coloured initial. */
+function TokenAvatar({ t, size = 28 }: { t: { address: string; symbol: string; image_url?: string | null }; size?: number }) {
+  return <Icon t={{ address: t.address, symbol: t.symbol, launchpad: null, image_url: t.image_url ?? null }} size={size} />;
 }
 
 function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?: string }) {
@@ -208,7 +203,19 @@ function CandleChart({ trades }: { trades: Trade[] }) {
   );
 }
 
-export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focus: TokenCard; trades: Trade[] }) {
+export function ProductShot({
+  trending,
+  fresh,
+  focus,
+  trades,
+  clones,
+}: {
+  trending: DexToken[];
+  fresh: TokenCard[];
+  focus: DexToken;
+  trades: Trade[];
+  clones: TokenCard[];
+}) {
   return (
     <section id="trenches" className="relative scroll-mt-16 pt-6 md:pt-4">
       <div className="mx-auto max-w-7xl px-4 md:px-8">
@@ -223,7 +230,7 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
         </Reveal>
 
         <Reveal delay={0.1} className="relative mt-14 md:mt-16">
-          {/* Desktop terminal, filled with live data from the indexer */}
+          {/* Desktop terminal: trending tokens, a live chart and the fakes we caught */}
           <div className="theme-terminal overflow-hidden rounded-2xl border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]">
             <div className="flex items-center gap-6 border-b border-white/5 px-4 py-3">
               <span className="flex items-center gap-1.5 text-sm font-semibold tracking-[-0.03em]">
@@ -242,16 +249,36 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
             </div>
 
             <div className="grid md:grid-cols-[250px_1fr] lg:grid-cols-[260px_1fr_270px]">
-              {/* New pairs */}
+              {/* Trending, then the newest pairs */}
               <div className="hidden border-r border-white/5 md:block">
                 <div className="flex items-center justify-between px-4 py-3 text-xs">
+                  <span className="font-semibold">Trending</span>
+                  <span className="text-muted">24h</span>
+                </div>
+                <ul>
+                  {trending.map((t) => (
+                    <li key={t.address} className="flex items-center gap-2.5 border-t border-white/5 px-4 py-2.5">
+                      <TokenAvatar t={t} size={28} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <span className="truncate font-semibold">{t.symbol}</span>
+                          <span className={(t.change_24h ?? 0) >= 0 ? 'text-brand' : 'text-risk-high'}>{chg(t.change_24h)}</span>
+                        </div>
+                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted">
+                          MC {usd(t.market_cap_usd)} · V {usd(t.volume_24h_usd)}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex items-center justify-between border-t border-white/5 px-4 py-3 text-xs">
                   <span className="font-semibold">New pairs</span>
                   <span className="flex items-center gap-1 text-brand">
                     <span className="size-1.5 rounded-full bg-brand" /> live
                   </span>
                 </div>
                 <ul>
-                  {fresh.slice(0, 7).map((t) => (
+                  {fresh.slice(0, 4).map((t) => (
                     <li key={t.address} className="flex items-center gap-2.5 border-t border-white/5 px-4 py-2.5">
                       <TokenAvatar t={t} size={26} />
                       <div className="min-w-0 flex-1">
@@ -273,16 +300,19 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-white/5 px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <TokenAvatar t={focus} size={28} />
+                    <TokenAvatar t={focus} size={30} />
                     <div>
-                      <div className="text-sm font-semibold">{focus.symbol}</div>
+                      <div className="flex items-center gap-2 text-sm font-semibold">
+                        {focus.symbol}
+                        <SocialLinks t={{ ...focus, website: focus.website, twitter: focus.twitter, telegram: focus.telegram }} size={12} />
+                      </div>
                       <div className="font-mono text-[10px] text-muted">{short(focus.address)}</div>
                     </div>
                   </div>
                   <Stat k="Market cap" v={usd(focus.market_cap_usd)} />
                   <Stat k="24h vol" v={usd(focus.volume_24h_usd)} />
-                  <Stat k="Holders" v={nf.format(focus.holders)} />
-                  <Stat k="Top 10" v={pct(focus.top10_pct)} />
+                  <Stat k="Liquidity" v={usd(focus.liquidity_usd)} />
+                  <Stat k="24h" v={chg(focus.change_24h) || 'n/a'} />
                 </div>
                 <div className="h-[220px] px-2 py-3 md:h-[300px]">
                   <CandleChart trades={trades} />
@@ -299,7 +329,7 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
                 </div>
               </div>
 
-              {/* Trade box + safety */}
+              {/* Trade box + the fakes riding this ticker */}
               <div className="hidden border-l border-white/5 p-4 lg:block">
                 <div className="grid grid-cols-2 rounded-lg bg-white/5 p-1 text-center text-xs font-semibold">
                   <span className="rounded-md bg-go py-1.5 text-[#0b120c]">Buy</span>
@@ -313,17 +343,21 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
                   ))}
                 </div>
                 <div className="mt-5 flex items-center justify-between text-xs">
-                  <span className="font-semibold">Safety check</span>
-                  <RiskTag risk={focus.risk} />
+                  <span className="font-semibold">Fake ${focus.symbol} caught</span>
+                  <span className="font-mono text-risk-high">{clones.length}</span>
                 </div>
-                <dl className="mt-3 space-y-2 text-[11px]">
-                  <Row k="Launch bundle" v={pct(focus.bundled_pct)} />
-                  <Row k="Snipers" v={pct(focus.snipers_pct)} />
-                  <Row k="Insiders" v={pct(focus.insiders_pct)} />
-                  <Row k="Dev holds" v={pct(focus.dev_pct)} />
-                  <Row k="Copycat" v={focus.copycat ? 'yes' : 'no'} />
-                </dl>
-                <p className="mt-4 border-t border-white/5 pt-3 text-[11px] leading-relaxed text-muted">{focus.verdict}</p>
+                <ul className="mt-3 space-y-2 text-[11px]">
+                  {clones.slice(0, 4).map((c) => (
+                    <li key={c.address} className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-muted">{short(c.address)}</span>
+                      <span className="font-mono">{c.holders} holders</span>
+                      <RiskTag risk={c.risk} />
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-4 border-t border-white/5 pt-3 text-[11px] leading-relaxed text-muted">
+                  Same name, same ticker, different contract. Rushr flags every clone so you buy the real one.
+                </p>
               </div>
             </div>
           </div>
@@ -400,9 +434,9 @@ function Side({ side, small = false }: { side: 'Buy' | 'Sell'; small?: boolean }
 
 /* Example social activity. Feed, leaderboard and agents are not live yet; tokens are real. */
 const FEED: { who: string; side: 'Buy' | 'Sell'; sym: string; amt: string; agent: boolean; note?: string }[] = [
-  { who: 'kaito.hood', side: 'Buy', sym: 'ZOLVA', amt: '$1.2K at $61K MC', agent: false, note: "we're so back" },
-  { who: 'Scout', side: 'Sell', sym: 'ROOQ', amt: '+38% in 14m', agent: true },
-  { who: 'mira', side: 'Buy', sym: 'ROBOT', amt: '$420 at $25K MC', agent: false },
+  { who: 'kaito.hood', side: 'Buy', sym: 'PONS', amt: '$1.2K at $103M MC', agent: false, note: "we're so back" },
+  { who: 'Scout', side: 'Sell', sym: 'PRIORS', amt: '+38% in 14m', agent: true },
+  { who: 'mira', side: 'Buy', sym: 'CASHCAT', amt: '$420 at $59M MC', agent: false },
   { who: 'degen.eth', side: 'Sell', sym: 'ONION', amt: '$880 at $30K MC', agent: false },
 ];
 
@@ -466,7 +500,7 @@ function Card({
   );
 }
 
-export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
+export function Social({ original, clone, cloneCount }: { original: DexToken; clone: TokenCard | null; cloneCount: number }) {
   return (
     <section id="social" className="mx-auto max-w-7xl scroll-mt-16 px-4 pt-32 md:px-8 md:pt-48">
       <div className="grid items-end gap-6 md:grid-cols-[1fr_minmax(0,460px)]">
@@ -541,7 +575,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex justify-between gap-2 text-sm">
-                    <span className="truncate font-semibold">$ZOLVA is up 18%</span>
+                    <span className="truncate font-semibold">$CASHCAT is up 18%</span>
                     <span className="text-muted">9:41</span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-sm text-muted">
@@ -577,27 +611,33 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
         </Reveal>
 
         <Reveal delay={0.06}>
-          <Card id="safety" eyebrow="Safety" title="spot the rug before it pulls.">
+          <Card id="safety" eyebrow="Safety" title="spot the fake before you buy.">
             <div className="space-y-3">
-              <div className="rounded-2xl border border-risk-high/30 bg-risk-high/[0.06] p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 font-semibold">
-                    <TokenAvatar t={clone} size={24} /> ${clone.symbol}
-                  </span>
-                  <RiskTag risk={clone.risk} />
+              {clone && (
+                <div className="rounded-2xl border border-risk-high/30 bg-risk-high/[0.06] p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex items-center gap-2 font-semibold">
+                      <TokenAvatar t={clone} size={24} /> ${clone.symbol}
+                      <span className="font-mono text-xs font-normal text-muted">{short(clone.address)}</span>
+                    </span>
+                    <RiskTag risk={clone.risk} />
+                  </div>
+                  <p className="mt-2 text-sm text-muted">
+                    Copycat. {clone.holders} holders. One of {cloneCount} fake ${clone.symbol} we flagged.
+                  </p>
                 </div>
-                <p className="mt-2 text-sm text-muted">
-                  Copycat. {clone.airdropped ?? 0} of {clone.holders} holders were airdropped.
-                </p>
-              </div>
+              )}
               <div className="rounded-2xl border border-line bg-bg p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 font-semibold">
-                    <TokenAvatar t={real} size={24} /> ${real.symbol}
+                    <TokenAvatar t={original} size={24} /> ${original.symbol}
+                    <span className="font-mono text-xs font-normal text-muted">{short(original.address)}</span>
                   </span>
-                  <RiskTag risk={real.risk} />
+                  <span className="shrink-0 rounded-[4px] bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">original</span>
                 </div>
-                <p className="mt-2 text-sm text-muted">The original. {nf.format(real.holders)} real holders.</p>
+                <p className="mt-2 text-sm text-muted">
+                  The real one. {usd(original.market_cap_usd)} market cap, {usd(original.liquidity_usd)} liquidity.
+                </p>
               </div>
             </div>
           </Card>
