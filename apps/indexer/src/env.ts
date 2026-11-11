@@ -16,6 +16,8 @@ export interface Env {
   LIVE_FEED: DurableObjectNamespace<LiveFeed>;
   BACKFILLER: DurableObjectNamespace<Backfiller>;
   ENRICH_QUEUE: Queue<EnrichMessage>;
+  /** Token metadata only, so new launches get icons without waiting behind signal recomputes. */
+  METADATA_QUEUE: Queue<EnrichMessage>;
 }
 
 export type EnrichMessage =

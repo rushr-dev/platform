@@ -111,7 +111,7 @@ app.post('/admin/metadata/all', async (c) => {
       where metadata_at is null ${missing ? sql`or image_url is null` : sql``}
       order by holders desc`;
     for (let i = 0; i < rows.length; i += 100) {
-      await c.env.ENRICH_QUEUE.sendBatch(
+      await c.env.METADATA_QUEUE.sendBatch(
         rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried } })),
       );
     }
@@ -144,7 +144,7 @@ export default {
              or (image_url is null and metadata_at < now() - interval '6 hours' and (holders >= 20 or volume_24h_usd >= 1000))
           order by holders desc limit 200`;
         for (let i = 0; i < rows.length; i += 100) {
-          await env.ENRICH_QUEUE.sendBatch(
+          await env.METADATA_QUEUE.sendBatch(
             rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried } })),
           );
         }

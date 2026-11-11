@@ -288,7 +288,7 @@ export class ChainPoller extends DurableObject<Env> {
   /** Resolve icon and socials for newly seen tokens (once each; the queue retries failures). */
   private async queueMetadata(tokens: string[]) {
     for (let i = 0; i < tokens.length; i += 100) {
-      await this.env.ENRICH_QUEUE.sendBatch(tokens.slice(i, i + 100).map((token) => ({ body: { kind: 'token-metadata' as const, token } })));
+      await this.env.METADATA_QUEUE.sendBatch(tokens.slice(i, i + 100).map((token) => ({ body: { kind: 'token-metadata' as const, token } })));
     }
   }
 

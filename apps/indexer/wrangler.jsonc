@@ -24,8 +24,14 @@
     { "tag": "v2", "new_sqlite_classes": ["Backfiller"] }
   ],
   "queues": {
-    "producers": [{ "binding": "ENRICH_QUEUE", "queue": "rushr-enrich" }],
-    "consumers": [{ "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 4 }]
+    "producers": [
+      { "binding": "ENRICH_QUEUE", "queue": "rushr-enrich" },
+      { "binding": "METADATA_QUEUE", "queue": "rushr-metadata" }
+    ],
+    "consumers": [
+      { "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 4 },
+      { "queue": "rushr-metadata", "max_batch_size": 10, "max_batch_timeout": 1, "max_concurrency": 4 }
+    ]
   },
   // Database: Neon's pooled endpoint (aws-ap-southeast-1) in the DATABASE_URL secret, *without*
   // channel_binding=require: postgres.js can't do channel binding in the Workers runtime and Neon then

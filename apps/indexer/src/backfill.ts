@@ -197,7 +197,7 @@ export class Backfiller extends DurableObject<Env> {
       const noMeta = await sql<{ address: string }[]>`select address from tokens where metadata_at is null`;
       for (let i = 0; i < noMeta.length; i += 100) {
         const chunk = noMeta.slice(i, i + 100);
-        await this.env.ENRICH_QUEUE.sendBatch(chunk.map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address } })));
+        await this.env.METADATA_QUEUE.sendBatch(chunk.map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address } })));
       }
       s.phase = 'done';
     }
