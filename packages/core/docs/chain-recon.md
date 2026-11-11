@@ -1,6 +1,6 @@
 # Robinhood Chain recon (2026-11-11)
 
-What the indexer must watch, confirmed on-chain through the Alchemy RPC. Registry: `packages/core/src/chain/robinhood.ts`. Re-check anytime with `pnpm --filter @rushr/core recon 3000`.
+What the indexer must watch, confirmed on-chain through the Alchemy RPC. Registry: `src/chain/robinhood.ts`. Re-check anytime with `npm run recon -- 3000`.
 
 ## Chain
 - Chain ID 4663 (Arbitrum Orbit / Nitro), native ETH.

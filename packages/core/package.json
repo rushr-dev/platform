@@ -2,6 +2,10 @@
   "name": "@rushr/core",
   "version": "0.0.0",
   "private": true,
+  "description": "Robinhood Chain registry, event decoders, token metadata and safety signals behind the Rushr terminal.",
+  "license": "AGPL-3.0-only",
+  "repository": { "type": "git", "url": "git+https://github.com/rushr-dev/rushr-core.git" },
+  "homepage": "https://rushr.trade",
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
@@ -10,13 +14,15 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "recon": "node scripts/recon-sample.ts"
+    "recon": "node scripts/recon-sample.ts",
+    "registry": "node scripts/export-registry.ts"
   },
   "dependencies": {
     "viem": "^2.57.17"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "typescript": "~5.9.3",
     "vitest": "^5.1.0"
   }
 }

@@ -1,9 +1,8 @@
 /**
  * Pull recent logs for every registry entry and print launches and trade counts.
- * Usage: pnpm --filter @rushr/core recon [blocks=3000]
- * RPC: $RPC_URL, else apps/indexer/.dev.vars, else the public RPC.
+ * Usage: npm run recon -- [blocks=3000]
+ * RPC: $RPC_URL, else the public RPC (rate-limited).
  */
-import { readFileSync } from 'node:fs';
 import { createPublicClient, http, decodeEventLog, type Address, type Log } from 'viem';
 import {
   ABIS,
@@ -15,13 +14,7 @@ import {
 } from '../src/chain/robinhood.ts';
 
 function rpcUrl(): string {
-  if (process.env.RPC_URL) return process.env.RPC_URL;
-  try {
-    const vars = readFileSync(new URL('../../../apps/indexer/.dev.vars', import.meta.url), 'utf8');
-    const m = vars.match(/^RPC_URL=(.+)$/m);
-    if (m?.[1]) return m[1].trim();
-  } catch {}
-  return ROBINHOOD_CHAIN.publicRpc;
+  return process.env.RPC_URL || ROBINHOOD_CHAIN.publicRpc;
 }
 
 const client = createPublicClient({ transport: http(rpcUrl()) });
