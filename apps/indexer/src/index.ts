@@ -21,7 +21,13 @@ app.get('/health', async (c) => {
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
   }).then((r) => r.json<{ result?: string }>());
   const poller = c.env.CHAIN_POLLER.get(c.env.CHAIN_POLLER.idFromName('main'));
-  const status = await poller.status();
+  let status: Awaited<ReturnType<typeof poller.status>>;
+  try {
+    status = await poller.status();
+  } catch (err) {
+    const e = err as Record<string, unknown>;
+    return c.json({ ok: false, error: String(err), details: { ...e, message: e?.message, remote: e?.remote, retryable: e?.retryable, overloaded: e?.overloaded } }, 503);
+  }
   const chainHead = head.result ? Number(head.result) : null;
   return c.json({
     ok: true,
@@ -149,8 +155,9 @@ export default {
   },
   // Recompute safety signals for tokens the poller saw trading (deduped within the batch).
   async queue(batch, env) {
-    // Two consumers at most (wrangler.jsonc), three connections each, so the Hyperdrive pool always has room for the poller.
-    const sql = postgres(dbUrl(env), { max: 3, fetch_types: false, prepare: false });
+    // Workers allow 6 simultaneous outgoing connections per invocation, and Hyperdrive stalls when the
+    // client pipelines queries on a busy connection: so 2 connections and never more than 2 queries at once.
+    const sql = postgres(dbUrl(env), { max: 2, fetch_types: false, prepare: false });
     const rpc = new Rpc(env.RPC_URL);
     const done = new Set<string>();
     // Tokens whose card changed (signals or metadata), pushed to open terminals at the end.
@@ -158,9 +165,9 @@ export default {
     try {
       // Metadata lookups are mostly network waits (RPC + launchpad CDNs), so run them 8 at a time.
       const metadata = batch.messages.filter((m) => m.body.kind === 'token-metadata');
-      for (let i = 0; i < metadata.length; i += 6) {
+      for (let i = 0; i < metadata.length; i += 2) {
         await Promise.all(
-          metadata.slice(i, i + 6).map(async (msg) => {
+          metadata.slice(i, i + 2).map(async (msg) => {
             const { token, dexOnly } = msg.body as { token: string; dexOnly?: boolean };
             try {
               await resolveMetadata(sql, rpc, token, { dexOnly });

@@ -8,7 +8,7 @@ type Ctx = { Bindings: Env; Variables: { sql: Sql } };
 
 export const api = new Hono<Ctx>();
 
-// One short-lived connection per request (pooled by Hyperdrive in production).
+// Short-lived connections per request (Neon's pooler in production).
 api.use('*', async (c, next) => {
   const sql = postgres(dbUrl(c.env), { max: 2, fetch_types: false, prepare: false });
   c.set('sql', sql);

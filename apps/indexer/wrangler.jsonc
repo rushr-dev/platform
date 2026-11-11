@@ -25,11 +25,12 @@
   ],
   "queues": {
     "producers": [{ "binding": "ENRICH_QUEUE", "queue": "rushr-enrich" }],
-    "consumers": [{ "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 2 }]
+    "consumers": [{ "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 4 }]
   },
-  // Database: Neon's pooled endpoint (aws-ap-southeast-1) via the DATABASE_URL secret. Hyperdrive config
-  // rushr-db (0f02eaf6…) exists but is unused: long-lived Durable Object connections through it hung
-  // mid-query (ClientRead) and stalled the poller.
+  // Database: Neon's pooled endpoint (aws-ap-southeast-1) in the DATABASE_URL secret, *without*
+  // channel_binding=require: postgres.js can't do channel binding in the Workers runtime and Neon then
+  // closes the connection. Hyperdrive config rushr-db (0f02eaf6…) is unused: queries through it stalled.
+  // Keep each invocation under Workers' 6 simultaneous connections (postgres `max` in the code).
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "CHAIN_ID": "4663",

@@ -79,8 +79,10 @@ export class ChainPoller extends DurableObject<Env> {
     if (!this.pipeline) {
       // This object lives for hours, but Hyperdrive can drop idle connections without the client noticing
       // (the next query on that socket then never returns). Keep connections short-lived.
+      // Workers allow 6 simultaneous outgoing connections per invocation: 3 for Postgres leaves room
+      // for the Alchemy socket and RPC fetches (more than 6 deadlocks: new sockets wait forever).
       this.sql = postgres(dbUrl(this.env), {
-        max: 6,
+        max: 3,
         fetch_types: false,
         prepare: false,
         idle_timeout: 15,

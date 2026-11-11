@@ -288,10 +288,13 @@ export class Rpc {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       });
       if (res.ok) return res;
+      // Read the body either way: an unread one keeps its connection open (Workers allow 6).
+      const text = await res.text();
       if (attempt >= 3 || (res.status !== 429 && res.status < 500)) {
-        throw new Error(`RPC HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        throw new Error(`RPC HTTP ${res.status}: ${text.slice(0, 200)}`);
       }
       await new Promise((r) => setTimeout(r, 250 * 2 ** attempt));
     }

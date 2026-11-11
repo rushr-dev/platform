@@ -104,7 +104,11 @@ async function dexProfile(token: string) {
     const res = await fetch(`https://api.dexscreener.com/tokens/v1/robinhood/${token}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    // Always consume or cancel a body: an unread one keeps its connection open, and Workers allow 6.
+    if (!res.ok) {
+      await res.body?.cancel();
+      return null;
+    }
     const pairs = (await res.json()) as {
       info?: { imageUrl?: string; websites?: { url: string }[]; socials?: { url: string; type: string }[] };
     }[];
@@ -136,7 +140,10 @@ async function fetchJson(uri: string): Promise<Record<string, unknown> | null> {
     if (!/^https:\/\//i.test(url)) continue;
     try {
       const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), headers: { accept: 'application/json' } });
-      if (!res.ok) continue;
+      if (!res.ok || Number(res.headers.get('content-length') ?? 0) > 200_000) {
+        await res.body?.cancel();
+        continue;
+      }
       const text = await res.text();
       if (text.length > 200_000) continue;
       const obj = asObject(JSON.parse(text));
