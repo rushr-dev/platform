@@ -175,7 +175,7 @@ export default {
               msg.ack();
             } catch (err) {
               console.error('metadata failed', token, err);
-              msg.retry({ delaySeconds: 15 });
+              msg.retry({ delaySeconds: 30 });
             }
           }),
         );

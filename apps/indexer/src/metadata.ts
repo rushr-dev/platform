@@ -20,6 +20,8 @@ interface RawReceipt {
 export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string, opts: { dexOnly?: boolean } = {}): Promise<boolean> {
   if (opts.dexOnly) {
     const dex = await dexProfile(token);
+    // Rate limited: let the queue retry later rather than recording "no icon".
+    if (dex === RATE_LIMITED) throw new Error('DexScreener rate limited');
     await sql`
       update tokens set
         image_url = coalesce(image_url, ${dex?.image ?? null}),
@@ -79,7 +81,7 @@ export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string, opts: {
   // Plain Uniswap tokens carry no launchpad metadata; established ones often have a DexScreener profile.
   if (!links.image || !(links.website || links.twitter || links.telegram)) {
     const dex = await dexProfile(token);
-    if (dex) {
+    if (dex && dex !== RATE_LIMITED) {
       links.image ??= dex.image;
       links.website ??= dex.website;
       links.twitter ??= dex.twitter;
@@ -98,6 +100,8 @@ export async function resolveMetadata(sql: Sql, rpc: Rpc, token: string, opts: {
   return Boolean(links.image || links.website || links.twitter || links.telegram);
 }
 
+const RATE_LIMITED = 'rate-limited' as const;
+
 /** Icon and links from the token's DexScreener profile, if it has one. */
 async function dexProfile(token: string) {
   try {
@@ -107,7 +111,7 @@ async function dexProfile(token: string) {
     // Always consume or cancel a body: an unread one keeps its connection open, and Workers allow 6.
     if (!res.ok) {
       await res.body?.cancel();
-      return null;
+      return res.status === 429 ? RATE_LIMITED : null;
     }
     const pairs = (await res.json()) as {
       info?: { imageUrl?: string; websites?: { url: string }[]; socials?: { url: string; type: string }[] };
