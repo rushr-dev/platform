@@ -1,8 +1,9 @@
 @import 'tailwindcss';
 
 /*
- * Rushr tokens. Dark, near-black with a green cast; one accent (Rushr green) plus lime for
- * positive numbers. The landing page and the terminal share these.
+ * Rushr tokens. The terminal is dark (near-black with a green cast). The landing page swaps the
+ * same tokens for the paper palette of the pencil-sketch art (.theme-paper), and any dark product
+ * shot inside it switches back with .theme-terminal.
  */
 @theme {
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
@@ -20,6 +21,49 @@
   --color-risk-high: #ff6b5b;
   --color-risk-medium: #ffb547;
   --color-risk-low: #36d42a;
+  /* Button green, identical in both themes. */
+  --color-go: #36d42a;
+  --color-sage: #7b9b6c;
+}
+
+.theme-paper {
+  --color-bg: #f7f5f2;
+  --color-surface: #fffefc;
+  --color-surface-2: #efede8;
+  --color-line: #e2dfd8;
+  --color-ink: #18201a;
+  --color-muted: #646b63;
+  --color-brand: #2a8a22;
+  --color-brand-deep: #1d6e17;
+  --color-lime: #36d42a;
+  --color-risk-high: #c8402f;
+  --color-risk-medium: #a8700e;
+  --color-risk-low: #2a8a22;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  color-scheme: light;
+}
+
+.theme-terminal {
+  --color-bg: #050706;
+  --color-surface: #0c100d;
+  --color-surface-2: #121813;
+  --color-line: #1d241e;
+  --color-ink: #eef2ec;
+  --color-muted: #8a958a;
+  --color-brand: #36d42a;
+  --color-brand-deep: #13820f;
+  --color-lime: #a6ff4d;
+  --color-risk-high: #ff6b5b;
+  --color-risk-medium: #ffb547;
+  --color-risk-low: #36d42a;
+  color: var(--color-ink);
+  color-scheme: dark;
+}
+
+/* Overscroll and the page behind the landing match the paper. */
+body:has(.theme-paper) {
+  background: #f7f5f2;
 }
 
 html {

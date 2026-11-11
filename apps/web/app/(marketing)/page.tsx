@@ -1,7 +1,9 @@
 import { Closing, Footer, Hero, Nav, ProductShot, Social } from '@/components/landing/sections';
+import type { Viewport } from 'next';
 import { getColumn, getStats, getToken, getTrades, type TokenCard } from '@/lib/api';
 
 export const revalidate = 30;
+export const viewport: Viewport = { themeColor: '#f7f5f2' };
 
 /** The real $ZOLVA (graduated from PONS) and one of its same-name clones, read live from the indexer. */
 const REAL_ZOLVA = '0x8e04549484d0612be8373a0263b11928a5f7681f';
@@ -36,7 +38,7 @@ export default async function Home() {
   const realCard = real ?? FALLBACK[REAL_ZOLVA]!;
   const cloneCard = clone ?? FALLBACK[CLONE_ZOLVA]!;
   return (
-    <>
+    <div className="theme-paper min-h-dvh">
       <Nav />
       <main>
         <Hero stats={stats} />
@@ -45,6 +47,6 @@ export default async function Home() {
         <Closing />
       </main>
       <Footer />
-    </>
+    </div>
   );
 }

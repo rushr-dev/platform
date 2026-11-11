@@ -31,7 +31,7 @@ const hue = (a: string) => HUES[parseInt(a.slice(2, 6), 16) % HUES.length]!;
 function TokenAvatar({ t, size = 28 }: { t: Pick<TokenCard, 'address' | 'symbol'>; size?: number }) {
   return (
     <span
-      className="grid shrink-0 place-items-center rounded-full font-semibold text-bg"
+      className="grid shrink-0 place-items-center rounded-full font-semibold text-[#0b120c]"
       style={{ width: size, height: size, background: hue(t.address), fontSize: size * 0.4 }}
     >
       {t.symbol.slice(0, 1)}
@@ -48,7 +48,7 @@ function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?:
         ? 'bg-risk-medium/15 text-risk-medium'
         : r === 'low'
           ? 'bg-brand/15 text-brand'
-          : 'bg-white/10 text-muted';
+          : 'bg-ink/10 text-muted';
   return (
     <span className={`shrink-0 whitespace-nowrap rounded-[4px] px-1.5 py-0.5 text-[10px] font-medium ${cls} ${className}`}>
       {r === 'unknown' ? 'checking' : `${r} risk`}
@@ -60,7 +60,7 @@ function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?:
 
 export function Nav() {
   return (
-    <header className="sticky top-0 z-30 border-b border-white/5 bg-bg/80 backdrop-blur-md">
+    <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-md">
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
         <div className="flex items-center gap-10">
           <Link href="/" className="flex items-center gap-2" aria-label="Rushr home">
@@ -80,13 +80,13 @@ export function Nav() {
             target="_blank"
             rel="noreferrer"
             aria-label="Rushr on X"
-            className="hidden size-9 place-items-center rounded-lg border border-white/10 text-muted transition hover:text-ink sm:grid"
+            className="hidden size-9 place-items-center rounded-lg border border-line text-muted transition hover:text-ink sm:grid"
           >
             <XLogo size={16} weight="bold" />
           </a>
           <Link
             href="/trenches"
-            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-white active:scale-[0.98]"
+            className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-ink/85 active:scale-[0.98]"
           >
             Open app
           </Link>
@@ -101,11 +101,8 @@ export function Nav() {
 export function Hero({ stats }: { stats: Stats | null }) {
   return (
     <section className="relative isolate overflow-hidden">
-      {/* Green haze behind the wordmark */}
-      <div className="absolute left-1/2 top-[-260px] -z-10 h-[620px] w-[1100px] max-w-[200vw] -translate-x-1/2 rounded-full bg-brand/10 blur-[120px]" />
-
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-20">
-        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[140px] md:text-[176px]">
+        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[140px] md:text-[168px]">
           rushr
         </h1>
         <p className="rise mt-3 text-2xl font-medium tracking-[-0.03em] md:text-4xl" style={{ animationDelay: '0.06s' }}>
@@ -117,7 +114,7 @@ export function Hero({ stats }: { stats: Stats | null }) {
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row" style={{ animationDelay: '0.18s' }}>
           <Link
             href="/trenches"
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-7 py-3.5 font-semibold text-bg shadow-[0_10px_40px_-10px_rgba(54,212,42,0.7)] transition hover:bg-lime active:scale-[0.98]"
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_12px_32px_-14px_rgba(42,138,34,0.8)] transition hover:brightness-105 active:scale-[0.98]"
           >
             Enter the trenches
           </Link>
@@ -125,7 +122,7 @@ export function Hero({ stats }: { stats: Stats | null }) {
             href={TELEGRAM_URL}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-7 py-3.5 font-semibold transition hover:bg-white/[0.08] active:scale-[0.98]"
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-7 py-3.5 font-semibold transition hover:border-ink/20 active:scale-[0.98]"
           >
             <TelegramLogo size={18} weight="fill" />
             Join the crew
@@ -137,26 +134,26 @@ export function Hero({ stats }: { stats: Stats | null }) {
             style={{ animationDelay: '0.24s' }}
           >
             <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand/60 motion-reduce:hidden" />
-              <span className="relative inline-flex size-2 rounded-full bg-brand" />
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
+              <span className="relative inline-flex size-2 rounded-full bg-go" />
             </span>
             {nf.format(stats.launches_24h)} launches today on Robinhood Chain
           </p>
         )}
       </div>
 
-      {/* Key visual: the marble archer, faded into the page on every side */}
+      {/* Key visual: the brand banner, blended into the paper and faded out at the bottom */}
       <div
-        className="rise relative mx-auto mt-2 aspect-[3/2] w-full max-w-[1150px] [mask-image:radial-gradient(ellipse_64%_54%_at_50%_44%,black_45%,transparent_100%)] md:-mt-40"
+        className="rise relative mx-auto mt-10 aspect-[16/10] w-full max-w-[1440px] [mask-image:linear-gradient(to_bottom,transparent,black_14%,black_72%,transparent)] sm:aspect-[2/1] md:mt-12 lg:aspect-[3/1]"
         style={{ animationDelay: '0.3s' }}
       >
         <Image
-          src="/art/hero-archer.webp"
-          alt="A marble statue of a hooded archer drawing a bow, the arrow glowing green"
+          src="/art/banner.jpg"
+          alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
           fill
           priority
-          sizes="(min-width: 1150px) 1150px, 100vw"
-          className="object-cover"
+          sizes="(min-width: 1440px) 1440px, 100vw"
+          className="object-cover object-[50%_40%] mix-blend-multiply"
         />
       </div>
     </section>
@@ -213,7 +210,7 @@ function CandleChart({ trades }: { trades: Trade[] }) {
 
 export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focus: TokenCard; trades: Trade[] }) {
   return (
-    <section id="trenches" className="relative scroll-mt-16 md:-mt-10">
+    <section id="trenches" className="relative scroll-mt-16 pt-6 md:pt-4">
       <div className="mx-auto max-w-7xl px-4 md:px-8">
         <Reveal className="text-center">
           <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand">Live on Robinhood Chain</p>
@@ -227,7 +224,7 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
 
         <Reveal delay={0.1} className="relative mt-14 md:mt-16">
           {/* Desktop terminal, filled with live data from the indexer */}
-          <div className="overflow-hidden rounded-2xl border border-white/10 bg-surface shadow-[0_40px_120px_-40px_rgba(54,212,42,0.35)]">
+          <div className="theme-terminal overflow-hidden rounded-2xl border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]">
             <div className="flex items-center gap-6 border-b border-white/5 px-4 py-3">
               <span className="flex items-center gap-1.5 text-sm font-semibold tracking-[-0.03em]">
                 <Image src="/logo-mark.png" alt="" width={16} height={16} />
@@ -305,7 +302,7 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
               {/* Trade box + safety */}
               <div className="hidden border-l border-white/5 p-4 lg:block">
                 <div className="grid grid-cols-2 rounded-lg bg-white/5 p-1 text-center text-xs font-semibold">
-                  <span className="rounded-md bg-brand py-1.5 text-bg">Buy</span>
+                  <span className="rounded-md bg-go py-1.5 text-[#0b120c]">Buy</span>
                   <span className="py-1.5 text-muted">Sell</span>
                 </div>
                 <div className="mt-3 grid grid-cols-4 gap-1.5 font-mono text-[11px]">
@@ -332,7 +329,7 @@ export function ProductShot({ fresh, focus, trades }: { fresh: TokenCard[]; focu
           </div>
 
           {/* Phone with the social feed, overlapping the desktop */}
-          <div className="absolute -bottom-20 -right-2 hidden w-[230px] rotate-[4deg] rounded-[34px] border border-white/15 bg-[#0a0d0b] p-2 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.9)] xl:-right-12 xl:block">
+          <div className="theme-terminal absolute -bottom-20 -right-2 hidden w-[230px] rotate-[4deg] rounded-[34px] border border-black/20 bg-[#0a0d0b] p-2 shadow-[0_30px_70px_-20px_rgba(24,32,26,0.6)] xl:-right-12 xl:block">
             <div className="rounded-[27px] bg-surface p-3">
               <div className="mx-auto h-4 w-16 rounded-full bg-black" />
               <div className="mt-3 text-[11px] font-semibold">Feed</div>
@@ -379,7 +376,7 @@ function Row({ k, v }: { k: string; v: string }) {
 function Avatar({ who, agent, size }: { who: string; agent: boolean; size: number }) {
   return (
     <span
-      className={`grid shrink-0 place-items-center rounded-full font-bold ${agent ? 'bg-lime text-bg' : 'bg-white/10'}`}
+      className={`grid shrink-0 place-items-center rounded-full font-bold ${agent ? 'bg-go text-[#0b120c]' : 'bg-ink/10'}`}
       style={{ width: size, height: size, fontSize: size * 0.4 }}
     >
       {agent ? <Robot size={size * 0.5} weight="bold" /> : who[0]!.toUpperCase()}
@@ -457,11 +454,11 @@ function Card({
   return (
     <div
       id={id}
-      className="relative flex h-full min-h-[420px] scroll-mt-24 flex-col overflow-hidden rounded-3xl border border-white/[0.07] bg-gradient-to-b from-surface-2 to-surface p-7 md:min-h-[460px] md:p-8"
+      className="relative flex h-full min-h-[420px] scroll-mt-24 flex-col overflow-hidden rounded-3xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)] md:min-h-[460px] md:p-8"
     >
       <p className="flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand">
         {eyebrow}
-        {soon && <span className="rounded bg-white/10 px-1.5 py-px text-[10px] tracking-wider text-muted">soon</span>}
+        {soon && <span className="rounded bg-ink/[0.07] px-1.5 py-px text-[10px] tracking-wider text-muted">soon</span>}
       </p>
       <h3 className="mt-3 max-w-[17ch] text-[28px] font-semibold leading-[1.08] tracking-[-0.035em]">{title}</h3>
       <div className="relative mt-auto pt-8">{children}</div>
@@ -472,10 +469,21 @@ function Card({
 export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
   return (
     <section id="social" className="mx-auto max-w-7xl scroll-mt-16 px-4 pt-32 md:px-8 md:pt-48">
-      <Reveal>
-        <h2 className="text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">never ape blind.</h2>
-        <p className="mt-3 text-lg text-muted md:text-xl">the social trading app that checks every token first.</p>
-      </Reveal>
+      <div className="grid items-end gap-6 md:grid-cols-[1fr_minmax(0,460px)]">
+        <Reveal>
+          <h2 className="text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">never ape blind.</h2>
+          <p className="mt-3 text-lg text-muted md:text-xl">the social trading app that checks every token first.</p>
+        </Reveal>
+        <Reveal delay={0.1} className="relative -mb-6 hidden aspect-[3/2] md:block">
+          <Image
+            src="/art/scholar.webp"
+            alt="A classical scholar studying coins through a magnifying lens beside a scroll mapped with connected circles"
+            fill
+            sizes="460px"
+            className="object-cover mix-blend-multiply [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,black_55%,transparent)]"
+          />
+        </Reveal>
+      </div>
 
       <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Reveal>
@@ -485,7 +493,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
                 <li key={l.who} className="flex items-center gap-3">
                   <span
                     className={`grid size-6 shrink-0 place-items-center rounded-full font-mono text-[11px] font-bold ${
-                      i === 0 ? 'bg-lime text-bg' : 'bg-white/10 text-muted'
+                      i === 0 ? 'bg-go text-[#0b120c]' : 'bg-ink/[0.07] text-muted'
                     }`}
                   >
                     {i + 1}
@@ -504,7 +512,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
 
         <Reveal delay={0.06}>
           <Card eyebrow="Feed" title="follow the wallets that win." soon>
-            <div className="divide-y divide-white/5 overflow-hidden rounded-2xl border border-white/[0.07] bg-bg/60 [mask-image:linear-gradient(to_bottom,black_70%,transparent)]">
+            <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-bg [mask-image:linear-gradient(to_bottom,black_70%,transparent)]">
               {FEED.slice(0, 3).map((f) => (
                 <div key={f.who} className="p-4">
                   <div className="flex items-center gap-2 text-sm">
@@ -525,10 +533,10 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
         <Reveal delay={0.12}>
           <Card eyebrow="Alerts" title="know the second the best are buying." soon>
             <div className="relative pb-6">
-              <div className="absolute inset-x-6 bottom-0 h-16 rounded-3xl border border-white/[0.07] bg-white/[0.03]" />
-              <div className="absolute inset-x-3 bottom-3 h-16 rounded-3xl border border-white/[0.07] bg-white/[0.05]" />
-              <div className="relative flex items-center gap-3 rounded-3xl border border-white/10 bg-surface-2 p-4 shadow-2xl">
-                <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-bg">
+              <div className="absolute inset-x-6 bottom-0 h-16 rounded-3xl border border-line bg-surface-2/60" />
+              <div className="absolute inset-x-3 bottom-3 h-16 rounded-3xl border border-line bg-surface-2" />
+              <div className="relative flex items-center gap-3 rounded-3xl border border-line bg-surface p-4 shadow-[0_20px_40px_-20px_rgba(24,32,26,0.35)]">
+                <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#050706]">
                   <Image src="/logo.png" alt="" width={28} height={28} />
                 </span>
                 <div className="min-w-0 flex-1">
@@ -537,7 +545,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
                     <span className="text-muted">9:41</span>
                   </div>
                   <div className="mt-0.5 flex items-center gap-1.5 text-sm text-muted">
-                    <span className="size-2 shrink-0 rounded-full bg-brand" />
+                    <span className="size-2 shrink-0 rounded-full bg-go" />
                     <span className="truncate">12 top traders bought 3.4 ETH</span>
                   </div>
                 </div>
@@ -549,13 +557,13 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
         <Reveal>
           <Card id="agents" eyebrow="Agents" title="let an agent trade while you sleep." soon>
             <div className="-mx-7 -mb-7 flex items-end md:-mx-8 md:-mb-8">
-              <div className="relative h-60 w-[48%] shrink-0 [mask-image:radial-gradient(circle_at_50%_55%,black_48%,transparent_70%)]">
+              <div className="relative h-60 w-[52%] shrink-0 [mask-image:radial-gradient(ellipse_75%_70%_at_45%_55%,black_50%,transparent)]">
                 <Image
-                  src="/art/agent-bust.webp"
-                  alt="A bronze automaton head with glowing green eyes"
+                  src="/art/automaton.webp"
+                  alt="A bronze automaton working a stone tablet with a rising chart while two traders watch"
                   fill
-                  sizes="240px"
-                  className="object-cover"
+                  sizes="260px"
+                  className="object-cover object-[30%_50%] mix-blend-multiply"
                 />
               </div>
               <div className="mb-7 mr-7 flex-1 space-y-2 text-sm md:mb-8 md:mr-8">
@@ -582,7 +590,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
                   Copycat. {clone.airdropped ?? 0} of {clone.holders} holders were airdropped.
                 </p>
               </div>
-              <div className="rounded-2xl border border-white/[0.07] bg-bg/60 p-4">
+              <div className="rounded-2xl border border-line bg-bg p-4">
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 font-semibold">
                     <TokenAvatar t={real} size={24} /> ${real.symbol}
@@ -605,7 +613,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
                   y1={b}
                   x2={c}
                   y2={d}
-                  stroke={bad ? 'rgba(255,107,91,0.5)' : 'rgba(255,255,255,0.12)'}
+                  stroke={bad ? 'rgba(200,64,47,0.45)' : 'rgba(24,32,26,0.14)'}
                   strokeWidth="1.2"
                 />
               ))}
@@ -615,8 +623,8 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
                   cx={b.x}
                   cy={b.y}
                   r={b.r}
-                  fill={b.bad ? 'rgba(255,107,91,0.22)' : 'rgba(54,212,42,0.16)'}
-                  stroke={b.bad ? '#ff6b5b' : '#36d42a'}
+                  fill={b.bad ? 'rgba(200,64,47,0.14)' : 'rgba(123,155,108,0.2)'}
+                  stroke={b.bad ? '#c8402f' : '#7b9b6c'}
                   strokeWidth="1.2"
                 />
               ))}
@@ -633,7 +641,7 @@ export function Social({ real, clone }: { real: TokenCard; clone: TokenCard }) {
 
 function Chip({ k, v }: { k: string; v: string }) {
   return (
-    <div className="rounded-xl border border-white/[0.07] bg-bg/60 px-3 py-2">
+    <div className="rounded-xl border border-line bg-bg px-3 py-2">
       <span className="font-mono text-[11px] uppercase text-brand">{k}</span> <span>{v}</span>
     </div>
   );
@@ -653,20 +661,19 @@ const ORBIT = [
 export function Closing() {
   return (
     <section className="relative isolate mt-32 overflow-hidden md:mt-44">
-      <Image src="/art/crowd-forum.webp" alt="" fill sizes="100vw" className="-z-20 object-cover opacity-70" />
-      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_center,rgba(5,7,6,0.7),rgba(5,7,6,0.3)_60%,rgba(5,7,6,0.9))]" />
+      <Image src="/art/arena.webp" alt="" fill sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
       <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-bg to-transparent" />
       <div className="absolute inset-x-0 bottom-0 -z-10 h-40 bg-gradient-to-t from-bg to-transparent" />
 
       {/* Dotted orbits with traders and agents riding them */}
       <div aria-hidden className="pointer-events-none absolute inset-0 hidden md:block">
-        <div className="absolute left-1/2 top-1/2 size-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/10" />
-        <div className="absolute left-1/2 top-1/2 size-[920px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/[0.07]" />
+        <div className="absolute left-1/2 top-1/2 size-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-ink/15" />
+        <div className="absolute left-1/2 top-1/2 size-[920px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-ink/10" />
         {ORBIT.map((o, i) => (
           <span
             key={i}
-            className={`bob absolute grid place-items-center rounded-full border border-white/20 font-semibold shadow-xl ${
-              o.agent ? 'bg-lime text-bg' : 'bg-surface-2 text-ink'
+            className={`bob absolute grid place-items-center rounded-full border border-line font-semibold shadow-[0_12px_30px_-12px_rgba(24,32,26,0.4)] ${
+              o.agent ? 'bg-go text-[#0b120c]' : 'bg-surface text-ink'
             }`}
             style={{ left: o.l, top: o.t, width: o.s, height: o.s, animationDelay: o.d, fontSize: o.s * 0.36 }}
           >
@@ -682,13 +689,13 @@ export function Closing() {
             <br />
             <span className="text-brand">owned by the trenches.</span>
           </h2>
-          <p className="mx-auto mt-5 max-w-[44ch] text-lg text-ink/75">
+          <p className="mx-auto mt-5 max-w-[44ch] text-lg text-muted">
             No presale. No VC. Swap fees fund the app, and the treasury is public.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
             <Link
               href="/trenches"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-7 py-3.5 font-semibold text-bg transition hover:bg-lime active:scale-[0.98]"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] transition hover:brightness-105 active:scale-[0.98]"
             >
               Enter the trenches <ArrowRight size={16} weight="bold" />
             </Link>
@@ -696,7 +703,7 @@ export function Closing() {
               href={X_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-bg/50 px-7 py-3.5 font-semibold backdrop-blur-sm transition hover:bg-bg/80 active:scale-[0.98]"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface/80 px-7 py-3.5 font-semibold backdrop-blur-sm transition hover:border-ink/20 active:scale-[0.98]"
             >
               <XLogo size={16} weight="bold" /> Follow on X
             </a>
@@ -711,7 +718,7 @@ export function Closing() {
 
 export function Footer() {
   return (
-    <footer className="border-t border-white/5">
+    <footer className="border-t border-line">
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 md:grid-cols-[1.6fr_1fr_1fr] md:px-8">
         <div>
           <div className="flex items-center gap-2">
@@ -737,7 +744,7 @@ export function Footer() {
           <a href={TELEGRAM_URL} target="_blank" rel="noreferrer" className="block hover:text-brand">Telegram</a>
         </div>
       </div>
-      <div className="mx-auto max-w-7xl border-t border-white/5 px-4 py-6 text-xs text-muted md:px-8">© 2026 Rushr</div>
+      <div className="mx-auto max-w-7xl border-t border-line px-4 py-6 text-xs text-muted md:px-8">© 2026 Rushr</div>
     </footer>
   );
 }
