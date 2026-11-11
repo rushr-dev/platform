@@ -2,3 +2,5 @@
 RPC_URL=https://robinhood-mainnet.g.alchemy.com/v2/<your-key>
 DATABASE_URL=postgres://user:pass@host/db
 START_BLOCKS_BACK=33000
+# Production only (wrangler secret put ADMIN_TOKEN); leave unset locally.
+# ADMIN_TOKEN=

@@ -6,6 +6,8 @@ export interface Env {
   CHAIN_ID: string;
   BLOCKSCOUT_API: string;
   RPC_URL: string;
+  /** Bearer token for /admin/* in production (wrangler secret). */
+  ADMIN_TOKEN?: string;
   DATABASE_URL?: string;
   /** First run only: how many blocks before head to start from (default 33000 ≈ 1h). */
   START_BLOCKS_BACK?: string;

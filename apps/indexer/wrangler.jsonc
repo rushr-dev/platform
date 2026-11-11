@@ -6,6 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "dev": { "port": 8788 },
+  // Served only on the custom domain; workers.dev and preview URLs would expose the account name.
+  "routes": [{ "pattern": "api.rushr.trade", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
   "durable_objects": {
     "bindings": [
       { "name": "CHAIN_POLLER", "class_name": "ChainPoller" },
@@ -21,12 +25,18 @@
     "producers": [{ "binding": "ENRICH_QUEUE", "queue": "rushr-enrich" }],
     "consumers": [{ "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2 }]
   },
-  // Fill in after `wrangler hyperdrive create rushr-db --connection-string=...`.
-  // "hyperdrive": [{ "binding": "HYPERDRIVE", "id": "<id>", "localConnectionString": "postgres://..." }],
+  // Neon (aws-ap-southeast-1) through Hyperdrive. Locally: the docker-compose Postgres.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "0f02eaf63063426a96a49de0829525bf",
+      "localConnectionString": "postgres://rushr:rushr@localhost:5433/rushr"
+    }
+  ],
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "CHAIN_ID": "4663",
     "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2"
   }
-  // Secrets (set with `wrangler secret put`, locally in .dev.vars): RPC_URL, DATABASE_URL
+  // Secrets (set with `wrangler secret put`, locally in .dev.vars): RPC_URL, DATABASE_URL, ADMIN_TOKEN
 }

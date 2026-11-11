@@ -34,6 +34,24 @@ app.get('/health', async (c) => {
   });
 });
 
+// Admin routes need `Authorization: Bearer <ADMIN_TOKEN>`. Without the secret set (local dev)
+// they only answer on localhost.
+app.use('/admin/*', async (c, next) => {
+  const token = c.env.ADMIN_TOKEN;
+  if (!token) {
+    const host = new URL(c.req.url).hostname;
+    if (host === 'localhost' || host === '127.0.0.1') return next();
+    return c.json({ error: 'admin disabled' }, 403);
+  }
+  const given = c.req.header('authorization')?.replace(/^Bearer /, '') ?? '';
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(token);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i++) diff |= (a[i] ?? 0) ^ b[i]!;
+  if (diff !== 0) return c.json({ error: 'unauthorized' }, 401);
+  return next();
+});
+
 // Dev controls for the poller.
 app.post('/admin/poller/:action', async (c) => {
   const poller = c.env.CHAIN_POLLER.get(c.env.CHAIN_POLLER.idFromName('main'));
