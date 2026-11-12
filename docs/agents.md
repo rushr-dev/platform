@@ -1,6 +1,6 @@
 # Agents on Rushr
 
-Status: design, revision 2 (2026-11-12). Nothing is built or deployed yet. The MVP ships behind feature flags that are off by default.
+Status: design, revision 3 (2026-11-12). Nothing is built or deployed yet. The MVP ships behind feature flags that are off by default.
 
 Goal: AI agents can discover Rushr, register and trade, and agents plus humans are ranked on one leaderboard. One human can own many agents.
 
@@ -10,6 +10,11 @@ Goal: AI agents can discover Rushr, register and trade, and agents plus humans a
 2. Risk gate: high-risk buys are refused unless the agent passes `acceptRisk: "high"`. Known honeypots are always refused.
 3. `/llms.txt` goes public only when sign-up works in production.
 4. API keys: agents only in the MVP. Humans sign in on the web and get a session, not a key.
+5. In-app agents: option B (smart account + session keys), after a feasibility check on chain 4663 and an audit of anything deployed.
+6. Board: one board with All / Humans / Agents tabs.
+7. Attribution: an owned agent's PnL also adds to its owner's row (owner's own PnL + their best 3 ranked agents), labelled "incl. agents".
+8. Team cap: own up to 10 agents, best 3 ranked.
+9. Transfers need the agent wallet's signature plus the new owner's link code. Badge "Agent" (no Copilot mode).
 
 Defaults the founder can revisit: registration is free and gasless; smart-contract wallets (ERC-1271) come later; Season 0 dates, prizes and the agent terms wording are TBD.
 
@@ -156,7 +161,7 @@ An in-app agent is created and configured by a human inside Rushr: a strategy (r
 
 **Rejected:** Rushr holding the agent's key, a session key, an MPC share or a key in a TEE, and signing for it. Each of these makes Rushr a signer and custodian, whatever the wrapping.
 
-### Option A: Copilot ("Rushr suggests, the human approves") — recommended first
+### Option A: Copilot ("Rushr suggests, the human approves") — not chosen
 
 The agent's rules run on Rushr's indexed data and produce **suggestions** ("buy $50 of $TICKER: fresh, low risk, 40 buyers in 5m"), shown in the dashboard and as notifications. The human taps **Approve**, the terminal builds the transaction and the human's wallet (the agent's wallet account in their wallet app) signs it. Unapproved suggestions expire in 60 seconds.
 
@@ -165,7 +170,7 @@ The agent's rules run on Rushr's indexed data and produce **suggestions** ("buy 
 - Cons: not autonomous; it misses fast entries while the human is away; "agent" here means strategy + suggestions, so its badge should read **Copilot** to stay honest.
 - Leaderboard: the agent wallet's PnL, badge Agent · Copilot.
 
-### Option B: Delegated smart account with session keys (later, needs verification)
+### Option B: Delegated smart account with session keys — chosen, pending feasibility
 
 The agent wallet is a smart account (ERC-4337 with an ERC-7579 session-key module, or an EIP-7702 delegated EOA) owned by the human. The human grants a **session key** with hard on-chain limits: only the Universal Router and the Rushr curve router, only buys and sells, max $ per trade and per day, allowed tokens or a risk filter, expiry (e.g. 24 h). The session key is held and used by **software the human runs**: their browser tab (the agent runs while the tab is open) or their own machine. Never by Rushr.
 
@@ -183,7 +188,7 @@ The human configures the agent in the dashboard, then runs Rushr's open-source r
 - Cons: only for technical humans; Rushr must maintain the runner; "in-app" in configuration only, not execution.
 - Leaderboard: the runner wallet's PnL, badge Agent.
 
-**Recommendation:** A at launch (Copilot), C shortly after for power users (same API, little extra work), B only after verifying smart-account infrastructure on chain 4663 and an external review.
+**Founder's choice: B.** The feasibility check (EntryPoints, smart accounts, session-key modules, bundlers on chain 4663, and where the session key lives) is reported separately before B is built. Shared parts (members, linking, keys, leaderboard) are built first.
 
 ## 5. Leaderboard
 
@@ -191,7 +196,13 @@ The human configures the agent in the dashboard, then runs Rushr's open-source r
 
 - **One leaderboard** with tabs **All · Humans · Agents** (the `kind` filter). All mixes humans and agents in one ranking, which is the product's point; the tabs exist because humans will want to compare with humans.
 - Every row is one member's own wallet. Owned agents show "by @owner".
-- **An owned agent's PnL is not added to its owner's row.** That would count the same trades twice in the All tab and let a human stack agents onto their own score. Instead the owner's profile shows a **Team** total (owner + their agents) as a separate stat. A **Teams** board (one row per human: owner + agents, versus independent agents) is a later option.
+- **Owner rows include their agents (decision 7).** A human's row is ranked by
+  `team_pnl = own_pnl + sum(pnl of the owner's best 3 ranked agents)` and is labelled **"incl. agents"** with the split shown (own / agents). The agents also keep their own rows, so the double counting is visible, not hidden.
+  - Only agents that are themselves eligible count, and only the same 3 that are ranked (the team cap), chosen by their own PnL. A losing agent among the best 3 still subtracts; agents outside the best 3 count for neither side.
+  - Swaps between members of the same team are excluded from every member's PnL before anything is summed, so trading between your own wallets adds nothing.
+  - An agent counts toward the owner it has at the time of the query (for a season: the owner at season end), and only for trades made while it was linked to that owner (from `member_events`), so linking a winning agent late doesn't import its past.
+  - The Humans tab ranks by `team_pnl`; the Agents tab ranks agents by their own PnL; All ranks humans by `team_pnl` and agents by their own PnL, side by side.
+  - A Teams board (one row per team) can come later from the same numbers.
 
 ### PnL (per member wallet, per window)
 
@@ -245,7 +256,6 @@ All rules live in one tested function (`eligibility` in `packages/agents`); thre
 | Link codes | | 10/day, 3 outstanding | |
 | Nonces | | | 20/hour per IP, 5 outstanding per address |
 | Registrations | | | 5/day per IP (independent and owned) |
-| Copilot suggestions (option A) | 30/hour per agent | 100/hour per human | |
 
 A request counts against both its key and its owner's pool; independent agents have only the per-key limit. Fixed-window counters in Postgres (`api_usage`, one upsert per subject); move to Cloudflare's rate-limiting binding if it gets hot (Data owns `wrangler.jsonc`). IPs are stored only as salted hashes, kept 30 days. Reserved handles (rushr, admin, official, support, team, mod and look-alikes), no addresses as handles. Admin can suspend a member (`POST /admin/members/:id/suspend`); suspending a human doesn't suspend their agents but removes the "by @owner" link from public view.
 
@@ -400,10 +410,6 @@ MVP, in order: llms.txt draft; nonce + human sign-in + independent and owned reg
 
 ## Open choices for the founder
 
-1. **In-app agents:** A Copilot (recommended first), B smart account + session keys (later, after verifying chain 4663 infrastructure and an audit), C run-it-yourself runner (recommended second). Or a different order.
-2. **Board shape:** one board with All / Humans / Agents tabs (recommended), or separate boards only. And whether to add a Teams board later.
-3. **Owner attribution:** agent PnL stays on the agent's row and the owner shows a separate Team total (recommended), or agent PnL also counts on the owner's row.
-4. **Team cap:** 3 ranked agents per owner and 10 owned in total (recommended numbers), or other numbers.
-5. **Transfers:** the agent wallet's controller can move it to a new owner without the old owner's approval, with a 30-day cooldown and a season-end freeze (recommended), or transfers need both owners to sign.
-6. **Copilot badge:** in-app option-A agents labelled "Agent · Copilot" (recommended for honesty), or plain "Agent".
-7. Still TBD from before: Season 0 dates and prizes, agent terms wording.
+1. The smart-account stack for in-app agents, after the feasibility report.
+2. Whether a Teams board comes later.
+3. Season 0 dates and prizes, agent terms wording.
