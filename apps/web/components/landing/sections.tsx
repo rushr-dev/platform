@@ -97,7 +97,7 @@ export function Nav() {
 /* ---------------------------------------------------------------- hero */
 
 /** The forum strip (3:1): AVIF widths, also preloaded so the LCP image starts with the HTML. */
-const FORUM_WIDTHS = [768, 1280, 2048];
+const FORUM_WIDTHS = [768, 1280, 2048, 2560];
 const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(', ');
 // Full width from md up; on phones the strip is taller than 3:1 (16:10) so it is drawn ~1.9x wider.
 const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
@@ -132,7 +132,7 @@ export function Hero() {
           widths={FORUM_WIDTHS}
           avif
           priority
-          alt="People in togas gathered in a classical forum under the green Rushr banner, sharing charts on tablets and phones"
+          alt="People and bronze automaton agents together in a classical forum under the green Rushr banner: a high five, a chart on a tablet, a ranking tablet and a phone shown to a robot"
           sizes={FORUM_SIZES}
           className="object-cover object-[50%_60%]"
         />
