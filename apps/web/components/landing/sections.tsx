@@ -4,6 +4,7 @@ import { ArrowRight, Robot, TelegramLogo, XLogo } from '@phosphor-icons/react/di
 import type { RiskLevel, Stats, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
+import { Art } from './art';
 import { Reveal } from './reveal';
 
 const X_URL = 'https://x.com/rushrtrade';
@@ -142,12 +143,12 @@ export function Hero({ stats }: { stats: Stats | null }) {
         className="rise relative mx-auto mt-10 aspect-[16/10] w-full max-w-[1440px] [mask-image:linear-gradient(to_bottom,transparent,black_14%,black_72%,transparent)] sm:aspect-[2/1] md:mt-12 lg:aspect-[3/1]"
         style={{ animationDelay: '0.3s' }}
       >
-        <Image
-          src="/art/banner.jpg"
+        <Art
+          name="banner"
+          widths={[800, 1400, 2400]}
           alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
-          fill
           priority
-          sizes="(min-width: 1440px) 1440px, 100vw"
+          sizes="(min-width: 1440px) 1440px, (min-width: 1024px) 100vw, (min-width: 640px) 150vw, 188vw"
           className="object-cover object-[50%_40%] mix-blend-multiply"
         />
       </div>
@@ -318,7 +319,7 @@ export function ProductShot({
                   <CandleChart trades={trades} />
                 </div>
                 <div className="border-t border-white/5">
-                  {trades.slice(0, 4).map((t) => (
+                  {trades.filter((t) => (t.usd ?? 0) >= 1).slice(0, 4).map((t) => (
                     <div key={`${t.tx}:${t.log_index}`} className="flex items-center gap-4 px-4 py-2 font-mono text-[11px]">
                       <span className={t.side === 'buy' ? 'w-8 text-brand' : 'w-8 text-risk-high'}>{t.side}</span>
                       <span className="w-16 text-ink">{usd(t.usd)}</span>
@@ -363,7 +364,7 @@ export function ProductShot({
           </div>
 
           {/* Phone with the social feed, overlapping the desktop */}
-          <div className="theme-terminal absolute -bottom-20 -right-2 hidden w-[230px] rotate-[4deg] rounded-[34px] border border-black/20 bg-[#0a0d0b] p-2 shadow-[0_30px_70px_-20px_rgba(24,32,26,0.6)] xl:-right-12 xl:block">
+          <div className="theme-terminal absolute -bottom-48 -right-2 hidden w-[230px] rotate-[4deg] rounded-[34px] border border-black/20 bg-[#0a0d0b] p-2 shadow-[0_30px_70px_-20px_rgba(24,32,26,0.6)] xl:-right-12 xl:block">
             <div className="rounded-[27px] bg-surface p-3">
               <div className="mx-auto h-4 w-16 rounded-full bg-black" />
               <div className="mt-3 text-[11px] font-semibold">Feed</div>
@@ -509,10 +510,10 @@ export function Social({ original, clone, cloneCount }: { original: DexToken; cl
           <p className="mt-3 text-lg text-muted md:text-xl">the social trading app that checks every token first.</p>
         </Reveal>
         <Reveal delay={0.1} className="relative -mb-6 hidden aspect-[3/2] md:block">
-          <Image
-            src="/art/scholar.webp"
+          <Art
+            name="scholar"
+            widths={[480, 960]}
             alt="A classical scholar studying coins through a magnifying lens beside a scroll mapped with connected circles"
-            fill
             sizes="460px"
             className="object-cover mix-blend-multiply [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,black_55%,transparent)]"
           />
@@ -592,11 +593,11 @@ export function Social({ original, clone, cloneCount }: { original: DexToken; cl
           <Card id="agents" eyebrow="Agents" title="let an agent trade while you sleep." soon>
             <div className="-mx-7 -mb-7 flex items-end md:-mx-8 md:-mb-8">
               <div className="relative h-60 w-[52%] shrink-0 [mask-image:radial-gradient(ellipse_75%_70%_at_45%_55%,black_50%,transparent)]">
-                <Image
-                  src="/art/automaton.webp"
+                <Art
+                  name="automaton"
+                  widths={[480, 960]}
                   alt="A bronze automaton working a stone tablet with a rising chart while two traders watch"
-                  fill
-                  sizes="260px"
+                  sizes="360px"
                   className="object-cover object-[30%_50%] mix-blend-multiply"
                 />
               </div>
@@ -701,7 +702,7 @@ const ORBIT = [
 export function Closing() {
   return (
     <section className="relative isolate mt-32 overflow-hidden md:mt-44">
-      <Image src="/art/arena.webp" alt="" fill sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
+      <Art name="arena" widths={[800, 1536]} alt="" sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
       <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-bg to-transparent" />
       <div className="absolute inset-x-0 bottom-0 -z-10 h-40 bg-gradient-to-t from-bg to-transparent" />
 

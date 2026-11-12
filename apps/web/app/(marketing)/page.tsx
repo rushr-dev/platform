@@ -33,6 +33,9 @@ const FALLBACK: Record<string, DexToken> = {
 const BLOCKED = /fag|nig+(a|er)|retard|rape|nazi|hitler|porn|sex|cum|dick|cock|pussy|fuck|shit|cunt|whore|slut|kike|spic/i;
 const presentable = (t: TokenCard) => !!t.image_url && t.risk !== 'high' && !BLOCKED.test(`${t.symbol} ${t.name}`);
 
+/** New pairs that already have a safety verdict come first, so the shot doesn't show a column of "checking". */
+const withVerdictFirst = (ts: TokenCard[]) => [...ts.filter((t) => t.risk), ...ts.filter((t) => !t.risk)];
+
 /** Same-ticker clones of a token, as flagged by our safety checks. */
 async function getClones(symbol: string, original: string): Promise<TokenCard[]> {
   try {
@@ -61,7 +64,7 @@ export default async function Home() {
       <Nav />
       <main>
         <Hero stats={stats} />
-        <ProductShot trending={trending} fresh={fresh.filter(presentable)} focus={trending[0]!} trades={trades} clones={clones} />
+        <ProductShot trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
         <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
         <Closing />
       </main>
