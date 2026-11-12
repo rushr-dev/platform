@@ -54,9 +54,58 @@ export interface CalloutOut {
 
 const pct = (now: number | null, then: number | null) => (now !== null && then ? (now / then - 1) * 100 : null);
 
+interface CalloutDbRow {
+  id: string;
+  created_at: Date;
+  stance: 'bullish' | 'bearish';
+  body: string;
+  likes: number;
+  comments: number;
+  token: string;
+  price_at_post: number | null;
+  mcap_at_post: number | null;
+  author_id: string;
+  handle: string;
+  kind: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  owner_id: string | null;
+  owner_handle: string | null;
+  symbol: string | null;
+  name: string | null;
+  image_url: string | null;
+  price_now: number | null;
+  entry_tx: string | null;
+  entry_time: Date | null;
+  entry_price: number | null;
+  entry_usd: number | null;
+  entry_when: 'before_post' | 'after_post' | null;
+  peak: number | null;
+}
+
+interface MemberLiteRow {
+  id: string;
+  handle: string;
+  kind: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  created_at: Date;
+}
+
+interface CommentRow {
+  id: string;
+  body: string;
+  created_at: Date;
+  author_id: string;
+  handle: string;
+  kind: string;
+  display_name: string | null;
+  avatar_url: string | null;
+}
+
 /** Callouts with authors, tokens, entries and results. `where` is a fragment starting with `and`. */
 export async function calloutRows(sql: Sql, where: Fragment, n: number, before: { t: Date; id: string } | null): Promise<CalloutOut[]> {
-  const rows = await sql<any[]>`
+  const rows = await sql<CalloutDbRow[]>`
     select c.id, c.created_at, c.stance, c.body, c.likes, c.comments, c.token,
       c.price_at_post_usd::float8 as price_at_post, c.mcap_at_post_usd::float8 as mcap_at_post,
       m.id as author_id, m.handle, m.kind, m.display_name, m.avatar_url, o.id as owner_id, o.handle as owner_handle,
@@ -80,19 +129,19 @@ export async function calloutRows(sql: Sql, where: Fragment, n: number, before: 
     order by c.created_at desc, c.id desc
     limit ${n}`;
   return rows.map((r) => {
-    const base = r.price_at_post as number | null;
+    const base = r.price_at_post;
     return {
       id: r.id,
       createdAt: r.created_at,
       author: {
         id: r.author_id, handle: r.handle, kind: r.kind, displayName: r.display_name, avatarUrl: r.avatar_url,
-        owner: r.owner_id ? { id: r.owner_id, handle: r.owner_handle } : null,
+        owner: r.owner_id ? { id: r.owner_id, handle: r.owner_handle ?? '' } : null,
       },
       token: { address: r.token, symbol: r.symbol, name: r.name, imageUrl: r.image_url },
       stance: r.stance,
       body: r.body,
       atPost: { priceUsd: base, marketCapUsd: r.mcap_at_post },
-      entry: r.entry_tx ? { tx: r.entry_tx, time: r.entry_time, priceUsd: r.entry_price, usd: r.entry_usd, when: r.entry_when } : null,
+      entry: r.entry_tx && r.entry_time && r.entry_when ? { tx: r.entry_tx, time: r.entry_time, priceUsd: r.entry_price, usd: r.entry_usd, when: r.entry_when } : null,
       result: {
         priceUsd: r.price_now,
         sincePostPct: pct(r.price_now, base),
@@ -156,7 +205,7 @@ async function followList(c: C, dir: 'followers' | 'following') {
   const n = pageSize(c);
   const before = cursor(c);
   const [mine, other] = dir === 'followers' ? ['followee_id', 'follower_id'] : ['follower_id', 'followee_id'];
-  const rows = await c.var.sql.unsafe<any[]>(
+  const rows = await c.var.sql.unsafe<MemberLiteRow[]>(
     `select x.id, x.handle, x.kind, x.display_name, x.avatar_url, f.created_at
      from follows f join members x on x.id = f.${other} and x.status = 'active'
      where f.${mine} = $1 ${before ? 'and (f.created_at, x.id) < ($3, $4)' : ''}
@@ -302,7 +351,7 @@ social.get('/callouts/:id/comments', async (c) => {
     if (i < 1 || Number.isNaN(cur.t.getTime())) throw fail(422, 'invalid_cursor', 'Bad "after" cursor.');
   }
   const sql = c.var.sql;
-  const rows = await sql<any[]>`
+  const rows = await sql<CommentRow[]>`
     select k.id, k.body, k.created_at, m.id as author_id, m.handle, m.kind, m.display_name, m.avatar_url
     from comments k join members m on m.id = k.author_id and m.status = 'active'
     where k.callout_id = ${c.req.param('id')} and k.deleted_at is null and k.hidden_at is null

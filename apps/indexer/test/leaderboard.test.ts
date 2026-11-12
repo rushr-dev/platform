@@ -47,19 +47,19 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
     const r = await t.call('GET', '/leaderboard');
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ window: 'season', season: { id: 's0', name: 'Season 0' }, final: false });
-    expect(r.json.rows.map((x: any) => [x.rank, x.member.handle, x.score])).toEqual([
+    expect(r.json.rows.map((x) => [x.rank, x.member.handle, x.score])).toEqual([
       [1, 'bob', 150], [2, 'alice', 90], [3, 'alicebot', 60], [4, 'freebot', -30],
     ]);
-    const alice = r.json.rows.find((x: any) => x.member.handle === 'alice');
+    const alice = r.json.rows.find((x) => x.member.handle === 'alice');
     expect(alice).toMatchObject({ pnl: 30, inclAgents: true, agentsPnl: 60, agents: [{ id: 'm_bot', handle: 'alicebot' }], trades: 6, tokens: 3 });
-    expect(r.json.rows.find((x: any) => x.member.handle === 'alicebot').member.owner).toEqual({ id: expect.any(String), handle: 'alice' });
+    expect(r.json.rows.find((x) => x.member.handle === 'alicebot').member.owner).toEqual({ id: expect.any(String), handle: 'alice' });
     expect(r.headers.get('cache-control')).toContain('s-maxage=30');
   });
 
   it('has Humans and Agents tabs and rolling windows', async () => {
-    expect((await t.call('GET', '/leaderboard?kind=human')).json.rows.map((x: any) => x.member.handle)).toEqual(['bob', 'alice']);
-    expect((await t.call('GET', '/leaderboard?kind=agent')).json.rows.map((x: any) => x.member.handle)).toEqual(['alicebot', 'freebot']);
-    expect((await t.call('GET', '/leaderboard?window=24h')).json.rows.map((x: any) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot']);
+    expect((await t.call('GET', '/leaderboard?kind=human')).json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice']);
+    expect((await t.call('GET', '/leaderboard?kind=agent')).json.rows.map((x) => x.member.handle)).toEqual(['alicebot', 'freebot']);
+    expect((await t.call('GET', '/leaderboard?window=24h')).json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot']);
     expect((await t.call('GET', '/leaderboard?window=1y')).json.error.code).toBe('invalid_field');
   });
 
@@ -70,7 +70,7 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
   });
 
   it('lists seasons and freezes a finished one', async () => {
-    expect((await t.call('GET', '/seasons')).json.seasons.map((s: any) => s.id)).toEqual(['s0']);
+    expect((await t.call('GET', '/seasons')).json.seasons.map((s) => s.id)).toEqual(['s0']);
     expect((await t.admin('POST', '/seasons/s0/freeze')).json.error.code).toBe('season_running');
     await t.admin('POST', '/seasons', { id: 's0', name: 'Season 0', startsAt: new Date(Date.now() - 7 * 86_400_000).toISOString(), endsAt: new Date(Date.now() - 1000).toISOString() });
     const frozen = await t.admin('POST', '/seasons/s0/freeze');
@@ -79,7 +79,7 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
     await trade3(w(3), 100, 1000, 0);
     const r = await t.call('GET', '/leaderboard?season=s0');
     expect(r.json.final).toBe(true);
-    expect(r.json.rows.map((x: any) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot', 'freebot']);
+    expect(r.json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot', 'freebot']);
   });
 
   it('is off without its flag', async () => {
