@@ -4,7 +4,7 @@ import { tagHolders } from '@rushr/core';
 import { dbUrl, type Env } from './env';
 import { hydrator } from './hydrator';
 import {
-  POOL_TVL_TTL_S, minuteCandles, subMinuteCandles, tokenDetail, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
+  POOL_TVL_TTL_S, walletPnl, minuteCandles, subMinuteCandles, tokenDetail, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
 } from './data';
 
 export { tokenSummaries } from './data';
@@ -178,6 +178,16 @@ api.get('/tokens/:address/bubblemap', async (c) => {
     .map(([funder, w]) => ({ funder, wallets: w, pct: nodes.filter((n) => w.includes(n.wallet)).reduce((t, n) => t + n.pct, 0) }))
     .sort((a, b) => b.pct - a.pct);
   return c.json({ nodes, edges, clusters }, 200, cache(10));
+});
+
+/**
+ * A wallet's PnL across every indexed venue: summary (all-time realized/unrealized, realized 24h/7d/30d,
+ * volume, win rate) and positions with average cost. The summary refreshes every ~5 min.
+ */
+api.get('/wallets/:address/pnl', async (c) => {
+  const wallet = addr(c.req.param('address'));
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
+  return c.json(await walletPnl(c.var.sql, wallet), 200, cache(10));
 });
 
 /** Dev page: stats plus every token from the deployer. */

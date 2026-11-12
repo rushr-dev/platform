@@ -31,8 +31,12 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 const FLUSH_MS = 200;
 /** Once caught up, polling only confirms what the live path already wrote. */
 const POLL_MS = 2_000;
-/** Most v3/v2 pool addresses on the live pair-swap subscription. */
-const PAIR_SUB_MAX = 500;
+/**
+ * Most v3/v2 pool addresses on the live pair-swap subscription (env PAIR_SUB_MAX overrides). Measured
+ * 2026-11-12: 276 pools ≈ 243 KB/min (≈10.5 GB/month), 150 pools ≈ 161 KB/min (≈7.1 GB/month), against
+ * an approved ~4.3 GB/month, so 75 by default; the rest arrive by polling 2-4s later.
+ */
+const PAIR_SUB_MAX = 75;
 /** Recompute a token's signals at most this often while it's trading. */
 const SIGNAL_DEBOUNCE_MS = 15_000;
 
@@ -321,6 +325,7 @@ export class ChainPoller extends DurableObject<Env> {
       stage: (await this.ctx.storage.get('stage')) ?? null,
       alarmAt: await this.ctx.storage.getAlarm(),
       lastError: (await this.ctx.storage.get('lastError')) ?? null,
+      previousError: (await this.ctx.storage.get('previousError')) ?? null,
     };
   }
 
@@ -389,6 +394,12 @@ export class ChainPoller extends DurableObject<Env> {
       return;
     }
     if (caughtUp) await this.tickStats();
+    // /health shows the last error until 15 error-free minutes have passed; then it moves to previousError.
+    const lastError = await this.ctx.storage.get<{ at: string; message: string }>('lastError');
+    if (lastError && Date.now() - Date.parse(lastError.at) > 15 * 60_000) {
+      await this.ctx.storage.put('previousError', lastError);
+      await this.ctx.storage.delete('lastError');
+    }
     await this.ctx.storage.setAlarm(Date.now() + (caughtUp ? POLL_MS : 10));
   }
 
@@ -431,7 +442,7 @@ export class ChainPoller extends DurableObject<Env> {
       select p.id from pools p join tokens t on t.address = p.token
       where p.dex in ('v3', 'v2')
       order by t.volume_24h_usd desc nulls last, p.created_at desc
-      limit ${PAIR_SUB_MAX}`;
+      limit ${Number(this.env.PAIR_SUB_MAX ?? PAIR_SUB_MAX)}`;
     const ids = rows.map((r) => r.id).sort();
     const key = ids.join(',');
     if (!ids.length || key === this.pairSub.key) return;

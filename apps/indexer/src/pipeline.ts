@@ -7,6 +7,8 @@ import {
   QUOTES,
   TOPICS,
   STOCK_QUOTES,
+  acceptsPrice,
+  applyTrade,
   decodeLogs,
   launchpadForHook,
   subscribedTopics,
@@ -127,6 +129,8 @@ export class Pipeline {
   private quotes = new Map<string, ExtraQuote>();
   private pools = new Map<string, PoolInfo>();
   private tokens = new Map<string, TokenMeta>();
+  /** Last accepted price per token: the reference for the outlier guard. */
+  private refPrice = new Map<string, number>();
   private ethUsd: number | null = null;
   private loaded = false;
   /**
@@ -159,9 +163,12 @@ export class Pipeline {
         block: BigInt(p.created_block), time: Math.floor(p.created_at.getTime() / 1000),
       });
     }
-    const toks = await this.sql<{ address: string; decimals: number; total_supply: string }[]>`
-      select address, decimals, total_supply from tokens`;
-    for (const t of toks) this.tokens.set(t.address, { decimals: t.decimals, totalSupply: BigInt(t.total_supply) });
+    const toks = await this.sql<{ address: string; decimals: number; total_supply: string; price_usd: string | null }[]>`
+      select address, decimals, total_supply, price_usd from tokens`;
+    for (const t of toks) {
+      this.tokens.set(t.address, { decimals: t.decimals, totalSupply: BigInt(t.total_supply) });
+      if (t.price_usd) this.refPrice.set(t.address, Number(t.price_usd));
+    }
     const [eth] = await this.sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`;
     this.ethUsd = eth?.value.usd ?? null;
     const extra = [...new Set(pools.map((p) => p.quote).filter((q) => !ETH_LIKE.has(q) && q !== QUOTES.USDG))];
@@ -283,6 +290,8 @@ export class Pipeline {
 
     const newSwaps = new Set<string>();
     const newTransfers = new Set<string>();
+    // Each swap is priced once (the outlier guard is stateful).
+    const pricedBy = new Map<string, { priceUsd: string | null; usd: string | null }>();
     await this.sql.begin(async (tx) => {
       if (fresh.length) {
         const rows = fresh.map((l, i) => ({
@@ -320,6 +329,7 @@ export class Pipeline {
 
       lap('tx:tokens+pools');
       const priced = r.swaps.map((s) => ({ s, ...this.price(s) }));
+      for (const p of priced) pricedBy.set(`${p.s.tx}:${p.s.logIndex}`, { priceUsd: p.priceUsd, usd: p.usd });
       for (const k of await this.insertSwaps(tx, priced)) newSwaps.add(k);
       lap('tx:swaps');
       if (r.transfers.length && !this.opts.skipTransfers) {
@@ -356,7 +366,7 @@ export class Pipeline {
       trades: r.swaps
         .filter((s) => newSwaps.has(`${s.tx}:${s.logIndex}`))
         .map((s) => {
-          const p = this.price(s);
+          const p = pricedBy.get(`${s.tx}:${s.logIndex}`) ?? { priceUsd: null, usd: null };
           return {
             token: s.token, tx: s.tx, logIndex: s.logIndex, time: s.time, trader: s.trader, side: s.side, pool: s.pool, quote: s.quote,
             tokenAmount: s.tokenAmount.toString(), quoteAmount: s.quoteAmount.toString(),
@@ -382,7 +392,9 @@ export class Pipeline {
         insert into swaps ${tx(rows.slice(i, i + 1000))} on conflict do nothing returning tx, log_index`;
       for (const row of res) inserted.add(`${row.tx}:${row.log_index}`);
     }
-    await this.applyCandles(tx, priced.filter(({ s }) => inserted.has(`${s.tx}:${s.logIndex}`)));
+    const fresh = priced.filter(({ s }) => inserted.has(`${s.tx}:${s.logIndex}`));
+    await this.applyCandles(tx, fresh);
+    await this.applyPositions(tx, fresh);
     return inserted;
   }
 
@@ -696,7 +708,12 @@ export class Pipeline {
     const quote = Number(s.quoteAmount) / 10 ** quoteDecimals;
     const tokens = Number(s.tokenAmount) / 10 ** meta.decimals;
     const usd = quote * usdPerQuote;
-    return { priceUsd: String(usd / tokens), usd: String(usd) };
+    const price = usd / tokens;
+    // Dust and small outliers keep their USD value but never price the token (see acceptsPrice).
+    const reference = this.refPrice.get(s.token) ?? null;
+    if (!acceptsPrice({ usd, price, quoteRaw: s.quoteAmount, reference })) return { priceUsd: null, usd: String(usd) };
+    this.refPrice.set(s.token, price);
+    return { priceUsd: String(price), usd: String(usd) };
   }
 
   private async applyBalances(tx: TransactionSql, transfers: DecodedTransfer[]) {
@@ -722,6 +739,81 @@ export class Pipeline {
       await tx`insert into balances ${tx(rows.slice(i, i + 1000))}
                on conflict (token, wallet) do update set amount = balances.amount + excluded.amount, updated_at = now()`;
     }
+  }
+
+  /**
+   * Wallet positions (average cost) for newly inserted swaps, in chain order. Rows are read under
+   * lock in key order, updated in memory and written back; each sell's realized PnL goes on the swap.
+   */
+  async applyPositions(tx: TransactionSql, priced: { s: DecodedSwap; usd: string | null }[], replay = false) {
+    // Swaps up to positions_from are replayed by the rebuild job (exactly once); live applies the rest.
+    // Before the rebuild has started (no marker), positions aren't maintained at all.
+    const from = replay ? -1n : await this.positionsFrom();
+    if (from === null) return;
+    const items = priced
+      .filter((p) => p.usd != null && p.s.tokenAmount > 0n && p.s.block > from)
+      .sort((a, b) => (a.s.block === b.s.block ? a.s.logIndex - b.s.logIndex : a.s.block < b.s.block ? -1 : 1));
+    if (!items.length) return;
+    const keys = [...new Set(items.map((p) => `${p.s.trader}|${p.s.token}`))].sort();
+    const wallets = keys.map((k) => k.split('|')[0]!);
+    const tokens = keys.map((k) => k.split('|')[1]!);
+    const existing = await tx<
+      { wallet: string; token: string; bought_tokens: string; bought_usd: string; sold_tokens: string; sold_usd: string; buys: number; sells: number;
+        held_tokens: string; cost_basis_usd: string; realized_usd: string; unbacked_sold_tokens: string; first_trade_at: Date; last_trade_at: Date }[]
+    >`select p.* from positions p join unnest(${wallets}::text[], ${tokens}::text[]) k(w, t) on p.wallet = k.w and p.token = k.t
+      order by p.wallet, p.token for update of p`;
+    type Pos = { bought: bigint; boughtUsd: number; sold: bigint; soldUsd: number; buys: number; sells: number; held: bigint; cost: number;
+      realized: number; unbacked: bigint; first: Date; last: Date };
+    const pos = new Map<string, Pos>();
+    for (const r of existing) {
+      pos.set(`${r.wallet}|${r.token}`, {
+        bought: BigInt(r.bought_tokens), boughtUsd: Number(r.bought_usd), sold: BigInt(r.sold_tokens), soldUsd: Number(r.sold_usd),
+        buys: r.buys, sells: r.sells, held: BigInt(r.held_tokens), cost: Number(r.cost_basis_usd), realized: Number(r.realized_usd),
+        unbacked: BigInt(r.unbacked_sold_tokens), first: r.first_trade_at, last: r.last_trade_at,
+      });
+    }
+    const realizedBy: { tx: string; logIndex: number; usd: number }[] = [];
+    for (const { s, usd } of items) {
+      const k = `${s.trader}|${s.token}`;
+      const at = new Date(s.time * 1000);
+      const p = pos.get(k) ?? { bought: 0n, boughtUsd: 0, sold: 0n, soldUsd: 0, buys: 0, sells: 0, held: 0n, cost: 0, realized: 0, unbacked: 0n, first: at, last: at };
+      const realized = applyTrade(p, s.side, s.tokenAmount, Number(usd));
+      if (s.side === 'sell') realizedBy.push({ tx: s.tx, logIndex: s.logIndex, usd: realized });
+      if (at < p.first) p.first = at;
+      if (at > p.last) p.last = at;
+      pos.set(k, p);
+    }
+    const rows = keys.map((k) => {
+      const p = pos.get(k)!;
+      const [wallet, token] = k.split('|');
+      return {
+        wallet: wallet!, token: token!, bought_tokens: p.bought.toString(), bought_usd: String(p.boughtUsd), sold_tokens: p.sold.toString(),
+        sold_usd: String(p.soldUsd), buys: p.buys, sells: p.sells, held_tokens: p.held.toString(), cost_basis_usd: String(p.cost),
+        realized_usd: String(p.realized), unbacked_sold_tokens: p.unbacked.toString(), first_trade_at: p.first, last_trade_at: p.last,
+      };
+    });
+    for (let i = 0; i < rows.length; i += 500) {
+      await tx`insert into positions ${tx(rows.slice(i, i + 500))}
+        on conflict (wallet, token) do update set bought_tokens = excluded.bought_tokens, bought_usd = excluded.bought_usd,
+          sold_tokens = excluded.sold_tokens, sold_usd = excluded.sold_usd, buys = excluded.buys, sells = excluded.sells,
+          held_tokens = excluded.held_tokens, cost_basis_usd = excluded.cost_basis_usd, realized_usd = excluded.realized_usd,
+          unbacked_sold_tokens = excluded.unbacked_sold_tokens, first_trade_at = excluded.first_trade_at, last_trade_at = excluded.last_trade_at`;
+    }
+    if (realizedBy.length) {
+      await tx`update swaps s set realized_usd = v.usd
+        from unnest(${realizedBy.map((r) => r.tx)}::text[], ${realizedBy.map((r) => r.logIndex)}::int[], ${realizedBy.map((r) => String(r.usd))}::numeric[]) v(tx, li, usd)
+        where s.tx = v.tx and s.log_index = v.li`;
+    }
+  }
+
+  private positionsMarker: { at: number; block: bigint | null } = { at: 0, block: null };
+  /** The positions_from marker (checked at most once a minute). */
+  private async positionsFrom(): Promise<bigint | null> {
+    if (Date.now() - this.positionsMarker.at > 60_000) {
+      const [row] = await this.sql<{ value: { block: string } }[]>`select value from indexer_state where key = 'positions_from'`;
+      this.positionsMarker = { at: Date.now(), block: row ? BigInt(row.value.block) : null };
+    }
+    return this.positionsMarker.block;
   }
 
   private async applyCandles(tx: TransactionSql, priced: { s: DecodedSwap; priceUsd: string | null; usd: string | null }[]) {

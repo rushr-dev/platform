@@ -39,6 +39,26 @@ describe.skipIf(!pg)('beta: invites and feedback', () => {
     expect(list.json.invites.find((i: any) => i.code === a).used_by).toBe('alice');
   });
 
+  it('records first-touch referrals by the referrer handle, once', async () => {
+    const batch = await t.admin('POST', '/invites', { batch: 'ref', count: 2 });
+    expect((await t.call('GET', '/referrals/ALICE')).json).toMatchObject({ valid: true, referrer: { handle: 'alice' } });
+    expect((await t.call('GET', '/referrals/nobody_here')).json.valid).toBe(false);
+    const carol = await t.human('did:privy:carol', w(3));
+    const r = await t.call('POST', '/me', { auth: carol, body: { handle: 'carol', inviteCode: batch.json.codes[0], referralCode: '@Alice' } });
+    expect(r.status).toBe(201);
+    expect(r.json.referral).toMatchObject({ referrer: { handle: 'alice' }, code: 'alice' });
+    const [row] = await t.sql`select referee, referrer, code from referrals where referee = ${w(3)}`;
+    expect(row).toMatchObject({ referee: w(3), referrer: w(1), code: 'alice' });
+    const { referralFor } = await import('../src/agents/referrals');
+    expect(await referralFor(t.sql, w(3).toUpperCase().replace('0X', '0x'))).toEqual({ referrer: w(1), code: 'alice' });
+    expect(await referralFor(t.sql, w(1))).toBeNull();
+    // Unknown codes don't block sign-up.
+    const dan = await t.human('did:privy:dan', w(4));
+    const d = await t.call('POST', '/me', { auth: dan, body: { handle: 'dan', inviteCode: batch.json.codes[1], referralCode: 'ghost' } });
+    expect(d.status).toBe(201);
+    expect(d.json.referral).toBeNull();
+  });
+
   it('expires codes', async () => {
     const batch = await t.admin('POST', '/invites', { batch: 'old', count: 1, expiresAt: '2020-01-01T00:00:00Z' });
     expect((await t.call('GET', `/invites/${batch.json.codes[0]}`)).json.status).toBe('expired');

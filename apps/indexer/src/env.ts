@@ -16,6 +16,8 @@ export interface Env {
   HYPERDRIVE?: Hyperdrive;
   /** '1': stream v3/v2 swaps of tracked pools over the socket (address-filtered). Otherwise polling only (~2-4s). */
   LIVE_PAIRS?: string;
+  /** Cap on pools in the pair-swap socket subscription (default 75). */
+  PAIR_SUB_MAX?: string;
   CHAIN_POLLER: DurableObjectNamespace<ChainPoller>;
   LIVE_FEED: DurableObjectNamespace<LiveFeed>;
   BACKFILLER: DurableObjectNamespace<Backfiller>;
@@ -50,6 +52,9 @@ export const poller = (env: Env) => env.CHAIN_POLLER.get(env.CHAIN_POLLER.idFrom
 
 /** Pool-history backfill queue (a Backfiller instance of its own), next to the database. */
 export const poolHistory = (env: Env) => env.BACKFILLER.get(env.BACKFILLER.idFromName('pools'), { locationHint: 'apac' });
+
+/** Positions rebuild (a Backfiller instance of its own). */
+export const positionsJob = (env: Env) => env.BACKFILLER.get(env.BACKFILLER.idFromName('positions'), { locationHint: 'apac' });
 
 /** Full-history holder backfill queue (a Backfiller instance of its own), next to the database. */
 export const holderHistory = (env: Env) => env.BACKFILLER.get(env.BACKFILLER.idFromName('holders'), { locationHint: 'apac' });
