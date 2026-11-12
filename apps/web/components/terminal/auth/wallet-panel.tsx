@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowSquareOut, Check, Copy, GearSix, Key, Warning, X } from '@phosphor-icons/react';
 import { auth, useAuth } from '@/lib/auth';
 import { fmtUnits, useBalances } from '@/lib/balances';
@@ -9,7 +10,9 @@ import { EXPLORER } from '@/lib/format';
 
 /**
  * The user's Rushr wallet: balances, how to deposit, key export and a link to trading settings.
- * Opens as a drawer from the account menu.
+ * Opens as a drawer from the account menu. Rendered into document.body: the top bar has a
+ * backdrop-filter, which makes it the containing block for `position: fixed` children, so a drawer
+ * rendered inside it would be clipped to the bar's 56px height.
  */
 export function WalletPanel({ onClose }: { onClose: () => void }) {
   const { user } = useAuth();
@@ -25,7 +28,7 @@ export function WalletPanel({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex justify-end" role="dialog" aria-modal="true" aria-label="Your wallet">
       <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" />
       <div className="relative flex h-full w-full max-w-sm flex-col overflow-y-auto border-l border-white/[0.08] bg-surface p-5 shadow-2xl">
@@ -122,7 +125,8 @@ export function WalletPanel({ onClose }: { onClose: () => void }) {
           <span className="text-xs text-muted">Presets, slippage, caps</span>
         </Link>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
