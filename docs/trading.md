@@ -154,6 +154,7 @@ Status 2026-11-12. Nothing is signed or broadcast anywhere: verification is unit
 | `agent.ts` | `prepareSwap(client, request, opts)` for servers and agents: best route → unsigned tx, approvals, command list, ledger record, optional simulation. `toJsonSafe` for tool and HTTP output. No browser globals, no keys |
 | `fees.ts` | Fee math: fee off the input on buys, off the gross output on sells (identical to `PAY_PORTION`), slippage minimums, tax-adjusted slippage |
 | `pools.ts` | Discovery: PONS curve via `getLaunchedToken`; Uniswap v3 (4 fee tiers) and v2 on WETH/USDG; v4 from the API's `main_pool` (PositionManager `poolKeys`, falling back to the `Initialize` event for hook-managed pools), indexer-supplied keys and standard hookless pools, checked with StateView |
+| `api-pools.ts` | Adapter for the indexer's `GET /tokens/:a/pools` (`{ pools: [...] }`, Data branch 0c61362). v4 keys feed discovery only if `keccak256(abi.encode(key))` equals the row's pool id, so a bad response can't redirect a swap. Busy pools on venues we can't route yet (Ramses, Aero…) become a one-line disclosure. Returns `null` (falls back to on-chain discovery and `main_pool`) while the endpoint isn't deployed. Used by `prepareSwap`, `/swap` and the live script |
 | `quote.ts` | V4Quoter, QuoterV2, v2 reserve math, PONS curve math (exact to the wei); price impact from spot; ranks by what the user receives and prefers routes we can build |
 | `universal-router.ts` | Typed encoder for Universal Router commands and v4 actions. **Note:** the routers on 4663 (v2.1) take an extra `uint256[] maxHopSlippage` on v2/v3 swaps and an extra `uint256` in v4 `ExactInputSingleParams`. The older layouts revert or misbehave (found by simulation, matched against live txs) |
 | `build.ts` | Unsigned tx plus required approvals (ERC-20 → Permit2, then `Permit2.approve` or a signed `PermitSingle` as `PERMIT2_PERMIT`) |
@@ -248,5 +249,5 @@ Signing is disabled. Quotes use the **public** Robinhood RPC from the browser (i
 - Independent review of `RushrCurveRouter` against the checklist above.
 - Multi-hop routes (e.g. token → USDG → ETH) and split routes. Today it's the best single pool.
 - Ramses, Aero and the other v3 forks: adapter in the fee router (phase 2).
-- **Data request:** v4 pool keys (`currency0/1, fee, tickSpacing, hooks`) per pool in the API, so hooked pools (Doppler) resolve without a getLogs call.
+- `/tokens/:a/pools` (Data, built, awaiting the migration approval): already wired with a fixture-tested adapter. Once deployed, check one Doppler token live with `pnpm --filter @rushr/trade simulate <token>`.
 - Integrating the trade box into the terminal's token page (Terminal stream) on top of `@rushr/trade`.

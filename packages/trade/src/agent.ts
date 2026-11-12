@@ -5,6 +5,7 @@ import { findBestRoute } from './quote';
 import { draftTradeRecord, type TradeRecord } from './referral';
 import { simulateSwap, type SwapSimulation } from './simulate';
 import type { DiscoverOptions } from './pools';
+import { fetchApiPools, hintsFromApiPools, unroutableNote } from './api-pools';
 import type { Approval, Pool, Quote, SwapRequest } from './types';
 
 /**
@@ -22,6 +23,9 @@ export interface PrepareOptions extends BuildOptions {
   simulateFundEth?: bigint;
   /** Refuse unless the config is ready for real signing (treasury set). Default false. */
   forSigning?: boolean;
+  /** Rushr API base for `/tokens/:a/pools` hints (default https://api.rushr.trade); false disables the lookup. */
+  apiUrl?: string | false;
+  fetch?: typeof fetch;
 }
 
 export interface PreparedSwap {
@@ -41,7 +45,16 @@ export interface PreparedSwap {
 export async function prepareSwap(client: PublicClient, req: SwapRequest, opts: PrepareOptions = {}): Promise<PreparedSwap> {
   const cfg = resolveConfig(opts.config);
   if (opts.forSigning) assertSignable(cfg);
-  const route = await findBestRoute(client, req, cfg, opts.discover);
+  let discover = opts.discover;
+  let note: string | null = null;
+  if (!discover?.pools && !discover?.apiPools && opts.apiUrl !== false) {
+    const apiPools = await fetchApiPools(req.token, { apiUrl: opts.apiUrl || undefined, fetch: opts.fetch });
+    if (apiPools) {
+      discover = { ...discover, apiPools };
+      note = unroutableNote(hintsFromApiPools(apiPools, req.quoteAsset));
+    }
+  }
+  const route = await findBestRoute(client, req, cfg, discover);
   const built = buildSwap(route.best, cfg, opts);
   const simulation = opts.simulate ? await simulateSwap(client, built, cfg, opts.simulateFundEth ? { fundEth: opts.simulateFundEth } : {}) : undefined;
   return {
@@ -53,7 +66,7 @@ export async function prepareSwap(client: PublicClient, req: SwapRequest, opts: 
     deadline: built.deadline,
     record: draftTradeRecord(route.best, cfg, built.tx.to, opts.now),
     simulation,
-    warnings: route.best.warnings,
+    warnings: note ? [...route.best.warnings, note] : route.best.warnings,
   };
 }
 

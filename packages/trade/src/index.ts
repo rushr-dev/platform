@@ -9,6 +9,7 @@ export * from './math';
 export * from './permit2';
 export * from './referral';
 export * from './agent';
+export * from './api-pools';
 export * from './pools';
 export * from './quote';
 export * from './simulate';

@@ -18,6 +18,7 @@ import { probeTokenSafety, simulateCalls, approvalCalls, swapCall, analyzeSwapTr
 import { describeCommands } from '../src/universal-router';
 import { TRADE_ADDRESSES } from '../src/addresses';
 import { erc20Abi } from '../src/abis';
+import { fetchApiPools } from '../src/api-pools';
 import type { Quote } from '../src/types';
 
 function rpcUrl(): string {
@@ -66,7 +67,9 @@ async function run(token: Address, mainPool?: `0x${string}`, quoteAsset: 'ETH' |
   console.log(`\n=== ${token} (${quoteAsset}) ===`);
   let route;
   try {
-    route = await findBestRoute(client, { side: 'buy', token, quoteAsset, amountIn, trader, slippageBps: 300 }, cfg, { mainPool, createdBlock });
+    const apiPools = await fetchApiPools(token);
+    console.log(`  api pools: ${apiPools ? `${apiPools.length} rows` : 'endpoint not available, on-chain discovery only'}`);
+    route = await findBestRoute(client, { side: 'buy', token, quoteAsset, amountIn, trader, slippageBps: 300 }, cfg, { mainPool, createdBlock, apiPools });
   } catch (e) {
     console.log('route:', (e as Error).message);
     return;

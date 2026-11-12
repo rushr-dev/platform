@@ -6,6 +6,9 @@ import {
   assertSignable,
   buildSwap,
   erc20Abi,
+  fetchApiPools,
+  hintsFromApiPools,
+  unroutableNote,
   findBestRoute,
   isBuildable,
   isPlaceholderRecipient,
@@ -67,6 +70,8 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
   const [slippage, setSlippage] = useState('1');
   /** Test-bed stand-in for the referral the server would resolve from the trader's signup. */
   const [referrer, setReferrer] = useState('');
+  /** Disclosure for busy pools on venues we can't route yet (from the indexer's pool list). */
+  const [venueNote, setVenueNote] = useState<string | null>(null);
 
   const [token, setToken] = useState<TokenInfo | null>(null);
   const [route, setRoute] = useState<RouteResult | null>(null);
@@ -116,7 +121,11 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
     setError(null);
     setSim(null);
     setSafety(null);
+    setVenueNote(null);
     try {
+      // Pool keys from the indexer (incl. hooked v4 pools); null until the endpoint is deployed.
+      const apiPools = await fetchApiPools(tokenAddress, { apiUrl: API_URL });
+      if (apiPools) setVenueNote(unroutableNote(hintsFromApiPools(apiPools, quoteAsset)));
       const r = await findBestRoute(
         client,
         {
@@ -130,7 +139,7 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
           source: { kind: 'web' },
         },
         cfg,
-        { mainPool: token.main_pool ?? null, createdBlock: token.created_block ? BigInt(token.created_block) : undefined },
+        { mainPool: token.main_pool ?? null, createdBlock: token.created_block ? BigInt(token.created_block) : undefined, apiPools },
       );
       setRoute(r);
       setSelected(Math.max(0, r.quotes.indexOf(r.best)));
@@ -353,6 +362,7 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
             </ul>
           </div>
         )}
+        {venueNote && <p className="mt-3 text-xs text-muted">{venueNote}</p>}
         {error && <p className="mt-3 break-words text-xs text-risk-high">{error}</p>}
       </section>
 

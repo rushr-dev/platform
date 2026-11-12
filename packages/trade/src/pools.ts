@@ -12,6 +12,7 @@ import {
 import { sortCurrencies, v4PoolId, V4_DYNAMIC_FEE_FLAG } from './math';
 import type { Pool, PonsPool, QuoteAsset, V2Pool, V3Pool, V4Pool, Venue } from './types';
 import type { PoolKey } from './universal-router';
+import { hintsFromApiPools, type ApiPoolRow } from './api-pools';
 import { ABIS, launchpadForHook } from '@rushr/core/chain/robinhood';
 
 export interface DiscoverOptions {
@@ -26,6 +27,8 @@ export interface DiscoverOptions {
   trader?: Address;
   /** Token creation block (Rushr API `created_block`): bounds the Initialize-event lookup for hooked pools. */
   createdBlock?: bigint;
+  /** Rows from the Rushr API `/tokens/:a/pools` (keys verified against pool ids before use). */
+  apiPools?: ApiPoolRow[] | null;
 }
 
 /** Blocks scanned after `createdBlock` for the pool's Initialize event (~18 min at 0.11 s blocks). */
@@ -168,6 +171,7 @@ async function discoverV4(client: PublicClient, token: Address, quotes: Address[
     keys.set(v4PoolId(key), key);
   };
   for (const k of opts.v4Keys ?? []) add(k);
+  if (opts.apiPools) for (const k of hintsFromApiPools(opts.apiPools, opts.quoteAsset).v4Keys) add(k);
 
   if (opts.mainPool && opts.mainPool.length === 66) {
     try {
