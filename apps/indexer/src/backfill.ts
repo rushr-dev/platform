@@ -118,6 +118,39 @@ export class Backfiller extends DurableObject<Env> {
     if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 1_000);
   }
 
+  /** Fill pool keys (fee, tickSpacing) for pools indexed before they were stored. Runs on the "pools" instance. */
+  async fillKeys(): Promise<void> {
+    await this.ctx.storage.put('keysFill', true);
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 500);
+  }
+
+  /** One chunk of the key fill. Returns false when every pool has its key. */
+  private async keysStep(): Promise<boolean> {
+    const { sql, rpc } = this.init();
+    const rows = await sql<{ id: string; dex: string }[]>`
+      select id, dex from pools where fee is null and dex in ('uniswap-v4', 'v3') and not (id = any(${(await this.ctx.storage.get<string[]>('keysMissing')) ?? []}))
+      order by id limit 100`;
+    if (!rows.length) {
+      await this.ctx.storage.delete('keysFill');
+      console.log('pool keys filled');
+      return false;
+    }
+    const v4 = rows.filter((r) => r.dex === 'uniswap-v4').map((r) => r.id);
+    const v3 = rows.filter((r) => r.dex === 'v3').map((r) => r.id);
+    const found = new Map<string, { fee: number | null; tickSpacing: number | null }>();
+    if (v4.length) {
+      for (const [id, k] of await rpc.v4Initialized(v4)) found.set(id, k);
+      const rest = v4.filter((id) => !found.has(id));
+      if (rest.length) for (const { id, key } of await rpc.poolKeys(rest)) if (key) found.set(id, key);
+    }
+    if (v3.length) for (const { id, key } of await rpc.pairKeys(v3)) if (key) found.set(id, key);
+    for (const [id, k] of found) await sql`update pools set fee = ${k.fee}, tick_spacing = ${k.tickSpacing} where id = ${id}`;
+    // Pools with no findable key are remembered so the loop moves past them.
+    const missing = rows.map((r) => r.id).filter((id) => !found.has(id) || found.get(id)!.fee == null);
+    if (missing.length) await this.ctx.storage.put('keysMissing', [...((await this.ctx.storage.get<string[]>('keysMissing')) ?? []), ...missing]);
+    return true;
+  }
+
   async poolStatus() {
     return {
       job: (await this.ctx.storage.get<PoolJob>('poolJob')) ?? null,
@@ -330,6 +363,19 @@ export class Backfiller extends DurableObject<Env> {
         return;
       }
       if (((await this.ctx.storage.get<string[]>('holdersPending')) ?? []).length) await this.ctx.storage.setAlarm(Date.now() + 10);
+      return;
+    }
+    // Pool-key fill (the "pools" instance), before the history queue.
+    if (await this.ctx.storage.get('keysFill')) {
+      const started = Date.now();
+      try {
+        while (Date.now() - started < BUDGET_MS && (await this.keysStep()));
+      } catch (err) {
+        console.error('pool keys error', err);
+        await this.ctx.storage.setAlarm(Date.now() + 10_000);
+        return;
+      }
+      await this.ctx.storage.setAlarm(Date.now() + 10);
       return;
     }
     // Pool-history queue (only the "pools" instance gets these).

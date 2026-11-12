@@ -1,5 +1,5 @@
 {
-  "id": "f50a09f7-c77d-42de-801a-2f2dc42f4baa",
+  "id": "4cc416c3-32ab-4471-8c43-ec469e8a31a3",
   "prevId": "ea10e498-4dd3-48e4-afe7-572cbc116786",
   "version": "7",
   "dialect": "postgresql",
@@ -335,6 +335,30 @@
         "venue": {
           "name": "venue",
           "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fee": {
+          "name": "fee",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tick_spacing": {
+          "name": "tick_spacing",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "liquidity_usd": {
+          "name": "liquidity_usd",
+          "type": "numeric",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "liquidity_at": {
+          "name": "liquidity_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },

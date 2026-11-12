@@ -70,6 +70,12 @@ export const pools = pgTable(
     tokenIsCurrency0: boolean('token_is_currency0').notNull().default(false),
     dex: text('dex').notNull(), // 'uniswap-v4' | 'pons-curve' | 'v3' | 'v2' (v3/v2 include every fork)
     venue: text('venue'), // v3/v2 only: DEX name (uniswap, ramses, aero, up, topaz, ...), 'other' if unknown
+    // Pool key parts, so swaps can be routed (v4: currency0/1 from token/quote + these + hooks). Null for curves and v2.
+    fee: integer('fee'),
+    tickSpacing: integer('tick_spacing'),
+    /** Last measured TVL (v3/v2: the pool's token balances), and when. Null for v4 until per-pool TVL lands. */
+    liquidityUsd: numeric('liquidity_usd'),
+    liquidityAt: timestamp('liquidity_at', { withTimezone: true }),
     launchpad: text('launchpad'),
     hooks: text('hooks'),
     createdBlock: bigint('created_block', { mode: 'bigint' }).notNull(),

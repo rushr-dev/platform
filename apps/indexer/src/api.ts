@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import postgres, { type Sql } from 'postgres';
 import { tagHolders } from '@rushr/core';
 import { dbUrl, type Env } from './env';
+import { Rpc } from './rpc';
 import { loadSnapshot } from './signals';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
@@ -29,6 +30,7 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
       t.price_usd::float8 as price_usd, t.market_cap_usd::float8 as market_cap_usd,
       t.ath_market_cap_usd::float8 as ath_market_cap_usd, t.volume_24h_usd::float8 as volume_24h_usd,
       t.holders, t.bonding_progress::float8 as bonding_progress,
+      (select sum(p.liquidity_usd) from pools p where p.token = t.address)::float8 as liquidity_usd,
       s.risk_level as risk, s.verdict,
       (s.data->>'top10Pct')::float8 as top10_pct, (s.data->>'devPct')::float8 as dev_pct,
       (s.data->>'bundledPct')::float8 as bundled_pct, (s.data->>'snipersPct')::float8 as snipers_pct,
@@ -106,6 +108,86 @@ api.get('/tokens/:address', async (c) => {
   const [{ count: trades24h } = { count: 0 }] = await sql<{ count: number }[]>`
     select count(*)::int as count from swaps where token = ${token} and time > now() - interval '24 hours'`;
   return c.json({ ...summary, ...extra, dev: dev ?? null, trades_24h: trades24h }, 200, cache(2));
+});
+
+/** Re-measure a v3/v2 pool's TVL (its token balances) at most this often; reads are on demand, per page view. */
+const POOL_TVL_TTL_S = 30;
+const NATIVE = '0x0000000000000000000000000000000000000000';
+const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
+const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
+
+/**
+ * Every pool of a token we index, busiest first, with its routing key (Universal Router needs
+ * currency0/currency1/fee/tickSpacing/hooks for v4, fee for v3), 24h volume and liquidity.
+ * Liquidity: v3/v2 = the pool's token balances (matches DexScreener), refreshed on read every 30s.
+ * v4 pools share the PoolManager's balance, so their liquidity is null for now.
+ */
+api.get('/tokens/:address/pools', async (c) => {
+  const sql = c.var.sql;
+  const token = addr(c.req.param('address'));
+  const [t] = await sql<{ decimals: number; price_usd: string | null }[]>`select decimals, price_usd from tokens where address = ${token}`;
+  if (!t) return c.json({ error: 'not found' }, 404);
+  const pools = await sql<
+    { id: string; dex: string; venue: string | null; quote: string; token_is_currency0: boolean; fee: number | null; tick_spacing: number | null;
+      hooks: string | null; launchpad: string | null; liquidity_usd: string | null; liquidity_at: Date | null; created_at: Date }[]
+  >`select id, dex, venue, quote, token_is_currency0, fee, tick_spacing, hooks, launchpad, liquidity_usd, liquidity_at, created_at
+    from pools where token = ${token}`;
+  const vol = new Map(
+    (await sql<{ pool: string; usd: number; n: number }[]>`
+      select pool, coalesce(sum(usd), 0)::float8 as usd, count(*)::int as n from swaps
+      where token = ${token} and time > now() - interval '24 hours' group by pool`).map((r) => [r.pool, r]),
+  );
+
+  // Refresh stale v3/v2 TVL in one batched RPC call.
+  const stale = pools.filter((p) => (p.dex === 'v3' || p.dex === 'v2') && (!p.liquidity_at || Date.now() - p.liquidity_at.getTime() > POOL_TVL_TTL_S * 1000));
+  if (stale.length) {
+    const quotes = [...new Set(stale.map((p) => p.quote))];
+    const qrows = await sql<{ address: string; decimals: number; price_usd: string | null }[]>`
+      select address, decimals, price_usd from tokens where address = any(${quotes})`;
+    const [eth] = await sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`;
+    const quoteInfo = (q: string): { decimals: number; usd: number | null } =>
+      q === USDG ? { decimals: 6, usd: 1 }
+        : q === WETH || q === NATIVE ? { decimals: 18, usd: eth?.value.usd ?? null }
+        : (() => { const r = qrows.find((x) => x.address === q); return { decimals: r?.decimals ?? 18, usd: r?.price_usd ? Number(r.price_usd) : null }; })();
+    try {
+      const bal = await new Rpc(c.env.RPC_URL).balances(stale.flatMap((p) => [{ token, holder: p.id }, { token: p.quote, holder: p.id }]));
+      const now = new Date();
+      for (const [i, p] of stale.entries()) {
+        const tb = bal[i * 2];
+        const qb = bal[i * 2 + 1];
+        const q = quoteInfo(p.quote);
+        if (tb == null || qb == null || q.usd == null || !t.price_usd) continue;
+        const usd = (Number(tb) / 10 ** t.decimals) * Number(t.price_usd) + (Number(qb) / 10 ** q.decimals) * q.usd;
+        p.liquidity_usd = String(usd);
+        p.liquidity_at = now;
+        await sql`update pools set liquidity_usd = ${usd}, liquidity_at = ${now} where id = ${p.id}`;
+      }
+    } catch (err) {
+      console.error('pool tvl refresh failed', token, err);
+    }
+  }
+
+  const version = (dex: string) => (dex === 'uniswap-v4' ? 'v4' : dex === 'pons-curve' ? 'curve' : dex);
+  const rows = pools.map((p) => {
+    const [c0, c1] = p.token_is_currency0 ? [token, p.quote] : [p.quote, token];
+    const routable = p.dex === 'uniswap-v4' || p.dex === 'v3' || p.dex === 'v2';
+    return {
+      pool: p.id,
+      dex: p.venue ?? (p.dex === 'uniswap-v4' ? 'uniswap' : p.dex === 'pons-curve' ? 'pons' : p.dex),
+      version: version(p.dex),
+      launchpad: p.launchpad,
+      quote: p.quote,
+      token_is_currency0: p.token_is_currency0,
+      key: routable ? { currency0: c0, currency1: c1, fee: p.fee, tickSpacing: p.tick_spacing, hooks: p.dex === 'uniswap-v4' ? (p.hooks ?? NATIVE) : null } : null,
+      liquidity_usd: p.liquidity_usd == null ? null : Number(p.liquidity_usd),
+      liquidity_at: p.liquidity_at,
+      volume_24h_usd: vol.get(p.id)?.usd ?? 0,
+      trades_24h: vol.get(p.id)?.n ?? 0,
+      created_at: p.created_at,
+    };
+  });
+  rows.sort((a, b) => b.volume_24h_usd - a.volume_24h_usd || (b.liquidity_usd ?? 0) - (a.liquidity_usd ?? 0));
+  return c.json({ pools: rows }, 200, cache(POOL_TVL_TTL_S));
 });
 
 api.get('/tokens/:address/signals', async (c) => {

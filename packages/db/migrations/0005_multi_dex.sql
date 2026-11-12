@@ -7,5 +7,9 @@ CREATE TABLE "holder_backfill" (
 );
 --> statement-breakpoint
 ALTER TABLE "pools" ADD COLUMN "venue" text;--> statement-breakpoint
+ALTER TABLE "pools" ADD COLUMN "fee" integer;--> statement-breakpoint
+ALTER TABLE "pools" ADD COLUMN "tick_spacing" integer;--> statement-breakpoint
+ALTER TABLE "pools" ADD COLUMN "liquidity_usd" numeric;--> statement-breakpoint
+ALTER TABLE "pools" ADD COLUMN "liquidity_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "tokens" ADD COLUMN "image_at" timestamp with time zone;--> statement-breakpoint
 UPDATE "tokens" SET "image_at" = "metadata_at" WHERE "image_url" IS NOT NULL;

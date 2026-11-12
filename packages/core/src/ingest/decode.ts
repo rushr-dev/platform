@@ -89,6 +89,9 @@ export interface PoolInfo {
   dex: 'uniswap-v4' | 'pons-curve' | 'v3' | 'v2';
   /** DEX name for v3/v2 pools (from PAIR_FACTORIES; 'other' when the factory isn't listed). */
   venue?: string | null;
+  /** Pool key parts (v4: from Initialize or PositionManager; v3: fee()/tickSpacing()). Null when unknown or n/a. */
+  fee?: number | null;
+  tickSpacing?: number | null;
   launchpad: LaunchpadId | null;
   hooks: Address | null;
   block: bigint;
@@ -226,6 +229,8 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
         dex: 'uniswap-v4',
         launchpad: launchpadForHook(hooks) ?? 'uniswap-v4',
         hooks: hooks === NATIVE_ETH ? null : hooks,
+        fee: Number(ev.args.fee),
+        tickSpacing: Number(ev.args.tickSpacing),
         block: m.block,
         time: m.time,
       };

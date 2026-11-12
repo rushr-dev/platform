@@ -43,6 +43,8 @@ interface PoolKey {
   hooks: Address;
   dex: 'uniswap-v4' | 'v3' | 'v2';
   venue: string | null;
+  fee: number | null;
+  tickSpacing: number | null;
 }
 const CACHE_LIMIT = 50_000;
 /** Discovery limits per decoded range, so a burst of unknown pools can't stall a poll step. */
@@ -140,12 +142,12 @@ export class Pipeline {
   async load(): Promise<void> {
     if (this.loaded) return;
     const pools = await this.sql<
-      { id: string; token: string; quote: string; token_is_currency0: boolean; dex: string; venue: string | null; launchpad: string | null; hooks: string | null; created_block: string; created_at: Date }[]
-    >`select id, token, quote, token_is_currency0, dex, venue, launchpad, hooks, created_block, created_at from pools`;
+      { id: string; token: string; quote: string; token_is_currency0: boolean; dex: string; venue: string | null; fee: number | null; tick_spacing: number | null; launchpad: string | null; hooks: string | null; created_block: string; created_at: Date }[]
+    >`select id, token, quote, token_is_currency0, dex, venue, fee, tick_spacing, launchpad, hooks, created_block, created_at from pools`;
     for (const p of pools) {
       this.pools.set(p.id, {
         id: p.id, token: p.token as Address, quote: p.quote as Address, tokenIsCurrency0: p.token_is_currency0,
-        dex: p.dex as PoolInfo['dex'], venue: p.venue, launchpad: p.launchpad as PoolInfo['launchpad'], hooks: p.hooks as Address | null,
+        dex: p.dex as PoolInfo['dex'], venue: p.venue, fee: p.fee, tickSpacing: p.tick_spacing, launchpad: p.launchpad as PoolInfo['launchpad'], hooks: p.hooks as Address | null,
         block: BigInt(p.created_block), time: Math.floor(p.created_at.getTime() / 1000),
       });
     }
@@ -292,13 +294,14 @@ export class Pipeline {
       }
       if (r.pools.length) {
         const rows = r.pools.map((p) => ({
-          id: p.id, token: p.token, quote: p.quote, token_is_currency0: p.tokenIsCurrency0, dex: p.dex, venue: p.venue ?? null,
+          id: p.id, token: p.token, quote: p.quote, token_is_currency0: p.tokenIsCurrency0, dex: p.dex, venue: p.venue ?? null, fee: p.fee ?? null, tick_spacing: p.tickSpacing ?? null,
           launchpad: p.launchpad, hooks: p.hooks, created_block: p.block.toString(), created_at: new Date(p.time * 1000),
         }));
         // A pool first seen mid-life (live discovery) may be replayed later from its real creation:
         // keep the earliest block, so backfills cover its whole history.
         await tx`insert into pools ${tx(rows)} on conflict (id) do update set
                    created_block = least(pools.created_block, excluded.created_block),
+                   fee = coalesce(pools.fee, excluded.fee), tick_spacing = coalesce(pools.tick_spacing, excluded.tick_spacing),
                    created_at = least(pools.created_at, excluded.created_at),
                    quote = case when pools.dex = 'pons-curve' then excluded.quote else pools.quote end`;
       }
@@ -388,7 +391,7 @@ export class Pipeline {
       await this.sql.begin(async (tx) => {
         if (pools.length) {
           const rows = pools.map((p) => ({
-            id: p.id, token: p.token, quote: p.quote, token_is_currency0: p.tokenIsCurrency0, dex: p.dex, venue: p.venue ?? null,
+            id: p.id, token: p.token, quote: p.quote, token_is_currency0: p.tokenIsCurrency0, dex: p.dex, venue: p.venue ?? null, fee: p.fee ?? null, tick_spacing: p.tickSpacing ?? null,
             launchpad: p.launchpad, hooks: p.hooks, created_block: p.block.toString(), created_at: new Date(p.time * 1000),
           }));
           await tx`insert into pools ${tx(rows)} on conflict (id) do nothing`;
@@ -447,13 +450,23 @@ export class Pipeline {
       for (const { id, key } of await this.rpc.poolKeys(missV4)) {
         this.poolKeyCache.set(id, key ? { ...key, dex: 'uniswap-v4', venue: null } : null);
       }
+      // Hook pools (Doppler, ...) never pass through PositionManager: read their Initialize event instead.
+      const missing = missV4.filter((id) => !this.poolKeyCache.get(id));
+      if (missing.length) {
+        for (const [id, k] of await this.rpc.v4Initialized(missing)) this.poolKeyCache.set(id, { ...k, dex: 'uniswap-v4', venue: null });
+      }
     }
     if (missPairs.length) {
       for (const { id, key } of await this.rpc.pairKeys(missPairs)) {
         const f = key?.factory ? PAIR_FACTORIES[key.factory] : undefined;
         this.poolKeyCache.set(
           id,
-          key ? { currency0: key.currency0, currency1: key.currency1, hooks: ZERO, dex: f?.kind ?? pairKind(id), venue: f?.venue ?? 'other' } : null,
+          key
+            ? {
+                currency0: key.currency0, currency1: key.currency1, hooks: ZERO, dex: f?.kind ?? pairKind(id), venue: f?.venue ?? 'other',
+                fee: key.fee, tickSpacing: key.tickSpacing,
+              }
+            : null,
         );
       }
     }
@@ -526,7 +539,7 @@ export class Pipeline {
         newTokens.push({ token, origin, pad, migrated: graduated, pool: id });
       }
       newPools.push({
-        id, token, quote, tokenIsCurrency0: key.currency0 === token, dex: key.dex, venue: key.venue,
+        id, token, quote, tokenIsCurrency0: key.currency0 === token, dex: key.dex, venue: key.venue, fee: key.fee, tickSpacing: key.tickSpacing,
         launchpad: key.dex === 'uniswap-v4' ? (pad ?? 'uniswap-v4') : pad, hooks: key.hooks === NATIVE_ETH ? null : key.hooks,
         block: beforeBlock, time: now,
       });
@@ -563,7 +576,7 @@ export class Pipeline {
         await tx`insert into tokens ${tx(rows)} on conflict (address) do nothing`;
       }
       const poolRows = newPools.map((p) => ({
-        id: p.id, token: p.token, quote: p.quote, token_is_currency0: p.tokenIsCurrency0, dex: p.dex, venue: p.venue ?? null, launchpad: p.launchpad,
+        id: p.id, token: p.token, quote: p.quote, token_is_currency0: p.tokenIsCurrency0, dex: p.dex, venue: p.venue ?? null, fee: p.fee ?? null, tick_spacing: p.tickSpacing ?? null, launchpad: p.launchpad,
         hooks: p.hooks, created_block: p.block.toString(), created_at: new Date(p.time * 1000),
       }));
       await tx`insert into pools ${tx(poolRows)} on conflict (id) do nothing`;

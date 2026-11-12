@@ -111,6 +111,10 @@ app.get('/admin/backfill', async (c) => {
 
 // Pool-history backfill (last 48h of swaps of newly discovered pools). POST ?token=<address> queues all its pools.
 app.get('/admin/pools', async (c) => c.json(await poolHistory(c.env).poolStatus()));
+app.post('/admin/pools/keys', async (c) => {
+  await poolHistory(c.env).fillKeys();
+  return c.json({ started: true });
+});
 app.post('/admin/pools/backfill', async (c) => {
   const token = c.req.query('token')?.toLowerCase();
   if (!token) return c.json({ error: 'token required' }, 400);
