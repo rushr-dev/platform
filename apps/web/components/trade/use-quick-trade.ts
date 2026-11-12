@@ -58,6 +58,27 @@ export type TradeStatus =
   | { kind: 'success'; hash: Hex; url: string }
   | { kind: 'failed'; message: string; hash?: Hex; url?: string };
 
+/**
+ * Trade ledger (Data's POST /v1/trades, Privy access token). Fire-and-forget after a confirmed swap:
+ * the server derives trader, amounts and the actual treasury fee from the chain, so only the hash and
+ * attribution are sent. Until the endpoint ships, the 404 is ignored. Never blocks or fails a trade.
+ */
+export async function recordTrade(txHash: Hex, referralCode?: string | null): Promise<void> {
+  try {
+    const token = await auth.getAccessToken();
+    if (!token) return;
+    const res = await fetch(`${API_URL}/v1/trades`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' }, ...(referralCode ? { referralCode } : {}) }),
+      keepalive: true,
+    });
+    await res.body?.cancel().catch(() => undefined);
+  } catch {
+    /* best effort: the confirmation pass can also be backfilled from chain later */
+  }
+}
+
 function friendly(e: unknown): string {
   const m = String((e as { shortMessage?: string; message?: string })?.shortMessage ?? (e as Error)?.message ?? e);
   if (/user rejected|denied|cancel/i.test(m)) return 'Cancelled.';
@@ -173,6 +194,7 @@ export function useQuickTrade(token: TradeToken) {
         if (receipt.status !== 'success') throw new Error(`${c.label} reverted on-chain`);
       }
       setStatus({ kind: 'success', hash: lastHash!, url: explorerTxUrl(lastHash!) });
+      void recordTrade(lastHash!);
       setTrade(null);
     } catch (e) {
       setStatus({ kind: 'failed', message: friendly(e), hash: lastHash, url: lastHash ? explorerTxUrl(lastHash) : undefined });
