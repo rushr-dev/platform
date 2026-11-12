@@ -2,6 +2,9 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { PublicProfile } from '@/components/terminal/profile/profile-view';
 
+// Per request so the CSP nonce (middleware.ts) reaches Next's inline scripts.
+export const dynamic = 'force-dynamic';
+
 type Props = { params: Promise<{ handle: string }> };
 
 const HANDLE_RE = /^[a-z0-9_]{3,20}$/;

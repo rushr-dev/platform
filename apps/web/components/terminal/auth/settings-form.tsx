@@ -9,7 +9,7 @@ export function SettingsForm() {
   const saved = useSettings();
   const [draft, setDraft] = useState<TradeSettings>(saved);
   // Typed as text so "0." and "1.5" can be entered; parsed on save.
-  const [slip, setSlip] = useState(String(saved.slippagePct));
+  const [slip, setSlip] = useState(String(saved.slippagePct)); // 'auto' or a number as text
   const [cap, setCap] = useState(String(saved.maxTradeEth));
   const [sells, setSells] = useState(saved.sellPresets.map(String));
   const [done, setDone] = useState(false);
@@ -20,8 +20,9 @@ export function SettingsForm() {
     setCap(String(saved.maxTradeEth));
     setSells(saved.sellPresets.map(String));
   }, [saved]);
+  const slipValue: TradeSettings['slippagePct'] = slip === 'auto' || slip === '' ? 'auto' : Number(slip);
 
-  const clean = sanitize({ ...draft, slippagePct: Number(slip), maxTradeEth: Number(cap), sellPresets: sells.map(Number) as TradeSettings['sellPresets'] });
+  const clean = sanitize({ ...draft, slippagePct: slipValue, maxTradeEth: Number(cap), sellPresets: sells.map(Number) as TradeSettings['sellPresets'] });
   const dirty = JSON.stringify(clean) !== JSON.stringify(saved);
   const capWarn = Number(clean.quickBuy) > clean.maxTradeEth || clean.buyPresets.some((p) => Number(p) > clean.maxTradeEth);
 
@@ -66,8 +67,18 @@ export function SettingsForm() {
         </div>
       </Section>
 
-      <Section title="Max slippage" hint={`How far the price may move before a trade fails (${LIMITS.slippagePct[0]}–${LIMITS.slippagePct[1]}%). New tokens move fast; 10% is a common default.`}>
+      <Section
+        title="Slippage"
+        hint={`How far the price may move before a trade fails. Auto picks 5–15% from the token's age, volatility and price impact, plus its tax. Or fix it (${LIMITS.slippagePct[0]}–${LIMITS.slippagePct[1]}%).`}
+      >
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSlip('auto')}
+            className={`rounded-xl border px-3 py-2 text-sm ${slipValue === 'auto' ? 'border-white/25 text-ink' : 'border-white/[0.06] text-muted hover:text-ink'}`}
+          >
+            Auto
+          </button>
           {[1, 5, 10, 20].map((v) => (
             <button
               key={v}
@@ -79,7 +90,7 @@ export function SettingsForm() {
             </button>
           ))}
           <div className="w-28">
-            <Field value={slip} suffix="%" onChange={setSlip} />
+            <Field value={slip === 'auto' ? '' : slip} suffix="%" onChange={(x) => setSlip(x || 'auto')} />
           </div>
         </div>
       </Section>

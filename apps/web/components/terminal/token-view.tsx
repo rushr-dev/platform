@@ -10,12 +10,20 @@ import { useNow } from '@/lib/now';
 import { aggregate, usePairs, type Pair } from '@/lib/pairs';
 import { mergePools, useApiPools } from '@/lib/pools';
 
-
 import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId, type WindowStats as WindowStatsT } from '@/lib/trades';
 import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
 import { hydrationLabel, isHydrating, PriceChart } from './chart';
+import dynamic from 'next/dynamic';
+import { tradingAvailable } from '@/components/trade/flag';
+
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
+
+/** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
+const TradeBox = dynamic(() => import('@/components/trade/trade-box').then((m) => m.TradeBox), {
+  ssr: false,
+  loading: () => <div className="h-[230px] animate-pulse rounded-2xl border border-white/[0.06] bg-surface" />,
+});
 
 type Pools = ReturnType<typeof mergePools>;
 
@@ -151,7 +159,23 @@ export function TokenView({
           <div className="hidden lg:block">
             <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
-          <TradeBox symbol={t.symbol} />
+          {tradingAvailable() ? (
+            <TradeBox
+              token={{
+                address: t.address as `0x${string}`,
+                symbol: t.symbol,
+                decimals: t.decimals,
+                risk: t.risk,
+                verdict: t.verdict,
+                createdAt: t.created_at || null,
+                mainPool: (t.main_pool as `0x${string}` | null | undefined) ?? null,
+                createdBlock: t.created_block,
+                priceChange5mPct: live.data.stats?.['5m']?.priceChangePct != null ? Math.abs(live.data.stats['5m'].priceChangePct) : null,
+              }}
+            />
+          ) : (
+            <TradeSoon symbol={t.symbol} />
+          )}
           <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
           <Safety t={t} />
           <DevRecord t={t} />
@@ -385,7 +409,8 @@ function Ratio({ left, label }: { left: number; label: string }) {
 
 /* ------------------------------------------------------------------ right rail */
 
-function TradeBox({ symbol }: { symbol: string }) {
+/** Shown while trading is off (NEXT_PUBLIC_SWAP_ENABLED unset): what the trade box will do. */
+function TradeSoon({ symbol }: { symbol: string }) {
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [amount, setAmount] = useState('0.1');
   return (

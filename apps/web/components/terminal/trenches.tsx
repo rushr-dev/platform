@@ -21,8 +21,17 @@ import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
 import type { Delta } from '@/lib/feed/protocol';
 import { useNow } from '@/lib/now';
+import dynamic from 'next/dynamic';
+import { tradingAvailable } from '@/components/trade/flag';
+
 import { updateSettings, useSettings } from '@/lib/settings';
 import { RiskTag, SocialLinks, TokenAvatar } from './bits';
+
+/** Loaded only when trading is on (one chunk shared by every row). */
+const QuickBuyButton = dynamic(() => import('@/components/trade/quick-buy-button').then((m) => m.QuickBuyButton), {
+  ssr: false,
+  loading: () => <span className="inline-block h-6 w-16 animate-pulse rounded-lg bg-brand/10" />,
+});
 
 /* ------------------------------------------------------------------ column rules (mirror the API) */
 
@@ -107,7 +116,6 @@ function loadFilters(): Record<Column, Filters> {
     return base;
   }
 }
-
 
 /* ------------------------------------------------------------------ main */
 
@@ -577,14 +585,30 @@ const Row = memo(function Row({
             <div className="font-mono text-[15px] font-semibold">{usd(t.market_cap_usd)}</div>
             <div className="font-mono text-[11px] text-muted">V {usd(t.volume_24h_usd)}</div>
           </div>
-          <button
-            type="button"
-            disabled
-            title={`Quick buy ${quick || '0'} ETH of $${t.symbol}. Trading opens soon.`}
-            className="relative z-10 flex cursor-not-allowed items-center gap-1 rounded-lg bg-brand/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-brand opacity-75"
-          >
-            <Lightning size={11} weight="fill" /> {quick || '0'}
-          </button>
+          {tradingAvailable() ? (
+            <span className="relative z-10">
+              {/* Quick buys spend ETH only; token decimals aren't on cards and every launchpad token is 18. */}
+              <QuickBuyButton
+                token={{
+                  address: t.address as `0x${string}`,
+                  symbol: t.symbol,
+                  decimals: 18,
+                  risk: t.risk,
+                  verdict: t.verdict,
+                  createdAt: t.created_at,
+                }}
+              />
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled
+              title={`Quick buy ${quick || '0'} ETH of $${t.symbol}. Trading opens soon.`}
+              className="relative z-10 flex cursor-not-allowed items-center gap-1 rounded-lg bg-brand/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-brand opacity-75"
+            >
+              <Lightning size={11} weight="fill" /> {quick || '0'}
+            </button>
+          )}
         </div>
       </div>
     </li>
