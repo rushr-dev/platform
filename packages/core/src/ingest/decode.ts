@@ -280,6 +280,11 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
     } else if (t0 === TOPICS.ponsLaunch || t0 === TOPICS.ponsV2Launch) {
       const token = topicAddr(l.topics[1]);
       const curve = topicAddr(l.topics[2]);
+      // Most v2 launches emit both events for the same curve: keep the first (v1 carries the dev buy).
+      if (newPools.has(curve)) {
+        if (t0 === TOPICS.ponsV2Launch) continue;
+        out.pools.splice(out.pools.findIndex((p) => p.id === curve), 1);
+      }
       newTokens.add(token);
       const quote = ctx.curveQuote?.(curve) ?? NATIVE_ETH;
       // data: creator?, quote paid by the creator's first buy, tokens it got.
