@@ -234,3 +234,12 @@ export const httpsUrl = (v: unknown, field: string): string | null => {
 };
 
 export const isAddr = (s: string) => /^0x[0-9a-f]{40}$/.test(s);
+
+/** Ask the indexer to resolve a new member wallet's first funder and contract status (for cluster rules). */
+export async function enqueueWalletFunding(c: C, wallet: string) {
+  try {
+    await c.env.ENRICH_QUEUE?.send({ kind: 'wallet-funding', wallet });
+  } catch (e) {
+    console.error('wallet-funding enqueue failed', e instanceof Error ? e.message : e);
+  }
+}

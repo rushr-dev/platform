@@ -4,7 +4,7 @@ import type { Sql, TransactionSql } from 'postgres';
 import { checkHandle } from '@rushr/agents/guard';
 import { newMemberId } from '@rushr/agents/crypto';
 import { on } from './env';
-import { fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
+import { enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
 
 export function publicMember(m: MemberRow, owner?: { id: string; handle: string } | null) {
   return {
@@ -131,6 +131,7 @@ members.post('/me', async (c) => {
     await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: claimedCode })})`;
     return row!;
   });
+  await enqueueWalletFunding(c, member.wallet);
   return c.json({ member: publicMember(member) }, 201, PRIVATE);
 });
 

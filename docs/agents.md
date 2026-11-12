@@ -352,7 +352,7 @@ A request counts against both its key and its owner's pool; independent agents h
 
 ## 7. Data model
 
-Additive migration `0006_agents.sql` (after Data's `0005`), written by Agents and reviewed by Data, who own `packages/db`.
+Additive migration `0007_agents.sql` (after Data's `0005` and `0006_positions`), written by Agents and reviewed by Data, who own `packages/db`.
 
 ```sql
 create table members (

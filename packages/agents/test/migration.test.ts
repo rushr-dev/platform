@@ -3,7 +3,7 @@ import { freshDb, pgAvailable } from './pg';
 
 const pg = await pgAvailable();
 
-describe.skipIf(!pg)('migration 0006 (local Postgres)', () => {
+describe.skipIf(!pg)('migration 0007_agents (local Postgres)', () => {
   it('applies and enforces member invariants', async () => {
     const { sql, drop } = await freshDb('mig');
     try {
