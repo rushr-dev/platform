@@ -1,6 +1,21 @@
 # Wallets and custody: fast, popup-free, non-custodial
 
-Status: research and recommendation, 2026-11-12. Nothing has been built, no account created, nothing signed. The prototype waits for the founder to pick a provider and create its dev app (see the decisions at the end).
+Status 2026-11-12: **decided.**
+- Provider: **Privy**.
+- Model: a policy-limited, user-revocable session signer. Our authorization key sits in a KMS (provider to be chosen, behind an interface).
+- `RushrRouter`: approved to build, **audit-gated**. One-click server signing stays off until an independent audit; until then every trade needs a wallet confirmation.
+- Default caps: **0.25 ETH per trade, 1 ETH per rolling 24 h, 30-day grants**, adjustable per user.
+- Nothing has been signed. No account exists until the founder creates the Privy dev app.
+
+## Questions for Privy (founder to ask when creating the dev app)
+1. **Chain 4663 tier:** are transaction policies (`ethereum_transaction` and `ethereum_calldata` conditions) enforced for embedded wallets on Robinhood Chain (`eip155:4663`, custom RPC)? If 4663 is below Tier 2, what does it take to raise it?
+2. **User-owned policies:** can a policy's `owner_id` be the **user's own key quorum** (the embedded wallet's owner)? We need it so that neither our app secret nor our authorization key can edit or delete the policy attached to our signer.
+3. **Per-signer revoke:** can the user remove **one** signer (e.g. a single agent) while keeping the others? The client SDK's `removeSigners` appears to remove all of them.
+4. **Stateful caps:** can we use one aggregation (sum of `value` over a rolling 24 h, `group_by` wallet) across all users within the 10-aggregations-per-app limit? Is there a plan to close the race between concurrent requests?
+5. **Signer limits:** what is the maximum number of signers per wallet (quick-trade plus up to ~10 agents) and of policies per app (one per user per signer)?
+6. **Latency and limits:** what are the signing latency and rate limits from Cloudflare Workers (APAC, near `ap-southeast-1`), and in which region are the TEEs?
+7. **Pricing:** an Enterprise quote for ~10k–100k MAU and ~1M signatures/month (published pay-as-you-go comes to ≈ $11.5–16k/month).
+8. **Exit:** if Privy is unavailable, what is the recovery path besides user export? Is there an SLA?
 
 **Direction (founder):** every user gets an embedded, self-custodial, exportable wallet. Once, the user grants Rushr's server a **revocable, policy-limited signer**, so quick-buy needs no popup. Provider-enforced policies fence that signer, so a compromised Rushr server can't drain users.
 
