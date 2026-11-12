@@ -144,6 +144,11 @@ export interface DecodeContext {
   /** Tokens already tracked before this range. */
   isTracked(token: Address): boolean;
   /**
+   * A token to treat as the traded side even if it's normally a quote (a stock token's own page):
+   * in its pools against ETH/WETH/USDG it is the token, not the quote.
+   */
+  focusToken?: Address;
+  /**
    * Quote token of a PONS curve (its `pairToken()`: native ETH or USDG). PONS launch events don't
    * carry it, so the caller looks it up before decoding. Defaults to native ETH.
    */
@@ -164,6 +169,8 @@ export interface DecodeResult {
 }
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
+/** Quotes a stock token can be traded against on its own page. */
+const CORE_QUOTES = new Set<string>([NATIVE_ETH, QUOTES.WETH, QUOTES.USDG]);
 const QUOTE_SET = new Set<string>([NATIVE_ETH, QUOTES.WETH, QUOTES.USDG, ...Object.values(STOCK_QUOTES)]);
 const INFRA = new Set<string>(INFRA_ADDRESSES.map((a) => a.toLowerCase()));
 const POOL_MANAGER = UNISWAP.v4.poolManager.toLowerCase();
@@ -211,8 +218,9 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
       const c0 = lc(ev.args.currency0);
       const c1 = lc(ev.args.currency1);
       const id = ev.args.id.toLowerCase();
-      const q0 = QUOTE_SET.has(c0);
-      const q1 = QUOTE_SET.has(c1);
+      const focus = ctx.focusToken?.toLowerCase();
+      const q0 = QUOTE_SET.has(c0) && !(c0 === focus && CORE_QUOTES.has(c1));
+      const q1 = QUOTE_SET.has(c1) && !(c1 === focus && CORE_QUOTES.has(c0));
       if (q0 && q1) {
         if ((ETH_LIKE.has(c0) && c1 === QUOTES.USDG) || (ETH_LIKE.has(c1) && c0 === QUOTES.USDG)) {
           refPools.set(id, { ethIs0: ETH_LIKE.has(c0) });

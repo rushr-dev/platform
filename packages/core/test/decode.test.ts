@@ -207,3 +207,16 @@ describe('decodeLogs: v3 / v2 pairs (any factory)', () => {
     expect(toEventSelector(ABIS.v2[1]!)).toBe(TOPICS.v2Swap);
   });
 });
+
+describe('decodeLogs: focus token', () => {
+  it("treats a stock token as the traded side of its own USDG pool only when focused", async () => {
+    const { STOCK_QUOTES } = await import('../src/chain/robinhood');
+    const SPCX = STOCK_QUOTES.SPCX as Address;
+    // 0x4a0e… (SPCX) < 0x5fc5… (USDG): currency0 = SPCX.
+    const logs = [initLog(SPCX, QUOTES.USDG as Address, NATIVE_ETH), swapLog(2n * 10n ** 18n, -(500_000000n), '0x21')];
+    expect(decodeLogs(logs, emptyCtx).swaps).toHaveLength(0);
+    const r = decodeLogs(logs, { ...emptyCtx, focusToken: SPCX });
+    expect(r.pools[0]).toMatchObject({ token: SPCX, quote: QUOTES.USDG, tokenIsCurrency0: true });
+    expect(r.swaps[0]).toMatchObject({ side: 'buy', tokenAmount: 2n * 10n ** 18n, quoteAmount: 500_000000n }); // v4 amounts are the swapper's: +SPCX = buy
+  });
+});

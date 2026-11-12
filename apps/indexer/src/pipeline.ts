@@ -248,6 +248,7 @@ export class Pipeline {
       getPool: (id: string) => this.pools.get(id),
       isTracked: (t: string) => this.tokens.has(t),
       curveQuote: (c: string) => curveQuotes.get(c),
+      focusToken: this.opts.onlyToken as Address | undefined,
     };
     lap('curves');
     let r = decodeLogs(logs, ctx);
@@ -527,7 +528,9 @@ export class Pipeline {
     for (const { id, key } of keys) {
       if (!key) { this.ignorePool(id, null); continue; }
       // A coin used as the quote of other pools (e.g. PONS/XYZ) is still the token when paired with ETH/USDG.
-      const isQuote = (a: string, other: string) => QUOTE_SET.has(a) || (this.quotes.has(a) && !QUOTE_SET.has(other));
+      // The hydrated token is the traded side against ETH/WETH/USDG even if it's a stock token.
+      const focus = (a: string, other: string) => a === this.opts.onlyToken && (ETH_LIKE.has(other) || other === QUOTES.USDG);
+      const isQuote = (a: string, other: string) => !focus(a, other) && (QUOTE_SET.has(a) || (this.quotes.has(a) && !QUOTE_SET.has(other)));
       let q0 = isQuote(key.currency0, key.currency1);
       let q1 = isQuote(key.currency1, key.currency0);
       if (q0 && q1) { this.ignorePool(id, null); continue; }

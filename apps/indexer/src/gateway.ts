@@ -207,10 +207,12 @@ export class Gateway extends DurableObject<Env> {
       if (topic.startsWith('token:') && (!data || !data.trades?.length)) {
         // Nothing indexed: fetch it from chain. The hydrator streams snapshots to this topic as they land.
         this.snapshots.delete(topic);
-        const { state } = await hydrator(this.env, topic.slice(6)).hydrate(topic.slice(6));
-        if (!data || state === 'hydrating') {
+        const { state, snapshot } = await hydrator(this.env, topic.slice(6)).hydrate(topic.slice(6));
+        if (!data || state === 'hydrating' || state === 'partial') {
+          // Mid-hydration: the latest chain snapshot, so late viewers don't start from an empty page.
           const empty = { card: null, stats: null, pools: [], trades: [], candles: { '1s': [], '1m': [] } };
-          ws.send(JSON.stringify({ topic, type: 'snapshot', epoch: await this.currentEpoch(), seq: null, source: 'chain', data: { ...(data ?? empty), state } }));
+          const latest = snapshot ? (JSON.parse(snapshot) as Record<string, unknown>) : { ...(data ?? empty), state };
+          ws.send(JSON.stringify({ topic, type: 'snapshot', epoch: await this.currentEpoch(), seq: null, source: 'chain', data: latest }));
         } else {
           ws.send(JSON.stringify({ topic, type: 'snapshot', epoch: await this.currentEpoch(), seq: entry.seq, source: 'index', data }));
         }
