@@ -18,7 +18,7 @@ export default function PrivyHost() {
     <PrivyProvider
       appId={privyAppId()}
       config={{
-        loginMethods: ['email', 'twitter', 'wallet'],
+        loginMethods: ['email', 'wallet'],
         appearance: {
           theme: 'dark',
           accentColor: '#36d42a',
