@@ -4,14 +4,13 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, DotsThree, GearSix, Key, PencilSimple, Robot, ShareNetwork, User, XLogo } from '@phosphor-icons/react';
 import { auth, displayName, useAuth, type AuthUser } from '@/lib/auth';
-import { fmtUnits, useBalances, type Balances } from '@/lib/balances';
+import { useWalletHoldings } from '@/lib/holdings';
 import { age, compact, countFmt, dateUtc, short, usd, usdSigned } from '@/lib/format';
 import { useMe } from '@/lib/members';
 import { useNow } from '@/lib/now';
 import {
   followRef,
   useCallouts,
-  useEthUsd,
   useProfileMember,
   useRelationship,
   useSuggestions,
@@ -25,9 +24,7 @@ import {
 import { GeneratedAvatar } from '../avatar';
 import { iconSrc, TokenAvatar } from '../bits';
 import { EditProfile } from './edit-profile';
-import { DepositPanel } from './funding';
-import { Modal } from './modal';
-import { WithdrawPanel } from './withdraw';
+import { WalletOverview } from '../wallet-overview';
 
 /**
  * Profile pages in FOMO's structure with Rushr's look: a banner header, then portfolio (value, PnL,
@@ -99,19 +96,16 @@ export function PublicProfile({ handle }: { handle: string }) {
 }
 
 const seedOf = (u: AuthUser) => `0x${[...u.id].map((c) => c.charCodeAt(0).toString(16)).join('').slice(0, 40).padEnd(40, '0')}`;
-const toNum = (s: string) => Number(s.replace(/,/g, ''));
 
 /* ------------------------------------------------------------------ page */
 
 function ProfilePage({ view, onEdited }: { view: View; onEdited?: () => void }) {
   const pnl = useWalletPnl(view.wallet);
-  const { balances, refresh } = useBalances(view.wallet);
-  const ethUsd = useEthUsd();
+  const holdings = useWalletHoldings(view.wallet);
   const positions = pnl.state === 'ready' ? pnl.data.positions : [];
   const summary = pnl.state === 'ready' ? pnl.data.summary : null;
-  const cashUsd = balances && ethUsd != null ? toNum(fmtUnits(balances.eth, 18, 8)) * ethUsd + toNum(fmtUnits(balances.usdg, 6, 6)) : null;
-  const holdingsUsd = positions.reduce((t, p) => t + Math.max(0, p.cost_basis_usd + p.unrealized_usd), 0);
-  const total = cashUsd == null && pnl.state !== 'ready' ? null : (cashUsd ?? 0) + holdingsUsd;
+  // Everything the wallet holds at today's prices (ETH, USDG and tokens, read on-chain).
+  const total = holdings.totalUsd;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -120,7 +114,7 @@ function ProfilePage({ view, onEdited }: { view: View; onEdited?: () => void }) 
         <div className="grid gap-3 px-3 sm:px-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_300px]">
           <div className="min-w-0 space-y-3">
             <Portfolio total={total} summary={summary} loading={pnl.state === 'loading'} />
-            {view.own && <Cash balances={balances} ethUsd={ethUsd} cashUsd={cashUsd} wallet={view.wallet} onChanged={refresh} />}
+            {view.own && <WalletOverview wallet={view.wallet} holdings={holdings} menu={<WalletMenu />} />}
             <Positions state={pnl.state} positions={positions} />
           </div>
           <div className="min-w-0">
@@ -332,78 +326,35 @@ function Portfolio({ total, summary, loading }: { total: number | null; summary:
   );
 }
 
-function Cash({ balances, ethUsd, cashUsd, wallet, onChanged }: { balances: Balances | null; ethUsd: number | null; cashUsd: number | null; wallet: `0x${string}` | null; onChanged: () => void }) {
-  const [modal, setModal] = useState<'deposit' | 'withdraw' | null>(null);
+/** The wallet card's ⋯ menu: key export and trading settings. */
+function WalletMenu() {
   const [menu, setMenu] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
-  const eth = balances ? toNum(fmtUnits(balances.eth, 18, 8)) : null;
   return (
-    <section className="rounded-2xl border border-white/[0.06] bg-surface p-4">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="text-xs text-muted">Total cash</div>
-          <div className="mt-0.5 font-mono text-2xl font-semibold">{cashUsd == null ? '…' : usd(cashUsd)}</div>
-        </div>
-        <div className="relative">
-          <button type="button" onClick={() => setMenu((m) => !m)} aria-label="More" aria-expanded={menu} className="rounded-lg p-1.5 text-muted hover:bg-white/[0.05] hover:text-ink">
-            <DotsThree size={20} weight="bold" />
+    <div className="relative">
+      <button type="button" onClick={() => setMenu((m) => !m)} aria-label="More" aria-expanded={menu} className="rounded-lg p-1.5 text-muted hover:bg-white/[0.05] hover:text-ink">
+        <DotsThree size={20} weight="bold" />
+      </button>
+      {menu && (
+        <div role="menu" className="absolute right-0 top-9 z-20 w-48 overflow-hidden rounded-xl border border-white/[0.08] bg-surface-2 p-1 shadow-xl">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setMenu(false);
+              setExportError(null);
+              auth.exportWallet().catch((e: Error) => setExportError(e.message || 'Export failed'));
+            }}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-white/[0.04] hover:text-ink"
+          >
+            <Key size={15} /> Export private key
           </button>
-          {menu && (
-            <div role="menu" className="absolute right-0 top-9 z-20 w-48 overflow-hidden rounded-xl border border-white/[0.08] bg-surface-2 p-1 shadow-xl">
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setMenu(false);
-                  setExportError(null);
-                  auth.exportWallet().catch((e: Error) => setExportError(e.message || 'Export failed'));
-                }}
-                className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-muted hover:bg-white/[0.04] hover:text-ink"
-              >
-                <Key size={15} /> Export private key
-              </button>
-              <Link href="/settings" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/[0.04] hover:text-ink">
-                <GearSix size={15} /> Trading settings
-              </Link>
-            </div>
-          )}
+          <Link href="/settings" role="menuitem" className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-muted hover:bg-white/[0.04] hover:text-ink">
+            <GearSix size={15} /> Trading settings
+          </Link>
         </div>
-      </div>
-      <div className="mt-3 space-y-1.5 text-sm">
-        <CashRow sym="ETH" amount={balances ? fmtUnits(balances.eth, 18, 5) : '…'} usdValue={eth != null && ethUsd ? eth * ethUsd : null} />
-        <CashRow sym="USDG" amount={balances ? fmtUnits(balances.usdg, 6, 2) : '…'} usdValue={balances ? toNum(fmtUnits(balances.usdg, 6, 6)) : null} />
-      </div>
-      <div className="mt-4 grid grid-cols-2 gap-2">
-        <button type="button" onClick={() => setModal('withdraw')} disabled={!wallet} className="rounded-xl border border-white/[0.1] py-2.5 text-sm font-semibold hover:border-white/25 disabled:opacity-40">
-          Withdraw
-        </button>
-        <button type="button" onClick={() => setModal('deposit')} className="rounded-xl bg-brand py-2.5 text-sm font-semibold text-bg hover:brightness-110">
-          Deposit
-        </button>
-      </div>
-      {exportError && <p className="mt-2 text-xs text-risk-high">{exportError}</p>}
-      {modal === 'deposit' && (
-        <Modal title="Deposit" onClose={() => setModal(null)} wide>
-          <DepositPanel address={wallet} />
-        </Modal>
       )}
-      {modal === 'withdraw' && wallet && (
-        <Modal title="Withdraw" onClose={() => setModal(null)}>
-          <WithdrawPanel from={wallet} balances={balances} onDone={onChanged} />
-        </Modal>
-      )}
-    </section>
-  );
-}
-
-function CashRow({ sym, amount, usdValue }: { sym: string; amount: string; usdValue: number | null }) {
-  return (
-    <div className="flex items-center justify-between rounded-xl bg-bg px-3 py-2">
-      <span className="font-medium">{sym}</span>
-      <span className="text-right font-mono">
-        {amount}
-        <span className="ml-2 text-xs text-muted">{usdValue == null ? '' : usd(usdValue)}</span>
-      </span>
+      {exportError && <p className="absolute right-0 top-9 w-56 rounded-lg bg-surface-2 p-2 text-xs text-risk-high">{exportError}</p>}
     </div>
   );
 }

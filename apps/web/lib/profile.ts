@@ -244,33 +244,50 @@ export async function uploadImage(kind: 'avatar' | 'banner', file: File): Promis
 
 /* ------------------------------------------------------------------ ETH price */
 
-let ethCache: { at: number; usd: number } | null = null;
-type DsPairs = { pairs?: { chainId: string; baseToken: { address: string }; priceUsd?: string; liquidity?: { usd?: number } }[] };
+type EthQuote = { usd: number; change24h: number | null };
+let ethCache: { at: number; q: EthQuote } | null = null;
+let ethInflight: Promise<EthQuote | null> | null = null;
+const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
+type DsPairs = {
+  pairs?: { chainId: string; baseToken: { address: string }; priceUsd?: string; liquidity?: { usd?: number }; priceChange?: { h24?: number } }[];
+};
+
+function loadEth(): Promise<EthQuote | null> {
+  if (ethCache && Date.now() - ethCache.at < 60_000) return Promise.resolve(ethCache.q);
+  ethInflight ??= fetch(`https://api.dexscreener.com/latest/dex/tokens/${WETH}`)
+    .then((r) => (r.ok ? (r.json() as Promise<DsPairs>) : null))
+    .then((b) => {
+      const pairs = (b?.pairs ?? []).filter((p) => p.chainId === 'robinhood' && p.baseToken.address.toLowerCase() === WETH && p.priceUsd);
+      pairs.sort((a, c) => (c.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+      const top = pairs[0];
+      if (!top?.priceUsd) return null;
+      const q = { usd: Number(top.priceUsd), change24h: top.priceChange?.h24 ?? null };
+      ethCache = { at: Date.now(), q };
+      return q;
+    })
+    .catch(() => null)
+    .finally(() => {
+      ethInflight = null;
+    });
+  return ethInflight;
+}
 
 /**
- * ETH/USD for the cash card. The Rushr API doesn't expose one yet (requested from Data), so this
+ * ETH/USD and its 24h change. The Rushr API doesn't expose one yet (requested from Data), so this
  * reads the deepest WETH pool on DexScreener (already allowed by the CSP), cached for a minute.
  */
-export function useEthUsd(): number | null {
-  const [usd, setUsd] = useState<number | null>(ethCache?.usd ?? null);
+export function useEthQuote(): EthQuote | null {
+  const [q, setQ] = useState<EthQuote | null>(ethCache?.q ?? null);
   useEffect(() => {
-    if (ethCache && Date.now() - ethCache.at < 60_000) return;
     let live = true;
-    fetch('https://api.dexscreener.com/latest/dex/tokens/0x0bd7d308f8e1639fab988df18a8011f41eacad73')
-      .then((r) => (r.ok ? (r.json() as Promise<DsPairs>) : null))
-      .then((b) => {
-        const pairs = (b?.pairs ?? []).filter((p) => p.chainId === 'robinhood' && p.baseToken.address.toLowerCase() === '0x0bd7d308f8e1639fab988df18a8011f41eacad73' && p.priceUsd);
-        pairs.sort((a, c) => (c.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
-        const p = pairs[0]?.priceUsd ? Number(pairs[0].priceUsd) : null;
-        if (p && live) {
-          ethCache = { at: Date.now(), usd: p };
-          setUsd(p);
-        }
-      })
-      .catch(() => undefined);
+    void loadEth().then((v) => v && live && setQ(v));
     return () => {
       live = false;
     };
   }, []);
-  return usd;
+  return q;
+}
+
+export function useEthUsd(): number | null {
+  return useEthQuote()?.usd ?? null;
 }
