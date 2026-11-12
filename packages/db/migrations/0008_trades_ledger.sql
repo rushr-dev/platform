@@ -1,0 +1,35 @@
+CREATE TABLE "trades_ledger" (
+	"id" text PRIMARY KEY NOT NULL,
+	"chain_id" integer NOT NULL,
+	"status" text NOT NULL,
+	"tx_hash" text NOT NULL,
+	"block_number" bigint,
+	"ts" timestamp with time zone NOT NULL,
+	"trader" text NOT NULL,
+	"source_kind" text NOT NULL,
+	"source_id" text,
+	"side" text,
+	"token" text,
+	"quote_asset" text,
+	"venue" text,
+	"pool_id" text,
+	"router" text,
+	"amount_in" numeric(78, 0),
+	"amount_out" numeric(78, 0),
+	"fee_token" text,
+	"base_fee_bps" integer,
+	"fee_bps" numeric,
+	"fee_amount" numeric(78, 0),
+	"referrer" text,
+	"referral_code" text,
+	"referral_discount" numeric(78, 0),
+	"referrer_share_bps" integer,
+	"referrer_accrual" numeric(78, 0),
+	"flags" text[] DEFAULT '{}' NOT NULL,
+	"confirm_attempts" integer DEFAULT 0 NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "trades_ledger_tx_hash_unique" UNIQUE("tx_hash")
+);
+--> statement-breakpoint
+CREATE INDEX "trades_ledger_referrer_status_idx" ON "trades_ledger" USING btree ("referrer","status");--> statement-breakpoint
+CREATE INDEX "trades_ledger_trader_ts_idx" ON "trades_ledger" USING btree ("trader","ts");

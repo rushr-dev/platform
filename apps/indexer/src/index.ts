@@ -9,6 +9,7 @@ import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
 import { GATEWAY_COUNT, gateway } from './gateway';
 import { v1, adminV1 } from './agents/app';
+import { CONFIRM_DELAYS_S, confirmTrade, trades } from './ledger';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
@@ -210,6 +211,9 @@ app.use('*', async (c, next) => {
   }
 });
 
+// Trade ledger routes run inside /v1 (its auth, limits, errors). Hono copies routes on route(), so
+// they must be added before /v1 is mounted.
+v1.route('/', trades);
 // Members, social, leaderboard and agents (Agents stream). Off unless AGENTS_ENABLED=1; after the edge
 // cache so public /v1 responses with s-maxage are cached; authenticated ones are private, no-store.
 app.route('/v1', v1);
@@ -329,9 +333,23 @@ export default {
           for (const m of funding) m.retry({ delaySeconds: 30 });
         }
       }
+      // Trade ledger confirmations (receipt, our decoded swap, the treasury's fee from a call trace).
+      for (const msg of batch.messages) {
+        if (msg.body.kind !== 'trade-confirm') continue;
+        const { tx, attempt = 0 } = msg.body;
+        try {
+          const final = attempt >= CONFIRM_DELAYS_S.length - 1;
+          const r = await confirmTrade(sql, env, tx, final);
+          if (r === 'retry') await env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx, attempt: attempt + 1 }, { delaySeconds: CONFIRM_DELAYS_S[attempt + 1] });
+          msg.ack();
+        } catch (err) {
+          console.error('trade confirm failed', tx, err);
+          msg.retry({ delaySeconds: 30 });
+        }
+      }
       for (const msg of batch.messages) {
         const body = msg.body;
-        if (body.kind === 'token-metadata' || body.kind === 'wallet-funding') continue;
+        if (body.kind === 'token-metadata' || body.kind === 'wallet-funding' || body.kind === 'trade-confirm') continue;
         if (body.kind !== 'token-signals' || done.has(body.token)) {
           msg.ack();
           continue;
