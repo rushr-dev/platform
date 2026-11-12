@@ -1,0 +1,13 @@
+// /v1: members, social, leaderboard and agents. Mounted by index.ts as `app.route('/v1', v1)`.
+// Everything is off unless AGENTS_ENABLED=1. Rushr never holds keys, never signs, never trades for anyone.
+import { Hono } from 'hono';
+import { auth, body, db, errorResponse, flag, ip, type Ctx } from './http';
+import { members } from './members';
+
+export const v1 = new Hono<Ctx>();
+
+v1.onError((e, c) => errorResponse(c, e));
+v1.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoint.', docs: 'https://rushr.trade/llms.txt' } }, 404));
+v1.use('*', flag('AGENTS_ENABLED', 'The members API'), db, ip, body, auth);
+
+v1.route('/', members);

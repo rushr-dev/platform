@@ -11,6 +11,7 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@rushr/agents": "workspace:*",
     "@rushr/core": "workspace:*",
     "@rushr/db": "workspace:*",
     "hono": "^4.13.17",

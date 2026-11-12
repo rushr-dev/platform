@@ -26,6 +26,9 @@ importers:
 
   apps/indexer:
     dependencies:
+      '@rushr/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@rushr/core':
         specifier: workspace:*
         version: link:../../packages/core
