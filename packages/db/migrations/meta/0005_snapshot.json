@@ -1,5 +1,5 @@
 {
-  "id": "a962cb22-efb2-42fb-8a7c-e311e19e73d4",
+  "id": "f50a09f7-c77d-42de-801a-2f2dc42f4baa",
   "prevId": "ea10e498-4dd3-48e4-afe7-572cbc116786",
   "version": "7",
   "dialect": "postgresql",
@@ -700,6 +700,12 @@
         },
         "metadata_at": {
           "name": "metadata_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image_at": {
+          "name": "image_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

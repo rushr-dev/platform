@@ -11,6 +11,9 @@ export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
 export { Backfiller } from './backfill';
 
+/** Follow-up delays for launch metadata that wasn't loadable on the first try. */
+const METADATA_RETRY_S = [10, 60, 300, 1800];
+
 const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors());
 
@@ -146,13 +149,17 @@ app.post('/admin/metadata/all', async (c) => {
   try {
     // ?missing=1 also retries tokens that were checked but still have no icon (e.g. a DexScreener profile appeared since).
     const missing = c.req.query('missing') === '1';
+    // ?full=1: re-read launchpad metadata too (not just DexScreener), e.g. after the resolver learned new sources.
+    const full = c.req.query('full') === '1';
+    const hours = Number(c.req.query('hours') ?? 0);
     const rows = await sql<{ address: string; tried: boolean }[]>`
       select address, metadata_at is not null as tried from tokens
-      where metadata_at is null ${missing ? sql`or image_url is null` : sql``}
+      where (metadata_at is null ${missing ? sql`or image_url is null` : sql``})
+        ${hours > 0 ? sql`and created_at > now() - make_interval(hours => ${hours})` : sql``}
       order by holders desc`;
     for (let i = 0; i < rows.length; i += 100) {
       await c.env.METADATA_QUEUE.sendBatch(
-        rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried } })),
+        rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried && !full } })),
       );
     }
     return c.json({ queued: rows.length });
@@ -221,10 +228,15 @@ export default {
       for (let i = 0; i < metadata.length; i += 2) {
         await Promise.all(
           metadata.slice(i, i + 2).map(async (msg) => {
-            const { token, dexOnly } = msg.body as { token: string; dexOnly?: boolean };
+            const { token, dexOnly, attempt = 0 } = msg.body as { token: string; dexOnly?: boolean; attempt?: number };
             try {
-              await resolveMetadata(sql, rpc, token, { dexOnly });
+              const r = await resolveMetadata(sql, rpc, token, { dexOnly });
               refreshed.add(token);
+              // Metadata that isn't loadable yet (IPFS still propagating, CDN upload lagging the tx):
+              // look again soon rather than at the 15-minute sweep.
+              if (r.retry && attempt < METADATA_RETRY_S.length) {
+                await env.METADATA_QUEUE.send({ kind: 'token-metadata', token, attempt: attempt + 1 }, { delaySeconds: METADATA_RETRY_S[attempt]! });
+              }
               msg.ack();
             } catch (err) {
               console.error('metadata failed', token, err);

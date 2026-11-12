@@ -41,6 +41,8 @@ export const tokens = pgTable(
     description: text('description'),
     /** When launchpad metadata (icon, socials) was last resolved; null = not tried yet. */
     metadataAt: timestamp('metadata_at', { withTimezone: true }),
+    /** When the icon was first found (metadata_at moves on every retry): launch → icon latency. */
+    imageAt: timestamp('image_at', { withTimezone: true }),
     // Rolling market stats, updated by the indexer.
     priceEth: numeric('price_eth'),
     marketCapUsd: numeric('market_cap_usd'),

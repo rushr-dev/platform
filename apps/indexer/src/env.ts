@@ -25,7 +25,14 @@ export interface Env {
 export type EnrichMessage =
   | { kind: 'wallet-funding'; wallet: string }
   | { kind: 'token-signals'; token: string }
-  | { kind: 'token-metadata'; token: string; /** Only check DexScreener (no RPC): used for periodic retries. */ dexOnly?: boolean };
+  | {
+      kind: 'token-metadata';
+      token: string;
+      /** Only check DexScreener (no RPC): used for periodic retries. */
+      dexOnly?: boolean;
+      /** Follow-up number for launches whose metadata wasn't loadable yet (see METADATA_RETRY_S). */
+      attempt?: number;
+    };
 
 /**
  * The poller, pinned to Asia-Pacific next to the database (Neon, Singapore). Durable Objects live

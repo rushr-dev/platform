@@ -6,4 +6,6 @@ CREATE TABLE "holder_backfill" (
 	CONSTRAINT "holder_backfill_token_wallet_pk" PRIMARY KEY("token","wallet")
 );
 --> statement-breakpoint
-ALTER TABLE "pools" ADD COLUMN "venue" text;
+ALTER TABLE "pools" ADD COLUMN "venue" text;--> statement-breakpoint
+ALTER TABLE "tokens" ADD COLUMN "image_at" timestamp with time zone;--> statement-breakpoint
+UPDATE "tokens" SET "image_at" = "metadata_at" WHERE "image_url" IS NOT NULL;
