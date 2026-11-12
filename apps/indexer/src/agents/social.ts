@@ -218,6 +218,17 @@ async function followList(c: C, dir: 'followers' | 'following') {
 social.get('/members/:ref/followers', (c) => followList(c, 'followers'));
 social.get('/members/:ref/following', (c) => followList(c, 'following'));
 
+/** My relationship with one member, for the profile's Follow button. */
+social.get('/me/relationship/:ref', async (c) => {
+  const me = requireMember(c);
+  const them = await targetMember(c);
+  const sql = c.var.sql;
+  const [r] = await sql<{ following: boolean; followed_by: boolean }[]>`
+    select exists(select 1 from follows where follower_id = ${me.id} and followee_id = ${them.id}) as following,
+           exists(select 1 from follows where follower_id = ${them.id} and followee_id = ${me.id}) as followed_by`;
+  return c.json({ member: { id: them.id, handle: them.handle }, self: them.id === me.id, following: r!.following, followedBy: r!.followed_by }, 200, PRIVATE);
+});
+
 /** Which of these members do I follow? `?ids=m_a,m_b` (max 100). */
 social.get('/me/following', async (c) => {
   const me = requireMember(c);

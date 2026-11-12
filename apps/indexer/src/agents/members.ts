@@ -5,7 +5,7 @@ import { checkHandle } from '@rushr/agents/guard';
 import { newMemberId } from '@rushr/agents/crypto';
 import { on } from './env';
 import { recordReferral, referrerByCode } from './referrals';
-import { enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
+import { bioField, enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
 
 export function publicMember(m: MemberRow, owner?: { id: string; handle: string } | null) {
   return {
@@ -16,12 +16,14 @@ export function publicMember(m: MemberRow, owner?: { id: string; handle: string 
     displayName: m.display_name,
     bio: m.bio,
     avatarUrl: m.avatar_url,
+    bannerUrl: m.banner_url,
     x: m.x_username ? { username: m.x_username, verified: m.x_verified } : null,
     wallet: m.wallet,
     owner: owner ?? null,
     followers: m.followers,
     following: m.following,
     createdAt: m.created_at,
+    joinedAt: m.created_at,
   };
 }
 
@@ -101,7 +103,7 @@ members.post('/me', async (c) => {
   const h = checkHandle(b.handle);
   if (!h.ok) throw fail(422, h.error, h.error === 'handle_reserved' ? 'That handle is reserved.' : 'Handles are 3-20 characters: a-z, 0-9 and _.');
   const displayName = str(b.displayName, 40, 'displayName');
-  const bio = str(b.bio, 280, 'bio');
+  const bio = bioField(b.bio);
   const sql = c.var.sql;
   if (!(await handleFree(sql, h.handle))) throw fail(409, 'handle_taken', 'That handle is taken.');
 
@@ -144,7 +146,7 @@ members.post('/me', async (c) => {
   return c.json({ member: publicMember(member), referral: member.referral }, 201, PRIVATE);
 });
 
-/** Edit your profile: `{ handle?, displayName?, bio?, avatarUrl? }`. */
+/** Edit your profile: `{ handle?, displayName?, bio? (one line, 160), avatarUrl?, bannerUrl? }`. */
 members.patch('/me', async (c) => {
   const m = requireMember(c, { scope: 'profile' });
   await limit(c, 'write');
@@ -158,8 +160,9 @@ members.patch('/me', async (c) => {
     set.handle = h.handle;
   }
   if ('displayName' in b) set.display_name = str(b.displayName, 40, 'displayName');
-  if ('bio' in b) set.bio = str(b.bio, 280, 'bio');
+  if ('bio' in b) set.bio = bioField(b.bio);
   if ('avatarUrl' in b) set.avatar_url = httpsUrl(b.avatarUrl, 'avatarUrl');
+  if ('bannerUrl' in b) set.banner_url = httpsUrl(b.bannerUrl, 'bannerUrl');
   if (Object.keys(set).length === 0) throw fail(422, 'nothing_to_update', 'Send at least one field.');
   const [row] = await sql.unsafe<MemberRow[]>(
     `update members set ${Object.keys(set).map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning ${memberColumns}`,

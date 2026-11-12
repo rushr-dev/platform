@@ -7,6 +7,7 @@ import { social } from './social';
 import { beta } from './beta';
 import { leaderboard } from './board';
 import { agents } from './agents';
+import { media } from './media';
 export { adminV1 } from './admin';
 
 export const v1 = new Hono<Ctx>();
@@ -20,3 +21,4 @@ v1.route('/', social);
 v1.route('/', beta);
 v1.route('/', leaderboard);
 v1.route('/', agents);
+v1.route('/', media);
