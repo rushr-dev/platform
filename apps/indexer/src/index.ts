@@ -143,6 +143,9 @@ app.post('/admin/pools/backfill', async (c) => {
 // Wallet positions: rebuild from all swaps (once, after migration 0006), then live keeps them current.
 app.post('/admin/positions/rebuild', async (c) => c.json(await positionsJob(c.env).rebuildPositions()));
 app.get('/admin/positions', async (c) => c.json(await positionsJob(c.env).positionsStatus()));
+// Recompute positions that disagree with their swaps (and, with ?since=<block>, every pair traded after it).
+app.post('/admin/positions/reconcile', async (c) =>
+  c.json(await positionsJob(c.env).reconcilePositions(c.req.query('since') ?? undefined, Number(c.req.query('max') ?? 2000), c.req.query('after') ?? undefined)));
 app.post('/admin/wallet-pnl/refresh', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
@@ -253,6 +256,14 @@ export default {
         console.error('wallet pnl refresh failed', err);
       } finally {
         await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 15 minutes: recompute positions that drifted (history inserted out of order by backfills).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 9) {
+      try {
+        await positionsJob(env).reconcilePositions(undefined, 500);
+      } catch (err) {
+        console.error('positions reconcile failed', err);
       }
     }
     // Every 15 minutes: holder backfill for tokens that matter (>= 50 holders or >= $10K 24h volume)

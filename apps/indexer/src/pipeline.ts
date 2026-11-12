@@ -9,6 +9,7 @@ import {
   STOCK_QUOTES,
   acceptsPrice,
   applyTrade,
+  emptyPosition,
   decodeLogs,
   launchpadForHook,
   subscribedTopics,
@@ -804,6 +805,51 @@ export class Pipeline {
         from unnest(${realizedBy.map((r) => r.tx)}::text[], ${realizedBy.map((r) => r.logIndex)}::int[], ${realizedBy.map((r) => String(r.usd))}::numeric[]) v(tx, li, usd)
         where s.tx = v.tx and s.log_index = v.li`;
     }
+  }
+
+  /**
+   * Recompute positions from scratch, in chain order, for (wallet, token) pairs whose incremental state
+   * may be off: swaps inserted after the rebuild passed their block (pool-history backfills), or live
+   * swaps applied before older ones during the rebuild. Each pair is locked first, so a concurrent live
+   * update waits and then applies on top. Returns how many pairs changed.
+   */
+  async recomputePositions(pairs: { wallet: string; token: string }[]): Promise<number> {
+    let changed = 0;
+    for (const { wallet, token } of pairs) {
+      await this.sql.begin(async (tx) => {
+        await tx`select 1 from positions where wallet = ${wallet} and token = ${token} for update`;
+        const swaps = await tx<{ tx: string; log_index: number; side: 'buy' | 'sell'; token_amount: string; usd: string; time: Date }[]>`
+          select tx, log_index, side, token_amount::text, usd::text, time from swaps
+          where trader = ${wallet} and token = ${token} and usd is not null and token_amount > 0 order by block, log_index`;
+        if (!swaps.length) return;
+        const p = emptyPosition();
+        const realized: { tx: string; li: number; usd: number }[] = [];
+        for (const s of swaps) {
+          const r = applyTrade(p, s.side, BigInt(s.token_amount), Number(s.usd));
+          if (s.side === 'sell') realized.push({ tx: s.tx, li: s.log_index, usd: r });
+        }
+        const [old] = await tx<{ realized_usd: string; buys: number; sells: number }[]>`
+          select realized_usd::text, buys, sells from positions where wallet = ${wallet} and token = ${token}`;
+        if (old && old.buys === p.buys && old.sells === p.sells && Math.abs(Number(old.realized_usd) - p.realized) < 1e-6) return;
+        await tx`insert into positions ${tx({
+          wallet, token, bought_tokens: p.bought.toString(), bought_usd: String(p.boughtUsd), sold_tokens: p.sold.toString(),
+          sold_usd: String(p.soldUsd), buys: p.buys, sells: p.sells, held_tokens: p.held.toString(), cost_basis_usd: String(p.cost),
+          realized_usd: String(p.realized), unbacked_sold_tokens: p.unbacked.toString(), first_trade_at: swaps[0]!.time, last_trade_at: swaps.at(-1)!.time,
+        })}
+          on conflict (wallet, token) do update set bought_tokens = excluded.bought_tokens, bought_usd = excluded.bought_usd,
+            sold_tokens = excluded.sold_tokens, sold_usd = excluded.sold_usd, buys = excluded.buys, sells = excluded.sells,
+            held_tokens = excluded.held_tokens, cost_basis_usd = excluded.cost_basis_usd, realized_usd = excluded.realized_usd,
+            unbacked_sold_tokens = excluded.unbacked_sold_tokens, first_trade_at = excluded.first_trade_at, last_trade_at = excluded.last_trade_at`;
+        for (let i = 0; i < realized.length; i += 2000) {
+          const chunk = realized.slice(i, i + 2000);
+          await tx`update swaps s set realized_usd = v.usd
+            from unnest(${chunk.map((r) => r.tx)}::text[], ${chunk.map((r) => r.li)}::int[], ${chunk.map((r) => String(r.usd))}::numeric[]) v(tx, li, usd)
+            where s.tx = v.tx and s.log_index = v.li`;
+        }
+        changed++;
+      });
+    }
+    return changed;
   }
 
   private positionsMarker: { at: number; block: bigint | null } = { at: 0, block: null };
