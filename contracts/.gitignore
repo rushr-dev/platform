@@ -1,0 +1,9 @@
+# Build output
+out/
+cache/
+broadcast/
+# Dependencies (installed with forge install, see README)
+lib/
+# Local env (RPC URLs, never commit)
+.env
+.env.*
