@@ -26,12 +26,18 @@ importers:
 
   apps/indexer:
     dependencies:
+      '@rushr/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@rushr/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@rushr/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@rushr/trade':
+        specifier: workspace:*
+        version: link:../../packages/trade
       hono:
         specifier: ^4.13.17
         version: 4.13.17
@@ -112,6 +118,25 @@ importers:
       wrangler:
         specifier: ^4.159.0
         version: 4.159.0(@cloudflare/workers-types@5.20261110.1)(@types/node@26.6.6)(bufferutil@4.2.0)(utf-8-validate@5.0.10)
+
+  packages/agents:
+    dependencies:
+      postgres:
+        specifier: ^4.1.0
+        version: 4.1.0
+      viem:
+        specifier: ^2.57.17
+        version: 2.57.17(bufferutil@4.2.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.6.7)
+    devDependencies:
+      '@types/node':
+        specifier: ^26.6.6
+        version: 26.6.6
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^5.1.0
+        version: 5.1.0(@types/node@26.6.6)(vite@8.3.7(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.36.0)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/core:
     dependencies:
