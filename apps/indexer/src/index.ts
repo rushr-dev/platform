@@ -79,6 +79,11 @@ app.post('/admin/poller/:action', async (c) => {
   const poller = pollerOf(c.env);
   if (c.req.param('action') === 'start') await poller.start();
   else if (c.req.param('action') === 'stop') await poller.stop();
+  else if (c.req.param('action') === 'restart') {
+    // After a deploy: make the running poller instance pick up the new code (alarm and cursor are kept).
+    await poller.restart().catch(() => undefined);
+    return c.json({ restarted: true });
+  }
   else if (c.req.param('action') === 'backfill-launches') return c.json({ tokens: await poller.backfillLaunches() });
   else return c.json({ error: 'unknown action' }, 400);
   return c.json(await poller.status());

@@ -143,6 +143,15 @@ export class ChainPoller extends DurableObject<Env> {
     if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 100);
   }
 
+  /**
+   * Drop this instance so the next request loads the current deployment. A deploy doesn't replace a
+   * running poller on its own (its open socket and timers keep it busy). Alarm and storage survive.
+   */
+  async restart(): Promise<void> {
+    this.ws?.close(1000, 'restart');
+    this.ctx.abort('restart requested');
+  }
+
   async stop(): Promise<void> {
     await this.ctx.storage.put('enabled', false);
     await this.ctx.storage.deleteAlarm();
