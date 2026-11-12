@@ -1,6 +1,6 @@
 import { encodeFunctionData, maxUint256, type Hex } from 'viem';
 import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from './addresses';
-import { rushrCurveRouterAbi } from './abis';
+import { rushrPonsRouterAbi } from './abis';
 import type { TradeConfig } from './config';
 import { TradeError } from './errors';
 import { cmd, encodeExecute, encodeV3Path, OPEN_DELTA, v4, type EncodedCommand, type PermitSingle } from './universal-router';
@@ -102,21 +102,21 @@ export function buildSwap(q: Quote, cfg: TradeConfig, opts: BuildOptions = {}): 
   const { side } = q.request;
 
   if (q.pool.venue === 'pons-curve') {
-    if (!cfg.curveRouter) throw new TradeError('UNSUPPORTED_VENUE', 'PONS curve trading needs the Rushr curve router, which is not deployed yet');
-    const router = cfg.curveRouter;
-    // The contract charges its immutable referral rate when `referred` is set (see RushrCurveRouter).
+    if (!cfg.ponsRouter) throw new TradeError('UNSUPPORTED_VENUE', 'PONS curve trading needs RushrPonsRouter, which is not deployed yet');
+    const router = cfg.ponsRouter;
+    // The contract charges its immutable referral rate when `referred` is set (see RushrPonsRouter).
     const referred = q.fee.feeBps < q.fee.baseFeeBps;
     if (side === 'buy')
       return {
         quote: q,
-        tx: { to: router, value: q.amountIn, data: encodeFunctionData({ abi: rushrCurveRouterAbi, functionName: 'buy', args: [q.pool.token, q.minAmountOut, q.request.trader, deadline, referred] }) },
+        tx: { to: router, value: q.amountIn, data: encodeFunctionData({ abi: rushrPonsRouterAbi, functionName: 'buy', args: [q.pool.token, q.minAmountOut, q.request.trader, deadline, referred] }) },
         approvals: [],
         commands: [],
         deadline,
       };
     return {
       quote: q,
-      tx: { to: router, value: 0n, data: encodeFunctionData({ abi: rushrCurveRouterAbi, functionName: 'sell', args: [q.pool.token, q.amountIn, q.minAmountOut, q.request.trader, deadline, referred] }) },
+      tx: { to: router, value: 0n, data: encodeFunctionData({ abi: rushrPonsRouterAbi, functionName: 'sell', args: [q.pool.token, q.amountIn, q.minAmountOut, q.request.trader, deadline, referred] }) },
       approvals: [{ kind: 'erc20', token: q.pool.token, spender: router, amount: q.amountIn }],
       commands: [],
       deadline,

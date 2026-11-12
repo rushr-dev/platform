@@ -19,7 +19,7 @@ import type { PonsPool, Quote, V2Pool, V3Pool, V4Pool } from '../src/types';
 const PONS: Address = '0x39dbed3a2bd333467115de45665cc57f813c4571';
 const WALLET: Address = '0x2222222222222222222222222222222222222222';
 const ROUTER: Address = '0x3333333333333333333333333333333333333333';
-const CURVE_ROUTER: Address = '0x4444444444444444444444444444444444444444';
+const PONS_ROUTER: Address = '0x4444444444444444444444444444444444444444';
 
 /** Ephemeral P-256 key generated for this test run only (never a real credential). */
 async function testKey() {
@@ -132,22 +132,22 @@ describe('Privy signer policy', () => {
   });
 
   it('allows only the router trade selectors and router approvals, within caps and expiry', () => {
-    const p = buildSignerPolicy({ purpose: 'quick-trade', wallet: WALLET, rushrRouter: ROUTER, curveRouter: CURVE_ROUTER, caps: defaultCaps(1_000) });
+    const p = buildSignerPolicy({ purpose: 'quick-trade', wallet: WALLET, rushrRouter: ROUTER, ponsRouter: PONS_ROUTER, caps: defaultCaps(1_000) });
     const s = allowedSelectors();
     const trade = p.rules[0]!;
     const cond = (rule: typeof trade, field: string) => rule.conditions.find((c) => c.field === field)!;
-    expect(cond(trade, 'to').value).toEqual([ROUTER, CURVE_ROUTER]);
-    expect(cond(trade, 'function_selector').value).toEqual([s.rushrBuy, s.rushrSell, s.curveBuy, s.curveSell]);
+    expect(cond(trade, 'to').value).toEqual([ROUTER, PONS_ROUTER]);
+    expect(cond(trade, 'function_selector').value).toEqual([s.rushrBuy, s.rushrSell, s.ponsBuy, s.ponsSell]);
     expect(cond(trade, 'function_selector').value).not.toContain(s.rushrSellAnyPool); // user-confirmed exits only
     expect(cond(trade, 'value').value).toBe('250000000000000000');
     expect(cond(trade, 'eth_value_24h').value).toBe('1000000000000000000');
     expect(cond(trade, 'chain_id').value).toBe('4663');
     expect(cond(trade, 'current_unix_timestamp').value).toBe(String(1_000 + 2_592_000));
     const approve = p.rules[1]!;
-    expect(cond(approve, 'approve.spender').value).toEqual([ROUTER, CURVE_ROUTER]);
+    expect(cond(approve, 'approve.spender').value).toEqual([ROUTER, PONS_ROUTER]);
     expect(cond(approve, 'value').value).toBe('0');
     expect(p.rules.every((r) => r.action === 'ALLOW' && r.method === 'eth_signTransaction')).toBe(true);
-    expect(new Set([s.rushrBuy, s.rushrSell, s.rushrSellAnyPool, s.curveBuy, s.curveSell]).size).toBe(5);
+    expect(new Set([s.rushrBuy, s.rushrSell, s.rushrSellAnyPool, s.ponsBuy, s.ponsSell]).size).toBe(5);
   });
 
   it('per-agent policies are independent and validate caps', () => {

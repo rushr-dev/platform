@@ -53,8 +53,8 @@ export const ponsCurveAbi = parseAbi([
 ]);
 export const ponsFactoryAbi = parseAbi(['function getLaunchedToken(address token) view returns (address token_, address curve)']);
 
-/** RushrCurveRouter (contracts/src/RushrCurveRouter.sol). Not deployed. */
-export const rushrCurveRouterAbi = parseAbi([
+/** RushrPonsRouter (contracts/src/RushrPonsRouter.sol). Not deployed. */
+export const rushrPonsRouterAbi = parseAbi([
   'function buy(address token, uint256 minTokensOut, address recipient, uint256 deadline, bool referred) payable returns (uint256 tokensOut)',
   'function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline, bool referred) returns (uint256 quoteOut)',
   'function feeBps() view returns (uint16)',

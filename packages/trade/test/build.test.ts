@@ -6,7 +6,7 @@ import { isTradeError } from '../src/errors';
 import { isBuildable, quotePool, rankQuotes } from '../src/quote';
 import { analyzeSwapTransfers, NATIVE_TRANSFER_EMITTER, type TransferEvent } from '../src/simulate';
 import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from '../src/addresses';
-import { rushrCurveRouterAbi } from '../src/abis';
+import { rushrPonsRouterAbi } from '../src/abis';
 import { universalRouterAbi } from '../src/universal-router';
 import type { PonsPool, Quote, SwapRequest, V2Pool, V3Pool, V4Pool } from '../src/types';
 
@@ -155,17 +155,17 @@ describe('PONS curve routes', () => {
     expect(q.warnings.join(' ')).toMatch(/not deployed/);
   });
 
-  it('cannot be built without the curve router', async () => {
+  it('cannot be built without RushrPonsRouter', async () => {
     const q = await quotePool(noRpc, ponsPool, req('buy', 10n ** 15n), cfg);
     expect(() => buildSwap(q, cfg)).toThrowError(expect.objectContaining({ code: 'UNSUPPORTED_VENUE' }));
     expect(isBuildable(ponsPool, cfg)).toBe(false);
   });
 
-  it('builds RushrCurveRouter calls when configured', async () => {
-    const withRouter = resolveConfig({ feeRecipient: TREASURY, curveRouter: '0x3333333333333333333333333333333333333333' });
+  it('builds RushrPonsRouter calls when configured', async () => {
+    const withRouter = resolveConfig({ feeRecipient: TREASURY, ponsRouter: '0x3333333333333333333333333333333333333333' });
     const buy = buildSwap(await quotePool(noRpc, ponsPool, req('buy', 10n ** 15n), withRouter), withRouter);
     expect(buy.tx.value).toBe(10n ** 15n);
-    const d = decodeFunctionData({ abi: rushrCurveRouterAbi, data: buy.tx.data });
+    const d = decodeFunctionData({ abi: rushrPonsRouterAbi, data: buy.tx.data });
     expect(d.functionName).toBe('buy');
     const sell = buildSwap(await quotePool(noRpc, ponsPool, req('sell', 10n ** 24n), withRouter), withRouter);
     expect(sell.approvals).toEqual([{ kind: 'erc20', token: TOKEN, spender: '0x3333333333333333333333333333333333333333', amount: 10n ** 24n }]);

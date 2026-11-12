@@ -2,17 +2,17 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {RushrCurveRouter, IPonsFactory} from "../src/RushrCurveRouter.sol";
+import {RushrPonsRouter, IPonsFactory} from "../src/RushrPonsRouter.sol";
 import {MockToken, MockCurve, MockFactory, RejectingTreasury} from "./Mocks.sol";
 
-contract RushrCurveRouterTest is Test {
+contract RushrPonsRouterTest is Test {
     uint16 constant FEE = 50; // 0.5%
     uint16 constant REF_FEE = 45; // 0.45% for referred traders
 
     MockToken token;
     MockCurve curve;
     MockFactory factory;
-    RushrCurveRouter router;
+    RushrPonsRouter router;
     address treasury = makeAddr("treasury");
     address alice = makeAddr("alice");
     uint256 deadline;
@@ -35,7 +35,7 @@ contract RushrCurveRouterTest is Test {
         token.mint(address(curve), 1e27);
         factory = new MockFactory();
         factory.set(address(token), address(curve));
-        router = new RushrCurveRouter(IPonsFactory(address(factory)), treasury, FEE, REF_FEE);
+        router = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, FEE, REF_FEE);
         vm.deal(alice, 100 ether);
         deadline = block.timestamp + 300;
     }
@@ -48,14 +48,14 @@ contract RushrCurveRouterTest is Test {
     // ---------------------------------------------------------------- construction
 
     function test_constructorValidates() public {
-        vm.expectRevert(RushrCurveRouter.FeeTooHigh.selector);
-        new RushrCurveRouter(IPonsFactory(address(factory)), treasury, 301, 0);
-        vm.expectRevert(RushrCurveRouter.FeeTooHigh.selector);
-        new RushrCurveRouter(IPonsFactory(address(factory)), treasury, 50, 51); // referral rate above base
-        vm.expectRevert(RushrCurveRouter.ZeroAddress.selector);
-        new RushrCurveRouter(IPonsFactory(address(factory)), address(0), 50, 45);
-        vm.expectRevert(RushrCurveRouter.ZeroAddress.selector);
-        new RushrCurveRouter(IPonsFactory(address(0)), treasury, 50, 45);
+        vm.expectRevert(RushrPonsRouter.FeeTooHigh.selector);
+        new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 301, 0);
+        vm.expectRevert(RushrPonsRouter.FeeTooHigh.selector);
+        new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 50, 51); // referral rate above base
+        vm.expectRevert(RushrPonsRouter.ZeroAddress.selector);
+        new RushrPonsRouter(IPonsFactory(address(factory)), address(0), 50, 45);
+        vm.expectRevert(RushrPonsRouter.ZeroAddress.selector);
+        new RushrPonsRouter(IPonsFactory(address(0)), treasury, 50, 45);
         assertEq(router.feeBps(), 50);
         assertEq(router.referralFeeBps(), 45);
         assertEq(router.treasury(), treasury);
@@ -114,7 +114,7 @@ contract RushrCurveRouterTest is Test {
         bps = uint16(bound(bps, 0, 300));
         uint16 refBps = bps / 2;
         uint256 v = bound(value, 1e9, 50 ether);
-        RushrCurveRouter r = new RushrCurveRouter(IPonsFactory(address(factory)), treasury, bps, refBps);
+        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, bps, refBps);
         uint256 before = treasury.balance;
         vm.prank(alice);
         r.buy{value: v}(address(token), 0, alice, deadline, referred);
@@ -173,7 +173,7 @@ contract RushrCurveRouterTest is Test {
         uint256 curveOut = _curveOut(0.995 ether);
         uint256 min = (curveOut * 9_700) / 10_000; // between what the curve sends and what alice gets
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(RushrCurveRouter.SlippageExceeded.selector, curveOut - (curveOut * 500) / 10_000, min));
+        vm.expectRevert(abi.encodeWithSelector(RushrPonsRouter.SlippageExceeded.selector, curveOut - (curveOut * 500) / 10_000, min));
         router.buy{value: 1 ether}(address(token), min, alice, deadline, false);
     }
 
@@ -184,7 +184,7 @@ contract RushrCurveRouterTest is Test {
         uint256 snap = vm.snapshotState();
         uint256 out = router.sell(address(token), bought, 0, alice, deadline, false);
         vm.revertToState(snap);
-        vm.expectRevert(abi.encodeWithSelector(RushrCurveRouter.SlippageExceeded.selector, out, out + 1));
+        vm.expectRevert(abi.encodeWithSelector(RushrPonsRouter.SlippageExceeded.selector, out, out + 1));
         router.sell(address(token), bought, out + 1, alice, deadline, false);
         router.sell(address(token), bought, out, alice, deadline, false); // net minimum exactly met
         vm.stopPrank();
@@ -220,27 +220,27 @@ contract RushrCurveRouterTest is Test {
     function test_unknownAndGraduatedCurves() public {
         MockToken other = new MockToken();
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(RushrCurveRouter.UnknownCurve.selector, address(other)));
+        vm.expectRevert(abi.encodeWithSelector(RushrPonsRouter.UnknownCurve.selector, address(other)));
         router.buy{value: 1 ether}(address(other), 0, alice, deadline, false);
 
         curve.setGraduated(true);
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(RushrCurveRouter.CurveGraduated.selector, address(token)));
+        vm.expectRevert(abi.encodeWithSelector(RushrPonsRouter.CurveGraduated.selector, address(token)));
         router.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
     }
 
     function test_deadlineZeroAmountZeroRecipient() public {
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.DeadlinePassed.selector);
+        vm.expectRevert(RushrPonsRouter.DeadlinePassed.selector);
         router.buy{value: 1 ether}(address(token), 0, alice, block.timestamp - 1, false);
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.ZeroAmount.selector);
+        vm.expectRevert(RushrPonsRouter.ZeroAmount.selector);
         router.buy{value: 0}(address(token), 0, alice, deadline, false);
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.ZeroAddress.selector);
+        vm.expectRevert(RushrPonsRouter.ZeroAddress.selector);
         router.buy{value: 1 ether}(address(token), 0, address(0), deadline, false);
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.ZeroAmount.selector);
+        vm.expectRevert(RushrPonsRouter.ZeroAmount.selector);
         router.sell(address(token), 0, 0, alice, deadline, false);
     }
 
@@ -248,7 +248,7 @@ contract RushrCurveRouterTest is Test {
         vm.prank(alice);
         uint256 bought = router.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.TokenCallFailed.selector);
+        vm.expectRevert(RushrPonsRouter.TokenCallFailed.selector);
         router.sell(address(token), bought, 0, alice, deadline, false);
     }
 
@@ -259,21 +259,21 @@ contract RushrCurveRouterTest is Test {
     }
 
     function test_reentrancyBlocked() public {
-        curve.setReenter(address(router), abi.encodeCall(RushrCurveRouter.buy, (address(token), 0, alice, deadline, false)));
+        curve.setReenter(address(router), abi.encodeCall(RushrPonsRouter.buy, (address(token), 0, alice, deadline, false)));
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.Reentrancy.selector);
+        vm.expectRevert(RushrPonsRouter.Reentrancy.selector);
         router.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
     }
 
     function test_failingTreasuryRevertsTrade() public {
-        RushrCurveRouter r = new RushrCurveRouter(IPonsFactory(address(factory)), address(new RejectingTreasury()), FEE, REF_FEE);
+        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), address(new RejectingTreasury()), FEE, REF_FEE);
         vm.prank(alice);
-        vm.expectRevert(RushrCurveRouter.EthTransferFailed.selector);
+        vm.expectRevert(RushrPonsRouter.EthTransferFailed.selector);
         r.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
     }
 
     function test_zeroFee() public {
-        RushrCurveRouter r = new RushrCurveRouter(IPonsFactory(address(factory)), treasury, 0, 0);
+        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 0, 0);
         vm.prank(alice);
         r.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
         assertEq(treasury.balance, 0);

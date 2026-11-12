@@ -7,7 +7,7 @@ import { buildSwap } from '../src/build';
 import { prepareSwap, toJsonSafe } from '../src/agent';
 import { ponsBuyCapped } from '../src/math';
 import { TRADE_ADDRESSES } from '../src/addresses';
-import { rushrCurveRouterAbi } from '../src/abis';
+import { rushrPonsRouterAbi } from '../src/abis';
 import type { PonsPool, SwapRequest, V2Pool } from '../src/types';
 
 const TREASURY: Address = '0x1111111111111111111111111111111111111111';
@@ -91,8 +91,8 @@ describe('PONS graduation cap (curve 0xdb0f…8050, eth_simulateV1 2026-11-12)',
     expect(q.swapAmountIn + q.fee.feeAmount + q.expectedRefund).toBe(q.amountIn);
     expect(q.fee.feeAmount).toBe((q.swapAmountIn * 50n) / 9_950n);
     expect(q.warnings.join(' ')).toMatch(/graduates/);
-    const withRouter = resolveConfig({ feeRecipient: TREASURY, curveRouter: '0x3333333333333333333333333333333333333333' });
-    const d = decodeFunctionData({ abi: rushrCurveRouterAbi, data: buildSwap(q, withRouter).tx.data });
+    const withRouter = resolveConfig({ feeRecipient: TREASURY, ponsRouter: '0x3333333333333333333333333333333333333333' });
+    const d = decodeFunctionData({ abi: rushrPonsRouterAbi, data: buildSwap(q, withRouter).tx.data });
     expect(d.args.at(-1)).toBe(false); // not referred
   });
 });

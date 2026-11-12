@@ -1,5 +1,5 @@
 import { toFunctionSelector, type Address } from 'viem';
-import { rushrCurveRouterAbi } from './abis';
+import { rushrPonsRouterAbi } from './abis';
 import { rushrRouterAbi } from './rushr-router';
 
 /**
@@ -7,7 +7,7 @@ import { rushrRouterAbi } from './rushr-router';
  * 0.25 ETH per trade, 1 ETH per rolling 24 h, 30-day grants, user-adjustable.
  *
  * What it allows (everything else is denied by Privy's default-deny):
- * - eth_signTransaction on chain 4663 to RushrRouter.{buy,sell} and RushrCurveRouter.{buy,sell}, with
+ * - eth_signTransaction on chain 4663 to RushrRouter.{buy,sell} and RushrPonsRouter.{buy,sell}, with
  *   value <= per-trade cap, the rolling 24 h value sum <= daily cap, before expiry;
  * - ERC-20 approve whose spender is one of those routers, with value 0.
  * Never allowed: RushrRouter.sellAnyPool (user-confirmed exits only), transfers, other approvals,
@@ -36,7 +36,7 @@ export interface PolicyInput {
   /** The user's wallet (policy is per user; Privy policies have no "self" variable). */
   wallet: Address;
   rushrRouter: Address;
-  curveRouter?: Address | null;
+  ponsRouter?: Address | null;
   caps: SignerCaps;
   /** Name of the app-level aggregation summing tx value per wallet over 24 h. */
   dailyAggregationId?: string;
@@ -49,8 +49,8 @@ export function allowedSelectors() {
     rushrBuy: sel(rushrRouterAbi, 'buy'),
     rushrSell: sel(rushrRouterAbi, 'sell'),
     rushrSellAnyPool: sel(rushrRouterAbi, 'sellAnyPool'), // NOT allowed; listed so tests can assert it
-    curveBuy: sel(rushrCurveRouterAbi, 'buy'),
-    curveSell: sel(rushrCurveRouterAbi, 'sell'),
+    ponsBuy: sel(rushrPonsRouterAbi, 'buy'),
+    ponsSell: sel(rushrPonsRouterAbi, 'sell'),
     approve: '0x095ea7b3',
   };
 }
@@ -59,9 +59,9 @@ const APPROVE_ABI = [{ type: 'function', name: 'approve', inputs: [{ name: 'spen
 
 export function buildSignerPolicy(p: PolicyInput) {
   if (p.caps.perTradeWei <= 0n || p.caps.dailyWei < p.caps.perTradeWei) throw new Error('caps: need 0 < perTrade <= daily');
-  const routers = [p.rushrRouter, ...(p.curveRouter ? [p.curveRouter] : [])].map((a) => a.toLowerCase());
+  const routers = [p.rushrRouter, ...(p.ponsRouter ? [p.ponsRouter] : [])].map((a) => a.toLowerCase());
   const s = allowedSelectors();
-  const selectors = [s.rushrBuy, s.rushrSell, ...(p.curveRouter ? [s.curveBuy, s.curveSell] : [])];
+  const selectors = [s.rushrBuy, s.rushrSell, ...(p.ponsRouter ? [s.ponsBuy, s.ponsSell] : [])];
   const common = [
     { field_source: 'ethereum_transaction', field: 'chain_id', operator: 'eq', value: '4663' },
     { field_source: 'system', field: 'current_unix_timestamp', operator: 'lt', value: String(p.caps.expiresAt) },

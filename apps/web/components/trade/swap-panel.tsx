@@ -350,7 +350,7 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
                     <span className="min-w-0">
                       <span className="block truncate text-ink">{q.pool.venueFeeLabel}</span>
                       <span className="font-mono text-muted">{short(q.pool.id, 6, 4)}</span>
-                      {!isBuildable(q.pool, cfg) && <span className="ml-2 text-risk-medium">needs curve router</span>}
+                      {!isBuildable(q.pool, cfg) && <span className="ml-2 text-risk-medium">needs RushrPonsRouter</span>}
                     </span>
                     <span className="shrink-0 text-right font-mono tabular-nums">
                       {fmt(q.amountOut, outDecimals, 4)} <span className="text-muted">{outSymbol}</span>
@@ -416,7 +416,7 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
               {simulating ? 'Simulating…' : 'Simulate'}
             </button>
           </div>
-          {quote && !buildable && <p className="mt-2 text-xs text-risk-medium">PONS curve routes need the Rushr curve router, which is not deployed. Pick another route.</p>}
+          {quote && !buildable && <p className="mt-2 text-xs text-risk-medium">PONS curve routes need RushrPonsRouter, which is not deployed. Pick another route.</p>}
           {sim ? (
             <div className="mt-3 space-y-2 text-sm">
               <p className={sim.result.ok ? 'text-brand' : 'text-risk-high'}>{sim.result.ok ? 'Swap succeeds' : `Reverts: ${sim.result.error}`}</p>
@@ -456,7 +456,7 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
             <dl className="mt-3 space-y-1.5 font-mono">
               <Row label="to" value={sim.built.tx.to} />
               <Row label="value" value={`${fmt(sim.built.tx.value, 18)} ETH`} />
-              <Row label="commands" value={sim.built.commands.map((c) => c.label).join(' → ') || 'RushrCurveRouter'} />
+              <Row label="commands" value={sim.built.commands.map((c) => c.label).join(' → ') || 'RushrPonsRouter'} />
               <Row label="approvals" value={sim.built.approvals.map((a) => `${a.kind} → ${short(a.spender)}`).join(', ') || 'none'} />
               <Row label="calldata" value={`${(sim.built.tx.data.length - 2) / 2} bytes`} />
             </dl>

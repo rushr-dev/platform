@@ -88,13 +88,13 @@ Sources were checked on 2026-11-12. "Unverified" marks claims we couldn't confir
 
 ### Mitigations (each needed)
 1. **Every trade goes through Rushr's routers, with the recipient forced to `msg.sender`.**
-   - `RushrCurveRouter` already does this for PONS curves.
+   - `RushrPonsRouter` already does this for PONS curves.
    - For Uniswap paths we need **`RushrRouter`**, a small contract that takes a **structured route** (v4 pool key / v3 fee path / v2 path, amount, `minOut`, deadline) and **builds the Universal Router commands itself**, with no arbitrary `commands` argument. Output goes to the router, the fee is taken, and the rest goes to `msg.sender`.
    - Wrapping UR with a pass-through `commands` argument would **not** be safe: the attacker would just route the input to themselves.
    - This contract is a **deploy, so it's audit-gated**, and it's a prerequisite for server signing on Uniswap routes.
 2. **Policy allowlist, default deny** (Privy policy JSON in section 3):
-   - `to ∈ {RushrRouter, RushrCurveRouter}`, `chain_id == 4663`
-   - ERC-20 `approve` only with `spender ∈ {RushrRouter, RushrCurveRouter}`; no Permit2 at all on this path
+   - `to ∈ {RushrRouter, RushrPonsRouter}`, `chain_id == 4663`
+   - ERC-20 `approve` only with `spender ∈ {RushrRouter, RushrPonsRouter}`; no Permit2 at all on this path
    - deny plain ETH transfers (`value > 0` to anything but the routers), ERC-20 `transfer`/`transferFrom`, all EIP-712 and `personal_sign`, and type-4 (7702) transactions
 3. **Caps:** per-trade ETH `value` cap and a rolling 24 h sum (Privy stateful aggregation, `group_by` wallet). User-adjustable defaults, e.g. **0.25 ETH per trade, 1 ETH per day**. Privy's cap can race under concurrency, so the server also serialises signing per wallet. That doesn't help if the server itself is compromised, which is why caps are a bound, not the only defence.
 4. **Expiry:** the policy carries `current_unix_timestamp < grant + 30 days`. Re-granting is one click with the user present.
@@ -121,13 +121,13 @@ Sources were checked on 2026-11-12. "Unverified" marks claims we couldn't confir
      ```json
      { "version": "1.0", "name": "rushr-quick-trade:<user>", "chain_type": "ethereum", "rules": [
        { "name": "trade via routers", "method": "eth_signTransaction", "action": "ALLOW", "conditions": [
-         { "field_source": "ethereum_transaction", "field": "to", "operator": "in", "value": ["<RushrRouter>", "<RushrCurveRouter>"] },
+         { "field_source": "ethereum_transaction", "field": "to", "operator": "in", "value": ["<RushrRouter>", "<RushrPonsRouter>"] },
          { "field_source": "ethereum_transaction", "field": "chain_id", "operator": "eq", "value": "4663" },
          { "field_source": "ethereum_transaction", "field": "value", "operator": "lte", "value": "250000000000000000" },
          { "field_source": "aggregation", "field": "eth_value_24h", "operator": "lte", "value": "1000000000000000000" },
          { "field_source": "system", "field": "current_unix_timestamp", "operator": "lt", "value": "<grant+30d>" } ] },
        { "name": "approve routers only", "method": "eth_signTransaction", "action": "ALLOW", "conditions": [
-         { "field_source": "ethereum_calldata", "field": "approve.spender", "operator": "in", "value": ["<RushrRouter>", "<RushrCurveRouter>"], "abi": "<erc20 approve>" },
+         { "field_source": "ethereum_calldata", "field": "approve.spender", "operator": "in", "value": ["<RushrRouter>", "<RushrPonsRouter>"], "abi": "<erc20 approve>" },
          { "field_source": "ethereum_transaction", "field": "value", "operator": "eq", "value": "0" } ] } ] }
      ```
      This is illustrative: the exact field names follow Privy's schema, and anything unmatched is denied.
@@ -201,7 +201,7 @@ Each one is revocable on its own from the Permissions page. Quick-trade and agen
 | Module | What |
 | --- | --- |
 | `rushr-router.ts` | `routeFromPool(pool)` (ETH/WETH Uniswap pools), `rushrPoolKey` (same as the contract's `poolKeyOf`), `buildRushrRouterSwap(quote, cfg, { sellMode })` → unsigned tx plus the `approve(RushrRouter)` approval |
-| `policy.ts` | `buildSignerPolicy({ purpose, wallet, rushrRouter, curveRouter, caps })`: the Privy policy JSON. It allows the routers' `buy`/`sell` and router approvals on chain 4663, with per-trade and rolling-24 h caps and expiry; `sellAnyPool` is deliberately not allowed. `defaultCaps(now)`: 0.25 ETH, 1 ETH, 30 days |
+| `policy.ts` | `buildSignerPolicy({ purpose, wallet, rushrRouter, ponsRouter, caps })`: the Privy policy JSON. It allows the routers' `buy`/`sell` and router approvals on chain 4663, with per-trade and rolling-24 h caps and expiry; `sellAnyPool` is deliberately not allowed. `defaultCaps(now)`: 0.25 ETH, 1 ETH, 30 days |
 | `signer.ts` | The `AuthorizationKey` (KMS boundary) interface; `PlaceholderKmsKey` (always refuses, until a KMS is chosen); `WebCryptoAuthorizationKey` (dev and tests only, imports Privy's `wallet-auth:` format); `PrivySessionSigner` (REST `POST /v1/wallets/{id}/rpc` `eth_signTransaction`, signed with an RFC 8785 canonical payload and DER P-256 signature); `createSessionSigner(env)` (returns `null` unless `WALLETS_ENABLED=1` and Privy is configured); `assertOneClickAllowed(cfg)` (refuses until `rushrRouter` is set **and** `rushrRouterAudited: true`) |
 
 Verified:

@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {RushrCurveRouter, IPonsFactory, IPonsCurve, IERC20Min} from "../src/RushrCurveRouter.sol";
+import {RushrPonsRouter, IPonsFactory, IPonsCurve, IERC20Min} from "../src/RushrPonsRouter.sol";
 
 interface IPonsCurveViews {
     function realQuoteReserve() external view returns (uint256);
@@ -13,11 +13,11 @@ interface IPonsCurveViews {
 /// @notice Against a local fork of Robinhood Chain (state read lazily; nothing is broadcast).
 ///         Skipped unless ROBINHOOD_RPC_URL is set:  ROBINHOOD_RPC_URL=... forge test --match-contract Fork -vv
 ///         PONS_CURVE_TOKEN overrides the token (must still be on its curve).
-contract RushrCurveRouterForkTest is Test {
+contract RushrPonsRouterForkTest is Test {
     IPonsFactory constant PONS_FACTORY = IPonsFactory(0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e);
     address treasury = makeAddr("treasury");
     address trader = makeAddr("trader");
-    RushrCurveRouter router;
+    RushrPonsRouter router;
     address token;
     address curve;
     bool noFork;
@@ -31,7 +31,7 @@ contract RushrCurveRouterForkTest is Test {
         vm.createSelectFork(rpc);
         token = vm.envOr("PONS_CURVE_TOKEN", address(0x89964D7fCd9cDeE7c1e4FdC17b997Bb979B05525));
         (, curve) = PONS_FACTORY.getLaunchedToken(token);
-        router = new RushrCurveRouter(PONS_FACTORY, treasury, 50, 45);
+        router = new RushrPonsRouter(PONS_FACTORY, treasury, 50, 45);
         vm.deal(trader, 100 ether);
     }
 

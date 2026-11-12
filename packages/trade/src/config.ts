@@ -23,8 +23,8 @@ export interface TradeConfig {
   feeRecipient: Address;
   /** Universal Router used for Uniswap v2/v3/v4 routes. */
   universalRouter: Address;
-  /** Deployed RushrCurveRouter for PONS curves; null until deployed (curve routes are then unsupported). */
-  curveRouter: Address | null;
+  /** Deployed RushrPonsRouter for PONS curves; null until deployed (curve routes are then unsupported). */
+  ponsRouter: Address | null;
   /** Deployed RushrRouter (structured Uniswap routes, output only to the trader); null until deployed. */
   rushrRouter: Address | null;
   /** Set true only after RushrRouter's independent audit. Gates one-click (server-signed) trading. */
@@ -41,7 +41,7 @@ export const DEFAULT_TRADE_CONFIG: TradeConfig = {
   referrerShareBps: 2_000,
   feeRecipient: PLACEHOLDER_FEE_RECIPIENT,
   universalRouter: TRADE_ADDRESSES.universalRouter,
-  curveRouter: null,
+  ponsRouter: null,
   rushrRouter: null,
   rushrRouterAudited: false,
   defaultSlippageBps: 100,

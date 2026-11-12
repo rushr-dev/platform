@@ -21,7 +21,7 @@ interface IERC20Min {
     function transfer(address to, uint256 amount) external returns (bool);
 }
 
-/// @title RushrCurveRouter
+/// @title RushrPonsRouter
 /// @notice Buys and sells PONS bonding-curve tokens with the Rushr platform fee, in one transaction.
 ///         The fee is always taken in ETH: from the ETH actually spent on buys, from the output on sells.
 ///         Two immutable rates: `feeBps` and the discounted `referralFeeBps` for referred traders
@@ -29,7 +29,7 @@ interface IERC20Min {
 /// @dev Non-custodial and stateless between transactions. No owner, no upgradeability, no arbitrary
 ///      calls: the only external targets are the immutable PONS factory, the curve it reports for the
 ///      token, the token itself and the immutable treasury. NOT DEPLOYED; review before any deployment.
-contract RushrCurveRouter {
+contract RushrPonsRouter {
     uint16 public constant MAX_FEE_BPS = 300;
 
     IPonsFactory public immutable factory;
