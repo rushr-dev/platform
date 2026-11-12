@@ -42,7 +42,7 @@ export function MyProfile() {
           avatar={<UserAvatar user={user} size={72} />}
           name={member?.displayName ?? (member ? `@${member.handle}` : displayName(user))}
           handle={member?.handle ?? null}
-          x={member?.x?.username ?? user.twitter?.username ?? null}
+          x={member?.x?.username ?? null}
           kind={member?.kind ?? 'human'}
           joined={member?.createdAt ?? null}
           followers={member?.followers ?? null}

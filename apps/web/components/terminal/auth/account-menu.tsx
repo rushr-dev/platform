@@ -74,7 +74,7 @@ export function AccountMenu() {
             <UserAvatar user={user} size={40} />
             <div className="min-w-0">
               <div className="truncate font-semibold">{name}</div>
-              {user.email && user.twitter && <div className="truncate text-xs text-muted">{user.email}</div>}
+              {user.email && name !== user.email.split('@')[0] && <div className="truncate text-xs text-muted">{user.email}</div>}
             </div>
           </div>
           <WalletRow label="Rushr wallet" address={user.wallet} pending={!user.wallet} />

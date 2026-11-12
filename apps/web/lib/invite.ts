@@ -3,7 +3,7 @@
 /**
  * Beta invite codes. The landing sends invitees to /trenches?invite=<CODE> (A–Z, 0–9 and dash,
  * 4–32 chars). We keep the code until sign-up uses it: sessionStorage for the tab, plus a
- * localStorage copy with a 7-day expiry because X sign-in leaves the page and comes back.
+ * localStorage copy with a 7-day expiry in case sign-in (e.g. a mobile wallet) reloads the page.
  * Codes are kept as typed; the API compares them case-insensitively.
  */
 
