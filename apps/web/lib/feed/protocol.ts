@@ -4,10 +4,10 @@
  * v1 is what the LiveFeed Durable Object speaks today: subscribe/unsubscribe, and bare events with
  * no sequence numbers and no snapshots (the client gets snapshots over HTTP).
  *
- * v2 is the WebSocket-first protocol the terminal is ready for (proposal in docs/team-plan.md,
- * Requests → "Feed protocol v2"): a snapshot on subscribe, then deltas with a per-topic sequence
- * number, plus a hydrating state for tokens the server is still fetching from chain. The client
- * negotiates with a `hello`; a v1 server never answers it, so the client stays on v1.
+ * v2 is the Data stream's realtime protocol (docs/realtime.md on the data branch): connect to
+ * `/ws?v=2`, the server's first frame is `hello`, then every topic gets a `snapshot` followed by
+ * deltas with a per-topic `seq` inside an `epoch`. A v1 server ignores `?v=2` and never says hello,
+ * so the client stays on v1 there.
  */
 
 export type ProtocolVersion = 1 | 2;
@@ -21,60 +21,81 @@ export interface V1Event {
   source?: 'live' | 'poll';
 }
 
-/* ------------------------------------------------------------------ v2 (proposed) */
+/* ------------------------------------------------------------------ v2 */
 
-export type HydrationSource = 'chain' | 'index' | 'mixed';
+export type DataSource = 'index' | 'chain' | 'mixed';
 
-/** Where a topic's data stands. `hydrating`: the server is still backfilling it (from chain or index). */
+/** Where a topic's data stands. `hydrating`/`partial`: the server is still fetching it from chain. */
 export interface Hydration {
-  state: 'ready' | 'hydrating';
-  source?: HydrationSource;
-  /** 0..1 when the server can tell. */
-  progress?: number | null;
+  state: 'ready' | 'hydrating' | 'partial';
+  source?: DataSource;
+  /** Unix seconds of the history already covered, when the server says. */
+  covered?: { from: number; to: number } | null;
 }
 
 export type ClientMessage =
-  | { op: 'hello'; v: 2 }
-  | { op: 'sub'; topic: string; /** resume from this seq if the server still has it */ since?: number }
-  | { op: 'unsub'; topic: string }
-  | { op: 'resync'; topic: string }
-  | { op: 'ping' }
-  // v1 forms
   | { op: 'subscribe'; topics: string[] }
-  | { op: 'unsubscribe'; topics: string[] };
+  | { op: 'unsubscribe'; topics: string[] }
+  | { op: 'resync'; topic: string }
+  | { op: 'ping' };
+
+export interface Hello {
+  type: 'hello';
+  protocol: 2;
+  epoch: string;
+  limits?: { maxTopics?: number; maxOpsPer10s?: number; pingSeconds?: number };
+}
+
+/** Every topic message: `type` is `snapshot` or the delta kind. */
+export interface Envelope {
+  topic: string;
+  type: string;
+  epoch: string;
+  seq: number | null;
+  source?: DataSource;
+  data: unknown;
+}
 
 export type ServerMessage =
-  | { type: 'hello'; v: 2 }
+  | Hello
   | { type: 'pong' }
-  | { type: 'subscribed'; topics?: string[] }
-  | ({ type: 'snapshot'; topic: string; seq: number; data: unknown; block_time?: number } & Partial<Hydration>)
-  | { type: 'delta'; topic: string; seq: number; kind: string; data: unknown; block_time?: number; source?: 'live' | 'poll' }
-  | ({ type: 'state'; topic: string; seq?: number } & Hydration)
-  | { type: 'error'; topic?: string; code: string; message?: string };
+  | { type: 'subscribed'; topics?: string[] } // v1 reply to any op
+  | { type: 'error'; code: string; message?: string; topic?: string }
+  | { type: 'resync_needed'; topic: string }
+  | Envelope;
 
 /** One change to a topic, whatever the protocol it arrived on. */
 export interface Delta {
   kind: string;
   data: unknown;
-  /** v2 only. */
-  seq?: number;
+  /** v2 only; null for unnumbered (hydration) messages. */
+  seq?: number | null;
   /** Unix seconds of the newest block in the delta, for the latency pill. */
   blockTime?: number | null;
-  source?: 'live' | 'poll';
+  source?: string;
+}
+
+/** Newest block time in a payload: trades carry `time`, cards may carry `block_time`. */
+export function blockTimeOf(kind: string, data: unknown): number | null {
+  if (kind === 'trades' && Array.isArray(data)) {
+    const times = (data as { time?: number }[]).map((t) => t.time ?? 0);
+    return times.length ? Math.max(...times) : null;
+  }
+  return (data as { block_time?: number | null } | null)?.block_time ?? null;
 }
 
 /** Turn a v1 event into a delta (kinds keep their v1 names: token, trades, launch). */
-export function fromV1(e: V1Event): Delta {
-  let blockTime: number | null = null;
-  if (e.type === 'trades' && Array.isArray(e.data)) {
-    const times = (e.data as { time?: number }[]).map((t) => t.time ?? 0);
-    blockTime = times.length ? Math.max(...times) : null;
-  } else {
-    blockTime = (e.data as { block_time?: number | null } | null)?.block_time ?? null;
-  }
-  return { kind: e.type, data: e.data, blockTime, source: e.source };
-}
+export const fromV1 = (e: V1Event): Delta => ({ kind: e.type, data: e.data, blockTime: blockTimeOf(e.type, e.data), source: e.source });
 
 export const isV1Event = (m: unknown): m is V1Event =>
-  !!m && typeof m === 'object' && typeof (m as V1Event).topic === 'string' && typeof (m as V1Event).type === 'string' &&
-  ['token', 'trades', 'launch'].includes((m as V1Event).type);
+  !!m && typeof m === 'object' && !('epoch' in m) && typeof (m as V1Event).topic === 'string' && ['token', 'trades', 'launch'].includes((m as V1Event).type);
+
+export const isEnvelope = (m: unknown): m is Envelope => !!m && typeof m === 'object' && typeof (m as Envelope).topic === 'string' && 'epoch' in m;
+
+/** v2 token state names → the client's. */
+export function hydrationOf(state: unknown, source?: DataSource, progress?: unknown): Hydration {
+  const p = progress as { from?: number; to?: number } | null | undefined;
+  const covered = p && Number.isFinite(p.from) && Number.isFinite(p.to) ? { from: p.from!, to: p.to! } : null;
+  if (state === 'hydrating' || state === 'partial') return { state, source, covered };
+  return { state: 'ready', source };
+}

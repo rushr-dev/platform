@@ -18,7 +18,8 @@ import {
 import type { Column, TokenCard } from '@/lib/api';
 import { age, LAUNCHPAD_LABEL, pct, usd } from '@/lib/format';
 import { useTopic, useTopicDeltas } from '@/lib/feed/react';
-import { trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
+import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
+import type { Delta } from '@/lib/feed/protocol';
 import { useNow } from '@/lib/now';
 import { RiskTag, SocialLinks, TokenAvatar } from './bits';
 
@@ -113,8 +114,15 @@ const QUICK_KEY = 'rushr.quickbuy';
 export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverNow: number }) {
   // Every known token, by address: server-rendered first screen, then the HTTP snapshot and live
   // deltas from the feed client (batched once per frame there).
-  const feedView = useTopic<TrenchesState>('trenches', () => trenchesSpec(initial));
-  const tokens = feedView.data;
+  // v1: one `trenches` topic, columns computed here. v2: one topic per column, membership decided by
+  // the server (moves included). Both are subscribed; the v2 columns take over once all three have
+  // a server snapshot. (A v2 server rejects the legacy topic; a v1 server never fills the columns.)
+  const legacy = useTopic<TrenchesState>('trenches', () => trenchesSpec(initial));
+  const colNew = useTopic<TrenchesState>('trenches:new', () => trenchesColumnSpec('new', initial.filter((t) => columnOf(t) === 'new')));
+  const colAlmost = useTopic<TrenchesState>('trenches:almost', () => trenchesColumnSpec('almost', initial.filter((t) => columnOf(t) === 'almost')));
+  const colMigrated = useTopic<TrenchesState>('trenches:migrated', () => trenchesColumnSpec('migrated', initial.filter((t) => columnOf(t) === 'migrated')));
+  const serverColumns = colNew.fromServer && colAlmost.fromServer && colMigrated.fromServer;
+  const tokens = legacy.data;
   const flashed = useRef(new Map<string, number>());
   // Last seen market cap per token, so a row only flashes when its number actually moves.
   const mcaps = useRef(new Map(initial.map((t) => [t.address, t.market_cap_usd])));
@@ -152,28 +160,47 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
     return () => clearInterval(id);
   }, []);
 
-  useTopicDeltas('trenches', (deltas) => {
+  const onDeltas = (deltas: Delta[]) => {
     const at = Date.now();
     for (const d of deltas) {
-      for (const t of (Array.isArray(d.data) ? d.data : [d.data]) as TokenCard[]) {
+      const payload = d.kind === 'move' ? (d.data as { card?: TokenCard } | null)?.card : d.data;
+      for (const t of (Array.isArray(payload) ? payload : [payload]) as TokenCard[]) {
         if (!t?.address) continue;
         if (d.kind === 'launch') entering.current.add(t.address);
         if (d.kind === 'launch' || mcaps.current.get(t.address) !== t.market_cap_usd) flashed.current.set(t.address, at);
         mcaps.current.set(t.address, t.market_cap_usd);
       }
     }
-  });
+  };
+  useTopicDeltas('trenches', onDeltas);
+  useTopicDeltas('trenches:new', onDeltas);
+  useTopicDeltas('trenches:almost', onDeltas);
+  useTopicDeltas('trenches:migrated', onDeltas);
 
   const lists = useMemo(() => {
     const out: Record<Column, TokenCard[]> = { new: [], almost: [], migrated: [] };
-    for (const t of tokens.values()) {
-      if (!showSpam && t.spam) continue;
-      if (!showPlain && (t.launchpad ?? 'uniswap-v4') === 'uniswap-v4') continue;
-      out[columnOf(t)].push(t);
+    const keep = (t: TokenCard) => (showSpam || !t.spam) && (showPlain || (t.launchpad ?? 'uniswap-v4') !== 'uniswap-v4');
+    if (serverColumns) {
+      const seen = new Set<string>();
+      const cols: [Column, TrenchesState][] = [['new', colNew.data], ['almost', colAlmost.data], ['migrated', colMigrated.data]];
+      for (const [c, m] of cols)
+        for (const t of m.values()) {
+          seen.add(t.address);
+          if (keep(t)) out[c].push(t);
+        }
+      // The column topics carry launchpad tokens only; plain pools still come from the HTTP list.
+      if (showPlain) for (const t of tokens.values()) if (!seen.has(t.address) && (t.launchpad ?? 'uniswap-v4') === 'uniswap-v4' && keep(t)) out[columnOf(t)].push(t);
+    } else {
+      for (const t of tokens.values()) if (keep(t)) out[columnOf(t)].push(t);
     }
     for (const c of COLUMNS) out[c.id].sort(SORT[c.id]);
     return out;
-  }, [tokens, showSpam, showPlain]);
+  }, [tokens, serverColumns, colNew.data, colAlmost.data, colMigrated.data, showSpam, showPlain]);
+  // Paused columns look tokens up by address across every source.
+  const byAddress = useMemo(
+    () => (serverColumns ? new Map([...tokens, ...colNew.data, ...colAlmost.data, ...colMigrated.data]) : tokens),
+    [serverColumns, tokens, colNew.data, colAlmost.data, colMigrated.data],
+  );
 
   const setColFilters = useCallback((col: Column, f: Filters) => {
     setFilters((prev) => {
@@ -209,7 +236,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
           const live = lists[c.id].filter((t) => passes(t, f, now));
           const frozen = paused[c.id];
           const shown = frozen
-            ? frozen.map((a) => tokens.get(a)).filter((t): t is TokenCard => !!t)
+            ? frozen.map((a) => byAddress.get(a)).filter((t): t is TokenCard => !!t)
             : live.slice(0, PER_COLUMN);
           const waiting = frozen ? live.filter((t) => !frozen.includes(t.address)).length : 0;
           return (

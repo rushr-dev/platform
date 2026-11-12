@@ -2,6 +2,7 @@
 
 import { API_URL, type Candle, type TokenCard, type TokenDetail, type Trade } from '../api';
 import { fromApi, fromLive, mergeTrades, TRADE_LIMIT, type LiveTrade, type Tx } from '../trades';
+import type { ApiPool } from '../pools';
 import type { TopicSpec } from './client';
 import type { Delta } from './protocol';
 
@@ -27,24 +28,57 @@ export interface TokenState {
   trades: Tx[] | null;
   /** How many trades the last full list held (the tail of `trades` is that history). */
   fetched: number;
-  /**
-   * 1m candles when the feed carries them (v2: in the snapshot, then `candles` deltas as history
-   * streams in for a hydrating token). Null on v1, where the page reads candles over HTTP.
-   */
+  /** 1m candles from the feed (v2 snapshot + candle ticks). Null on v1, where the page reads them over HTTP. */
   candles: Candle[] | null;
+  /** 1s candles for the last ~30 min (v2). */
+  candles1s: Candle[] | null;
+  /** Server-side rolling windows (v2 `stats`). Null on v1, where the page derives them. */
+  stats: ServerStats | null;
+  /** Pools from the snapshot (v2), same shape as GET /tokens/:a/pools. */
+  pools: ApiPool[] | null;
 }
 
-/** v2 snapshot payload proposed for `token:<a>` (docs/team-plan.md, Requests). */
+export interface ServerWindow {
+  priceChangePct: number | null;
+  volumeUsd: number;
+  buys: number;
+  sells: number;
+  buyUsd: number;
+  sellUsd: number;
+  makers: number;
+}
+export type ServerStats = Partial<Record<'5m' | '1h' | '6h' | '24h', ServerWindow>> & { asOf?: number };
+
+/** `token:<a>` snapshot data (docs/realtime.md on the data branch). */
 interface TokenSnapshotV2 {
-  token: TokenDetail;
+  state?: string;
+  card?: Partial<TokenDetail>;
+  stats?: ServerStats;
+  pools?: ApiPool[];
   trades?: (Trade | LiveTrade)[];
-  candles?: Candle[];
+  candles?: { '1s'?: Candle[]; '1m'?: Candle[] };
 }
 
-/** Upsert candles by bucket time (history backfill and the live bucket both land here). */
-function upsertCandles(prev: Candle[] | null, next: Candle[]): Candle[] {
+type CandleTick = Candle & { interval?: '1s' | '1m' };
+
+const sortCandles = (list: Candle[]) => [...list].filter((c) => c && Number.isFinite(c.time)).sort((a, b) => a.time - b.time);
+
+/**
+ * Merge candle increments into their buckets (spec: a new bucket is inserted as is; otherwise
+ * high = max, low = min, close = tick.close, volume and trades add up, open stays).
+ */
+export function mergeTicks(prev: Candle[] | null, ticks: CandleTick[]): Candle[] {
   const by = new Map((prev ?? []).map((c) => [c.time, c]));
-  for (const c of next) if (c && Number.isFinite(c.time)) by.set(c.time, c);
+  for (const t of ticks) {
+    if (!t || !Number.isFinite(t.time)) continue;
+    const c = by.get(t.time);
+    by.set(
+      t.time,
+      c
+        ? { ...c, high: Math.max(c.high, t.high), low: Math.min(c.low, t.low), close: t.close, volume: c.volume + (t.volume ?? 0), trades: (c.trades ?? 0) + (t.trades ?? 0) }
+        : { time: t.time, open: t.open, high: t.high, low: t.low, close: t.close, volume: t.volume ?? 0, trades: t.trades ?? 0 },
+    );
+  }
   return [...by.values()].sort((a, b) => a.time - b.time);
 }
 
@@ -55,27 +89,48 @@ export function tokenSpec(detail: TokenDetail, ssrTrades: Promise<Tx[]>): Omit<T
   const decimals = detail.decimals;
   return {
     kind: 'token',
-    initial: { token: detail, trades: null, fetched: 0, candles: null },
+    initial: { token: detail, trades: null, fetched: 0, candles: null, candles1s: null, stats: null, pools: null },
     apply(state, deltas: Delta[]) {
-      let { token, trades, candles } = state;
+      let { token, trades, candles, candles1s, stats } = state;
       for (const d of deltas) {
-        if (d.kind === 'token' && d.data) token = { ...token, ...(d.data as Partial<TokenDetail>) };
-        if (d.kind === 'trades' && Array.isArray(d.data)) {
-          const fresh = (d.data as (LiveTrade | Trade)[]).map((x) => toTx(x, decimals));
-          trades = mergeTrades(fresh, trades ?? []);
+        if (!d.data) continue;
+        switch (d.kind) {
+          case 'token': // v2 sends the full card; keep the detail-only fields from the page
+            token = { ...token, ...(d.data as Partial<TokenDetail>) };
+            break;
+          case 'trades':
+            if (Array.isArray(d.data)) trades = mergeTrades((d.data as (LiveTrade | Trade)[]).map((x) => toTx(x, decimals)), trades ?? []);
+            break;
+          case 'candle': {
+            const ticks = (Array.isArray(d.data) ? d.data : [d.data]) as CandleTick[];
+            const m1 = ticks.filter((t) => (t.interval ?? '1m') === '1m');
+            const s1 = ticks.filter((t) => t.interval === '1s');
+            // On v1 the page reads 1m candles over HTTP; only start keeping them once a snapshot has.
+            if (m1.length && candles) candles = mergeTicks(candles, m1);
+            if (s1.length) candles1s = mergeTicks(candles1s, s1).slice(-1800);
+            break;
+          }
+          case 'stats':
+            stats = d.data as ServerStats;
+            break;
         }
-        if (d.kind === 'candles' && d.data) candles = upsertCandles(candles, (Array.isArray(d.data) ? d.data : [d.data]) as Candle[]);
       }
-      return token === state.token && trades === state.trades && candles === state.candles ? state : { ...state, token, trades, candles };
+      return token === state.token && trades === state.trades && candles === state.candles && candles1s === state.candles1s && stats === state.stats
+        ? state
+        : { ...state, token, trades, candles, candles1s, stats };
     },
     fromSnapshot(data, prev) {
       const s = data as TokenSnapshotV2;
       const list = (s.trades ?? []).map((x) => toTx(x, decimals));
       return {
-        token: { ...prev.token, ...s.token },
+        // Snapshots replace the topic; the card merges over the page's detail (deployer, signals, dev…).
+        token: { ...prev.token, ...(s.card ?? {}) },
         trades: mergeTrades(list, []),
         fetched: list.length,
-        candles: s.candles ? upsertCandles(null, s.candles) : prev.candles,
+        candles: s.candles?.['1m'] ? sortCandles(s.candles['1m']) : prev.candles,
+        candles1s: s.candles?.['1s'] ? sortCandles(s.candles['1s']) : prev.candles1s,
+        stats: s.stats ?? prev.stats,
+        pools: s.pools ?? prev.pools,
       };
     },
     async fetchSnapshot(signal, attempt) {
@@ -159,6 +214,44 @@ export function trenchesSpec(initial: TokenCard[]): Omit<TopicSpec<TrenchesState
       );
       // Merge: the snapshot is newer than what we had; deltas held meanwhile are replayed on top.
       return (prev) => cap(new Map([...prev, ...lists.flat().map((t) => [t.address, t] as const)]));
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ trenches:<column> (v2) */
+
+export type TrenchesColumn = 'new' | 'almost' | 'migrated';
+
+/**
+ * One trenches column on v2. The server owns membership: `launch`/`token` upsert a card, and
+ * `move {address, from, to, card}` arrives on both columns (remove from `from`, insert into `to`).
+ * No HTTP snapshot: on v1 the page uses the single `trenches` topic instead.
+ */
+export function trenchesColumnSpec(column: TrenchesColumn, initial: TokenCard[]): Omit<TopicSpec<TrenchesState>, 'topic'> {
+  return {
+    kind: 'trenches-column',
+    initial: new Map(initial.map((t) => [t.address, t])),
+    initialIsSnapshot: true,
+    apply(state, deltas) {
+      let next: TrenchesState | null = null;
+      const edit = () => (next ??= new Map(state));
+      for (const d of deltas) {
+        if (d.kind === 'move') {
+          const mv = d.data as { address?: string; from?: string; to?: string; card?: TokenCard } | null;
+          if (!mv?.address) continue;
+          if (mv.from === column && mv.to !== column) edit().delete(mv.address);
+          if (mv.to === column && mv.card) edit().set(mv.address, mv.card);
+          continue;
+        }
+        if (d.kind !== 'token' && d.kind !== 'launch') continue;
+        const cards = (Array.isArray(d.data) ? d.data : [d.data]) as TokenCard[];
+        for (const t of cards) if (t?.address) edit().set(t.address, t); // full card: replace
+      }
+      return next ?? state;
+    },
+    fromSnapshot(data) {
+      const cards = ((data as { tokens?: (TokenCard | null)[] })?.tokens ?? []).filter((t): t is TokenCard => !!t);
+      return new Map(cards.map((t) => [t.address, t]));
     },
   };
 }

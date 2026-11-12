@@ -18,7 +18,7 @@ export function useTopic<S>(topic: string, makeSpec: () => Omit<TopicSpec<S>, 't
   useEffect(() => feed.retain(spec), [spec]);
   const fallback = useRef<TopicView<S> | null>(null);
   if (!fallback.current || fallback.current.data !== spec.initial)
-    fallback.current = { data: spec.initial, phase: spec.initialIsSnapshot ? 'live' : 'pending', hydration: { state: 'ready' }, seq: null };
+    fallback.current = { data: spec.initial, phase: spec.initialIsSnapshot ? 'live' : 'pending', hydration: { state: 'ready' }, seq: null, fromServer: false };
   const subscribe = useCallback((cb: () => void) => feed.watch(key, cb), [key]);
   const kind = spec.kind ?? '';
   const get = useCallback(() => feed.view<S>(key, kind) ?? fallback.current!, [key, kind]);

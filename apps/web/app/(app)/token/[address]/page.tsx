@@ -30,7 +30,7 @@ export default async function TokenPage({ params }: Props) {
   const rawTradesP = getTrades(address, TRADE_LIMIT, 0);
   const detail = await detailP;
   // Not in the index (yet): a shell that fetches it from chain over the feed, or says it isn't tracked.
-  if (!detail) return <TokenPending address={address} />;
+  if (!detail) return <TokenPending address={address} serverNow={Date.now()} />;
   const tradesP = rawTradesP.then((list) => list.map((t) => fromApi(t, detail.decimals)));
   return <TokenView detail={detail} tradesP={tradesP} candlesP={candlesP} serverNow={Date.now()} />;
 }

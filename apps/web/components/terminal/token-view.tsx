@@ -5,15 +5,15 @@ import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } fr
 import { API_URL, type Candle, type SignalReason, type TokenDetail } from '@/lib/api';
 import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, quoteLabel, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
 import { useTopic } from '@/lib/feed/react';
-import { tokenSpec, type TokenState } from '@/lib/feed/topics';
+import { tokenSpec, type ServerStats, type TokenState } from '@/lib/feed/topics';
 import { useNow } from '@/lib/now';
 import { aggregate, usePairs, type Pair } from '@/lib/pairs';
 import { mergePools, useApiPools } from '@/lib/pools';
 
 
-import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId } from '@/lib/trades';
+import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId, type WindowStats as WindowStatsT } from '@/lib/trades';
 import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
-import { PriceChart } from './chart';
+import { hydrationLabel, isHydrating, PriceChart } from './chart';
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
 
@@ -42,7 +42,7 @@ export function TokenView({
   const [httpCandles, setCandles] = useState<Candle[] | null>(null);
   // v2 carries candles in the feed (and streams history in while hydrating); v1 reads them over HTTP.
   const candles = feedCandles ?? httpCandles;
-  const hydrating = live.hydration.state === 'hydrating';
+  const hydrating = isHydrating(live.hydration);
   const [maker, setMaker] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('trades');
   const supply = toWhole(detail.total_supply, detail.decimals) ?? 0;
@@ -62,7 +62,9 @@ export function TokenView({
   const ctx = useMemo(() => holderContext(detail.deployer, holdersQ.data?.holders ?? null), [detail.deployer, holdersQ.data]);
   const pairs = usePairs(detail.address);
   const apiPools = useApiPools(detail.address);
-  const pools = useMemo(() => mergePools(apiPools, pairs, quoteLabel), [apiPools, pairs]);
+  // v2 snapshots carry pools; until then (and on v1) the HTTP endpoint, then DexScreener.
+  const feedPools = live.data.pools;
+  const pools = useMemo(() => mergePools(feedPools ?? apiPools, pairs, quoteLabel), [feedPools, apiPools, pairs]);
 
   const showMaker = useCallback((w: string | null) => {
     setMaker(w);
@@ -117,24 +119,33 @@ export function TokenView({
           <Header t={t} pools={pools} priceNow={priceNow} serverNow={serverNow} />
           {hydrating && (
             <div role="status" className="flex items-center gap-2 rounded-xl border border-brand/20 bg-brand/[0.06] px-3 py-2 text-xs text-ink/85">
-              <span className="size-1.5 animate-pulse rounded-full bg-brand" />
-              Rushr is reading this token&apos;s history{' '}
-              {live.hydration.source === 'index' ? 'from its index' : live.hydration.source === 'mixed' ? 'from chain and its index' : 'from chain'}. Trades,
-              holders and stats fill in as blocks are read; live trades already stream.
-              {live.hydration.progress != null && <span className="ml-auto font-mono text-muted">{Math.round(live.hydration.progress * 100)}%</span>}
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-brand" />
+              <span>
+                Rushr is reading this token&apos;s history {live.hydration.source === 'index' ? 'from its index' : live.hydration.source === 'mixed' ? 'from chain and its index' : 'from chain'}.
+                Trades, holders and stats fill in as blocks are read; live trades already stream.
+              </span>
+              {hydrationLabel(live.hydration).detail && <span className="ml-auto shrink-0 font-mono text-muted">{hydrationLabel(live.hydration).detail}</span>}
             </div>
           )}
           <div className="lg:hidden">
-            <WindowStats t={t} trades={trades} candles={candles} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
+            <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
           <div className="h-[360px] shrink-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:h-auto lg:min-h-[280px] lg:flex-[1.15]">
-            <PriceChart address={t.address} initial={candles} supply={supply} trades={trades} priceUsd={priceNow} hydration={live.hydration} />
+            <PriceChart
+              address={t.address}
+              initial={candles}
+              seconds={live.data.candles1s}
+              supply={supply}
+              trades={trades}
+              priceUsd={priceNow}
+              hydration={live.hydration}
+            />
           </div>
           {tabs}
         </div>
         <aside className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:[scrollbar-width:thin]">
           <div className="hidden lg:block">
-            <WindowStats t={t} trades={trades} candles={candles} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
+            <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
           <TradeBox symbol={t.symbol} />
           <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
@@ -225,10 +236,33 @@ function Stat({ k, v, big, title }: { k: string; v: string; big?: boolean; title
  * 5m/1h/6h/24h tiles like GMGN. Rushr's own numbers update with every trade; when DexScreener
  * knows the token's pools, "All pools" adds the venues our indexer doesn't cover yet.
  */
+const SERVER_WINDOW: Record<WindowId, '5m' | '1h' | '6h' | '24h'> = { m5: '5m', h1: '1h', h6: '6h', h24: '24h' };
+
+/** v2 `stats` → the panel's shape. Missing windows read as empty. */
+function fromServerStats(s: ServerStats): Record<WindowId, WindowStatsT> {
+  const out = {} as Record<WindowId, WindowStatsT>;
+  for (const w of WINDOWS) {
+    const x = s[SERVER_WINDOW[w.id]];
+    out[w.id] = {
+      change: x?.priceChangePct ?? null,
+      volume: x?.volumeUsd ?? 0,
+      trades: (x?.buys ?? 0) + (x?.sells ?? 0),
+      buys: x?.buys ?? 0,
+      sells: x?.sells ?? 0,
+      buyUsd: x?.buyUsd ?? 0,
+      sellUsd: x?.sellUsd ?? 0,
+      makers: x?.makers ?? 0,
+      complete: true,
+    };
+  }
+  return out;
+}
+
 function WindowStats({
   t,
   trades,
   candles,
+  server,
   pairs,
   priceNow,
   serverNow,
@@ -236,23 +270,25 @@ function WindowStats({
   t: TokenDetail;
   trades: Tx[] | null;
   candles: Candle[] | null;
+  /** v2 rolling windows from the server: exact, so they replace the ones derived here. */
+  server: ServerStats | null;
   pairs: Pair[] | null;
   priceNow: number | null;
   serverNow: number;
 }) {
   const [w, setW] = useState<WindowId>('h24');
-  const [source, setSource] = useState<'rushr' | 'all'>('rushr');
+  const [chosen, setSource] = useState<'rushr' | 'all' | null>(null);
   const hasPairs = !!pairs?.length;
-  // Default to "all pools" once we know there are pools we don't index.
-  useEffect(() => {
-    if (hasPairs && t.launchpad === 'uniswap-v4') setSource('all');
-  }, [hasPairs, t.launchpad]);
+  // Until the user picks: Rushr when the server sends exact stats (v2 indexes every venue), else
+  // "all pools" for plain-pool tokens DexScreener knows (venues the old index doesn't cover).
+  const source = chosen ?? (!server && hasPairs && t.launchpad === 'uniswap-v4' ? 'all' : 'rushr');
   const now = useNow(serverNow);
   // Recomputing per second keeps windows sliding; it's a single pass over ≤1000 trades.
-  const ours = useMemo(
-    () => (trades && candles ? windowStats(trades, candles, Math.floor(now / 1000), priceNow) : null),
-    [trades, candles, now, priceNow],
+  const derived = useMemo(
+    () => (!server && trades && candles ? windowStats(trades, candles, Math.floor(now / 1000), priceNow) : null),
+    [server, trades, candles, now, priceNow],
   );
+  const ours = useMemo(() => (server ? fromServerStats(server) : derived), [server, derived]);
   const all = useMemo(() => (hasPairs ? aggregate(pairs!) : null), [hasPairs, pairs]);
   const useAll = source === 'all' && all;
   const tile = (id: WindowId) => (useAll ? all.byWindow[id].change : (ours?.[id].change ?? null));

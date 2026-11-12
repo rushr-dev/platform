@@ -44,6 +44,7 @@ interface Bar {
 export function PriceChart({
   address,
   initial,
+  seconds = null,
   supply,
   trades,
   priceUsd = null,
@@ -52,6 +53,8 @@ export function PriceChart({
   address: string;
   /** 1m candles for the last 24h; null while they load. */
   initial: Candle[] | null;
+  /** Server-built 1s candles (feed v2, last ~30 min). 1s and 30s use them instead of the trade list. */
+  seconds?: Candle[] | null;
   /** Token supply in whole tokens; multiplies price into market cap. */
   supply: number;
   /** Newest first, live trades included. */
@@ -141,13 +144,19 @@ export function PriceChart({
   // The base series for this interval. Trade-built series only rebuild on interval change; new
   // trades after that are applied incrementally below.
   const tradesReady = trades != null;
+  // Like trades, server 1s candles only rebuild the series once (when they first arrive); live
+  // updates after that come through the trade list.
+  const secondsReady = !!seconds?.length;
   const priceRef = useRef(priceUsd);
   priceRef.current = priceUsd;
   const rawBase = useMemo<Candle[] | null>(() => {
-    if (FROM_TRADES.has(interval)) return trades ? fromTrades(trades, INTERVALS[interval]) : null;
+    if (FROM_TRADES.has(interval)) {
+      if (secondsReady && seconds?.length) return interval === '1s' ? seconds : rebucket(seconds, INTERVALS[interval]);
+      return trades ? fromTrades(trades, INTERVALS[interval]) : null;
+    }
     if (interval === '1m') return initial;
     return fetched?.iv === interval ? fetched.data : null;
-  }, [interval, initial, fetched, tradesReady]);
+  }, [interval, initial, fetched, tradesReady, secondsReady]);
   // No history yet (a brand-new or still-hydrating token): start from one bar at the current price
   // and let live trades build the chart from there.
   const seeded = rawBase != null && rawBase.length === 0 && priceUsd != null && priceUsd > 0;
@@ -217,7 +226,7 @@ export function PriceChart({
   }, [trades, interval, scale, base, hovering]);
 
   const empty = base != null && base.length === 0 && !(trades?.length && FROM_TRADES.has(interval));
-  const hydrating = hydration?.state === 'hydrating';
+  const hydrating = isHydrating(hydration);
   const loading = base == null;
   const ch = legend && legend.open ? ((legend.close - legend.open) / legend.open) * 100 : null;
   const up = (ch ?? 0) >= 0;
@@ -291,6 +300,22 @@ export function PriceChart({
   );
 }
 
+/** Merge finer candles into coarser buckets (1s → 30s). */
+function rebucket(list: Candle[], step: number): Candle[] {
+  const out = new Map<number, Candle>();
+  for (const c of list) {
+    const b = Math.floor(c.time / step) * step;
+    const k = out.get(b);
+    if (k) {
+      k.high = Math.max(k.high, c.high);
+      k.low = Math.min(k.low, c.low);
+      k.close = c.close;
+      k.volume += c.volume;
+    } else out.set(b, { ...c, time: b });
+  }
+  return [...out.values()];
+}
+
 function fromTrades(trades: Tx[], step: number): Candle[] {
   const out = new Map<number, Candle>();
   for (let i = trades.length - 1; i >= 0; i--) {
@@ -338,9 +363,26 @@ function usdPrecise(n: number) {
 
 const SOURCE_TEXT = { chain: 'from chain', index: 'from the Rushr index', mixed: 'from chain and index' } as const;
 
-/** "Fetching history from chain · 42%": the server is still backfilling this token. */
+const span = (secs: number) => {
+  const h = secs / 3600;
+  if (h >= 23.5) return `${Math.round(h / 24)}d`;
+  if (h >= 1) return `${Math.round(h)}h`;
+  return `${Math.max(1, Math.round(secs / 60))}m`;
+};
+
+/** "Fetching history from chain · last 6h loaded" / "Partial history from chain · last 24h". */
+export function hydrationLabel(h: Hydration): { title: string; detail: string | null } {
+  const from = SOURCE_TEXT[h.source ?? 'chain'];
+  const covered = h.covered && h.covered.to > h.covered.from ? `last ${span(h.covered.to - h.covered.from)}` : null;
+  if (h.state === 'partial') return { title: `Partial history ${from}`, detail: covered ? `${covered} so far` : null };
+  return { title: `Fetching history ${from}`, detail: covered ? `${covered} loaded` : null };
+}
+
+export const isHydrating = (h?: Hydration | null) => h?.state === 'hydrating' || h?.state === 'partial';
+
+/** "Fetching history from chain · last 30m loaded": the server is still backfilling this token. */
 export function HydratingPill({ hydration, className = '' }: { hydration: Hydration; className?: string }) {
-  const p = hydration.progress;
+  const { title, detail } = hydrationLabel(hydration);
   return (
     <span
       role="status"
@@ -350,8 +392,8 @@ export function HydratingPill({ hydration, className = '' }: { hydration: Hydrat
         <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand/60" />
         <span className="relative inline-flex size-2 rounded-full bg-brand" />
       </span>
-      Fetching history {SOURCE_TEXT[hydration.source ?? 'chain']}
-      {p != null && <span className="font-mono text-muted">{Math.round(p * 100)}%</span>}
+      {title}
+      {detail && <span className="font-mono text-muted">· {detail}</span>}
     </span>
   );
 }
