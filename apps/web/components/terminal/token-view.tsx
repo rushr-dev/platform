@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
 import { API_URL, type Candle, type SignalReason, type TokenCard, type TokenDetail } from '@/lib/api';
-import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
+import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, quoteLabel, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
 import { useLive } from '@/lib/live';
 import { useNow } from '@/lib/now';
 import { aggregate, usePairs, type Pair } from '@/lib/pairs';
+import { mergePools, useApiPools } from '@/lib/pools';
+
+type Pools = ReturnType<typeof mergePools>;
 import { fromLive, holderContext, mergeTrades, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type LiveTrade, type Tx, type WindowId } from '@/lib/trades';
 import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
 import { PriceChart } from './chart';
@@ -58,6 +61,8 @@ export function TokenView({
   const holdersQ = useFetch<{ holders: HolderInfo[]; total: number }>(`${API_URL}/tokens/${detail.address}/holders`);
   const ctx = useMemo(() => holderContext(detail.deployer, holdersQ.data?.holders ?? null), [detail.deployer, holdersQ.data]);
   const pairs = usePairs(detail.address);
+  const apiPools = useApiPools(detail.address);
+  const pools = useMemo(() => mergePools(apiPools, pairs, quoteLabel), [apiPools, pairs]);
 
   useLive(`token:${detail.address}`, (e) => {
     if (e.type === 'token') setT((prev) => ({ ...prev, ...(e.data as TokenCard) }));
@@ -117,7 +122,7 @@ export function TokenView({
     <div className="h-full overflow-y-auto lg:overflow-hidden">
       <div className="grid gap-2 p-2 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-2 lg:min-h-0 lg:overflow-hidden">
-          <Header t={t} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
+          <Header t={t} pools={pools} priceNow={priceNow} serverNow={serverNow} />
           <div className="lg:hidden">
             <WindowStats t={t} trades={trades} candles={candles} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
@@ -131,7 +136,7 @@ export function TokenView({
             <WindowStats t={t} trades={trades} candles={candles} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
           <TradeBox symbol={t.symbol} />
-          <PoolPanel t={t} pairs={pairs} supply={supply} serverNow={serverNow} />
+          <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
           <Safety t={t} />
           <DevRecord t={t} />
         </aside>
@@ -142,7 +147,7 @@ export function TokenView({
 
 /* ------------------------------------------------------------------ header */
 
-function Header({ t, pairs, priceNow, serverNow }: { t: TokenDetail; pairs: Pair[] | null; priceNow: number | null; serverNow: number }) {
+function Header({ t, pools, priceNow, serverNow }: { t: TokenDetail; pools: Pools; priceNow: number | null; serverNow: number }) {
   const [copied, setCopied] = useState(false);
   const now = useNow(serverNow);
   const copy = () => {
@@ -152,7 +157,8 @@ function Header({ t, pairs, priceNow, serverNow }: { t: TokenDetail; pairs: Pair
     });
   };
   const created = new Date(t.created_at).getTime();
-  const liquidity = pairs?.length ? aggregate(pairs).liquidityUsd : null;
+  // Per-pool merge first; the card's own sum (measured pools only) until pools arrive.
+  const liquidity = pools.liquidityUsd ?? t.liquidity_usd ?? null;
   const supply = toWhole(t.total_supply, t.decimals) ?? 0;
   const mcap = priceNow && supply ? priceNow * supply : t.market_cap_usd;
   return (
@@ -194,7 +200,7 @@ function Header({ t, pairs, priceNow, serverNow }: { t: TokenDetail; pairs: Pair
       <div className="flex flex-wrap gap-x-6 gap-y-2">
         <Stat k="Market cap" v={usd(mcap)} big />
         <Stat k="Price" v={price(priceNow)} />
-        <Stat k="Liquidity" v={liquidity == null ? '—' : usd(liquidity)} title={pairs?.length ? `Across ${pairs.length} pools (DexScreener)` : 'Not reported for this token yet'} />
+        <Stat k="Liquidity" v={liquidity == null ? '—' : usd(liquidity)} title={pools.rows.length ? `Across ${pools.rows.length} pools` : 'Not reported for this token yet'} />
         <Stat k="Holders" v={nf.format(t.holders)} />
         <Stat k="ATH mcap" v={usd(t.ath_market_cap_usd)} />
         {t.status !== 'migrated' && t.bonding_progress != null && <Stat k="Bonding" v={pct(t.bonding_progress * 100, 0)} />}
@@ -392,32 +398,28 @@ function TradeBox({ symbol }: { symbol: string }) {
   );
 }
 
-/** Quote tokens (mirrors QUOTES / STOCK_QUOTES in @rushr/core, kept here to keep viem out of the client bundle). */
-const QUOTE_LABEL: Record<string, string> = {
-  '0x0000000000000000000000000000000000000000': 'ETH',
-  '0x0bd7d308f8e1639fab988df18a8011f41eacad73': 'WETH',
-  '0x5fc5360d0400a0fd4f2af552add042d716f1d168': 'USDG',
-  '0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea': 'SPCX',
-  '0x5e81213613b6b86eab4c6c50d718d34359459786': 'TTWO',
-  '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec': 'NVDA',
+const DEX_LABEL: Record<string, string> = {
+  uniswap: 'Uniswap', ramses: 'Ramses', aero: 'Aero', metric: 'Metric', topaz: 'Topaz', nami: 'Nami', pons: 'PONS curve', curve: 'Curve',
 };
-const quoteLabel = (q: string | null | undefined) => (q ? (QUOTE_LABEL[q.toLowerCase()] ?? short(q, 2, 2)) : 'ETH');
+const SOURCE_NOTE = {
+  rushr: 'Liquidity from Rushr’s index.',
+  dexscreener: 'Liquidity via DexScreener.',
+  mixed: 'Liquidity from Rushr’s index; DexScreener fills pools we don’t measure yet.',
+} as const;
 
-const DEX_LABEL: Record<string, string> = { uniswap: 'Uniswap', ramses: 'Ramses', aero: 'Aero', metric: 'Metric', topaz: 'Topaz', nami: 'Nami' };
-
-function PoolPanel({ t, pairs, supply, serverNow }: { t: TokenDetail; pairs: Pair[] | null; supply: number; serverNow: number }) {
+function PoolPanel({ t, pools, supply, serverNow }: { t: TokenDetail; pools: Pools; supply: number; serverNow: number }) {
   const [all, setAll] = useState(false);
   const now = useNow(serverNow);
   const [copied, setCopied] = useState(false);
   const pool = t.main_pool ?? null;
-  const agg = pairs?.length ? aggregate(pairs) : null;
   const quote = quoteLabel(t.quote);
-  const list = all ? (pairs ?? []) : (pairs ?? []).slice(0, 4);
+  const rows = pools.rows;
+  const list = all ? rows : rows.slice(0, 4);
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-surface p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Pools & liquidity</h2>
-        {agg && <span className="font-mono text-sm">{usd(agg.liquidityUsd)}</span>}
+        {pools.liquidityUsd != null && <span className="font-mono text-sm">{usd(pools.liquidityUsd)}</span>}
       </div>
       <dl className="mt-3 space-y-2 text-[13px]">
         <Row k="Pair" v={`${t.symbol} / ${quote}`} />
@@ -456,35 +458,43 @@ function PoolPanel({ t, pairs, supply, serverNow }: { t: TokenDetail; pairs: Pai
           </div>
         )}
       </dl>
-      {pairs == null ? (
+      {pools.loading ? (
         <div className="mt-3 h-14 animate-pulse rounded-xl bg-white/[0.03]" />
-      ) : pairs.length ? (
+      ) : rows.length ? (
         <div className="mt-3 border-t border-white/[0.05] pt-3">
           <div className="mb-1.5 flex justify-between text-[10px] uppercase tracking-wider text-muted">
-            <span>{pairs.length} pools</span>
+            <span>{rows.length} pools</span>
             <span>Liquidity · 24h vol</span>
           </div>
           <ul className="space-y-1">
             {list.map((p) => (
-              <li key={p.pairAddress}>
-                <a href={p.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-xs hover:bg-white/[0.03]">
+              <li key={p.id}>
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={p.liquidityFrom === 'dexscreener' ? 'Liquidity via DexScreener' : undefined}
+                  className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-xs hover:bg-white/[0.03]"
+                >
                   <span className="min-w-0 flex-1 truncate">
                     {DEX_LABEL[p.dex] ?? p.dex}
-                    {p.version && <span className="ml-1 text-muted">{p.version}</span>}
+                    {p.version && p.version !== 'curve' && <span className="ml-1 text-muted">{p.version}</span>}
                     <span className="ml-1 text-muted">/ {p.quote}</span>
                   </span>
-                  <span className="font-mono">{usd(p.liquidityUsd)}</span>
-                  <span className="w-14 text-right font-mono text-muted">{usd(p.volume.h24 ?? null)}</span>
+                  <span className={`font-mono ${p.liquidityFrom === 'dexscreener' && pools.source === 'mixed' ? 'text-ink/60' : ''}`}>
+                    {usd(p.liquidityUsd)}
+                  </span>
+                  <span className="w-14 text-right font-mono text-muted">{usd(p.volume24hUsd)}</span>
                 </a>
               </li>
             ))}
           </ul>
-          {pairs.length > 4 && (
+          {rows.length > 4 && (
             <button type="button" onClick={() => setAll((a) => !a)} className="mt-1 px-1.5 text-[11px] text-muted hover:text-ink">
-              {all ? 'Show fewer' : `Show all ${pairs.length}`}
+              {all ? 'Show fewer' : `Show all ${rows.length}`}
             </button>
           )}
-          <p className="mt-2 px-1.5 text-[10px] text-muted">Pool data via DexScreener.</p>
+          {pools.source && <p className="mt-2 px-1.5 text-[10px] text-muted">{SOURCE_NOTE[pools.source]}</p>}
         </div>
       ) : (
         <p className="mt-3 border-t border-white/[0.05] pt-3 text-[11px] text-muted">
