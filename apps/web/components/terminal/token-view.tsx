@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
 import { API_URL, type Candle, type SignalReason, type TokenCard, type TokenDetail } from '@/lib/api';
-import { ageLong, compact, dexscreenerUrl, EXPLORER, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
+import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
 import { useLive } from '@/lib/live';
 import { useNow } from '@/lib/now';
 import { aggregate, usePairs, type Pair } from '@/lib/pairs';
@@ -172,7 +172,7 @@ function Header({ t, pairs, priceNow, serverNow }: { t: TokenDetail; pairs: Pair
             <span>·</span>
             <span>{LAUNCHPAD_LABEL[t.launchpad ?? ''] ?? t.launchpad}</span>
             <span>·</span>
-            <span title={new Date(t.created_at).toLocaleString()} className="font-mono">
+            <span title={dateTimeUtc(t.created_at)} className="font-mono">
               {ageLong(created, now)}
             </span>
             <span>·</span>
@@ -443,7 +443,7 @@ function PoolPanel({ t, pairs, supply, serverNow }: { t: TokenDetail; pairs: Pai
           </div>
         )}
         <Row k="Supply" v={compact(supply)} />
-        <Row k="Created" v={`${new Date(t.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })} · ${ageLong(new Date(t.created_at).getTime(), now).split(' ')[0]} ago`} />
+        <Row k="Created" v={`${dateUtc(t.created_at)} · ${ageLong(new Date(t.created_at).getTime(), now).split(' ')[0]} ago`} />
         {t.status !== 'migrated' && t.bonding_progress != null && (
           <div>
             <div className="flex justify-between">

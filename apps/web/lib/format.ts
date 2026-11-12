@@ -80,3 +80,14 @@ export const pctSigned = (n: number | null | undefined, digits = 1) =>
 
 export const EXPLORER = 'https://robinhoodchain.blockscout.com';
 export const dexscreenerUrl = (token: string) => `https://dexscreener.com/robinhood/${token}`;
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/**
+ * "Jul 14, 2026" in UTC. Deliberately not toLocale*: the server and the browser can differ in
+ * locale and time zone, and any difference in server-rendered text breaks hydration.
+ */
+export function dateUtc(iso: string | number): string {
+  const d = new Date(iso);
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
+}
+export const dateTimeUtc = (iso: string | number) => `${new Date(iso).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
