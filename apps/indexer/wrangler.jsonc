@@ -42,7 +42,10 @@
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "CHAIN_ID": "4663",
-    "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2"
+    "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2",
+    // Stream v3/v2 swaps of the busiest tracked pools (address-filtered, max 500) over the socket.
+    // Approved 2026-11-12 at ~+4.3 GB/month; measured bytes are in /health live.socketBytes.
+    "LIVE_PAIRS": "1"
   }
   // Secrets (set with `wrangler secret put`, locally in .dev.vars): RPC_URL, DATABASE_URL, ADMIN_TOKEN
 }

@@ -29,6 +29,8 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 const FLUSH_MS = 200;
 /** Once caught up, polling only confirms what the live path already wrote. */
 const POLL_MS = 2_000;
+/** Most v3/v2 pool addresses on the live pair-swap subscription. */
+const PAIR_SUB_MAX = 500;
 /** Recompute a token's signals at most this often while it's trading. */
 const SIGNAL_DEBOUNCE_MS = 15_000;
 
@@ -74,9 +76,17 @@ export class ChainPoller extends DurableObject<Env> {
   private live: LiveStats = { connected: false, logs: 0, batches: 0, swaps: 0, launches: 0, lastLatencyMs: null, reconnects: 0 };
   private queue: Promise<unknown> = Promise.resolve();
   private signalQueuedAt = new Map<string, number>();
-  /** Address-filtered subscription for v3/v2 swaps of tracked pools (LIVE_PAIRS=1). */
-  private pairSub: { id: string | null; pools: number; checkedAt: number } = { id: null, pools: 0, checkedAt: 0 };
+  /**
+   * Address-filtered subscription for v3/v2 swaps of tracked pools (LIVE_PAIRS=1). `key` is the
+   * address set it covers; a new set is subscribed first and the old one dropped once confirmed
+   * (same socket, no gap, no reconnect).
+   */
+  private pairSub: { id: string | null; key: string; pools: number; checkedAt: number; changedAt: number } = { id: null, key: '', pools: 0, checkedAt: 0, changedAt: 0 };
+  private pairPending?: { reqId: number; key: string; pools: number };
+  private nextReqId = 100;
   private pairsDirty = true;
+  /** Socket bytes received per subscription, for checking the Alchemy bandwidth estimate. */
+  private meter = { since: Date.now(), main: 0, pair: 0, other: 0, prev: null as null | { minutes: number; mainPerMin: number; pairPerMin: number } };
 
   private init() {
     if (!this.pipeline) {
@@ -144,7 +154,11 @@ export class ChainPoller extends DurableObject<Env> {
     return {
       cursor: cursor?.toString() ?? null,
       running: (await this.ctx.storage.getAlarm()) !== null,
-      live: { ...this.live, pairPools: this.env.LIVE_PAIRS === '1' ? this.pairSub.pools : null },
+      live: {
+        ...this.live,
+        pairPools: this.env.LIVE_PAIRS === '1' ? this.pairSub.pools : null,
+        socketBytes: this.meterStats(),
+      },
       last: this.last ?? null,
       attempt: (await this.ctx.storage.get('attempt')) ?? null,
       stage: (await this.ctx.storage.get('stage')) ?? null,
@@ -243,24 +257,40 @@ export class ChainPoller extends DurableObject<Env> {
   }
 
   /**
-   * Keep the pair-swap subscription in step with the v3/v2 pools we track: re-subscribe when the set
-   * changed (checked at most every 30s). Off unless LIVE_PAIRS=1; polling covers these swaps anyway.
+   * Keep the pair-swap subscription in step with the v3/v2 pools worth streaming: the pools of the
+   * tracked tokens with the most 24h volume, capped at PAIR_SUB_MAX addresses (the rest arrive via
+   * polling, 2-4s later). Re-checked every 60s when discovery added pools, else every 5 min, and only
+   * re-subscribed when the address set actually changed.
    */
   private async syncPairSubscription() {
-    if (this.env.LIVE_PAIRS !== '1' || !this.ws || !this.live.connected || !this.sql) return;
-    if (!this.pairsDirty && Date.now() - this.pairSub.checkedAt < 30_000) return;
+    if (this.env.LIVE_PAIRS !== '1' || !this.ws || !this.live.connected || !this.sql || this.pairPending) return;
+    const since = Date.now() - this.pairSub.checkedAt;
+    if (since < (this.pairsDirty ? 60_000 : 300_000)) return;
     this.pairSub.checkedAt = Date.now();
     this.pairsDirty = false;
-    const rows = await this.sql<{ id: string }[]>`select id from pools where dex in ('v3', 'v2') order by id`;
-    if (!rows.length || (rows.length === this.pairSub.pools && this.pairSub.id)) return;
-    if (this.pairSub.id) this.ws.send(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'eth_unsubscribe', params: [this.pairSub.id] }));
-    this.pairSub = { id: null, pools: rows.length, checkedAt: Date.now() };
-    this.ws.send(
-      JSON.stringify({
-        jsonrpc: '2.0', id: 2, method: 'eth_subscribe',
-        params: ['logs', { address: rows.map((r) => r.id), topics: [PAIR_SWAP_TOPICS] }],
-      }),
-    );
+    const rows = await this.sql<{ id: string }[]>`
+      select p.id from pools p join tokens t on t.address = p.token
+      where p.dex in ('v3', 'v2')
+      order by t.volume_24h_usd desc nulls last, p.created_at desc
+      limit ${PAIR_SUB_MAX}`;
+    const ids = rows.map((r) => r.id).sort();
+    const key = ids.join(',');
+    if (!ids.length || key === this.pairSub.key) return;
+    const reqId = ++this.nextReqId;
+    this.pairPending = { reqId, key, pools: ids.length };
+    this.ws.send(JSON.stringify({ jsonrpc: '2.0', id: reqId, method: 'eth_subscribe', params: ['logs', { address: ids, topics: [PAIR_SWAP_TOPICS] }] }));
+  }
+
+  private meterStats() {
+    const minutes = (Date.now() - this.meter.since) / 60_000;
+    const per = (b: number) => (minutes > 0 ? Math.round(b / minutes) : null);
+    return {
+      minutes: Math.round(minutes * 10) / 10,
+      mainPerMin: per(this.meter.main),
+      pairPerMin: per(this.meter.pair),
+      otherPerMin: per(this.meter.other),
+      previousHour: this.meter.prev,
+    };
   }
 
   /** Open (or keep) the eth_subscribe socket. Called on every alarm, so a drop reconnects within ~2s. */
@@ -269,7 +299,8 @@ export class ChainPoller extends DurableObject<Env> {
       await this.syncPairSubscription().catch((err) => console.error('pair subscription failed', err));
       return;
     }
-    this.pairSub = { id: null, pools: 0, checkedAt: 0 };
+    this.pairSub = { id: null, key: '', pools: 0, checkedAt: 0, changedAt: 0 };
+    this.pairPending = undefined;
     try {
       const res = await fetch(this.env.RPC_URL, { headers: { Upgrade: 'websocket' } });
       const ws = res.webSocket;
@@ -348,24 +379,41 @@ export class ChainPoller extends DurableObject<Env> {
   }
 
   private onMessage(data: string | ArrayBuffer) {
-    const msg = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)) as {
+    const text = typeof data === 'string' ? data : new TextDecoder().decode(data);
+    const msg = JSON.parse(text) as {
       id?: number;
       error?: { message: string };
-      params?: { result: RawLog };
+      result?: string;
+      params?: { subscription?: string; result: RawLog };
     };
+    // Meter bytes per subscription (Alchemy bills socket traffic per byte); roll the window hourly.
+    const bytes = typeof data === 'string' ? text.length : data.byteLength;
+    if (msg.params?.subscription && msg.params.subscription === this.pairSub.id) this.meter.pair += bytes;
+    else if (msg.params?.subscription) this.meter.main += bytes;
+    else this.meter.other += bytes;
+    if (Date.now() - this.meter.since > 3_600_000) {
+      const s = this.meterStats();
+      this.meter = { since: Date.now(), main: 0, pair: 0, other: 0, prev: { minutes: s.minutes, mainPerMin: s.mainPerMin ?? 0, pairPerMin: s.pairPerMin ?? 0 } };
+    }
     if (msg.id === 1) {
       if (msg.error) console.error('eth_subscribe failed', msg.error.message);
       else this.live.connected = true;
       return;
     }
-    if (msg.id === 2) {
-      if (msg.error) {
-        console.error('pair eth_subscribe failed', msg.error.message);
-        this.pairSub.pools = 0;
-      } else this.pairSub.id = (msg as { result?: string }).result ?? null;
+    if (this.pairPending && msg.id === this.pairPending.reqId) {
+      const pending = this.pairPending;
+      this.pairPending = undefined;
+      if (msg.error || !msg.result) {
+        console.error('pair eth_subscribe failed', msg.error?.message);
+        return;
+      }
+      // New set is live: drop the old one (same socket, so nothing is missed in between).
+      const old = this.pairSub.id;
+      this.pairSub = { ...this.pairSub, id: msg.result, key: pending.key, pools: pending.pools, changedAt: Date.now() };
+      if (old) this.ws?.send(JSON.stringify({ jsonrpc: '2.0', id: ++this.nextReqId, method: 'eth_unsubscribe', params: [old] }));
       return;
     }
-    if (msg.id === 3) return;
+    if (msg.id !== undefined) return; // unsubscribe acks
     if (!msg.params?.result) return;
     this.buffer.push(msg.params.result);
     this.flushTimer ??= setTimeout(() => void this.flush(), FLUSH_MS);
