@@ -2,7 +2,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { preload } from 'react-dom';
 import { ArrowRight, BellRinging, Robot, Trophy, UsersThree, XLogo } from '@phosphor-icons/react/dist/ssr';
-import type { RiskLevel, Stats, TokenCard, Trade } from '@/lib/api';
+import type { RiskLevel, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Art } from './art';
@@ -208,24 +208,14 @@ function CandleChart({ trades }: { trades: Trade[] }) {
   );
 }
 
-/** Heading of the product section; also rendered alone while the live data streams in. */
-function ProductHeading({ stats }: { stats: Stats | null }) {
+/** The terminal shot's height, fixed so the loading frame and the real shot match exactly. */
+const TERMINAL_H = 'h-[500px] md:h-[548px]';
+
+/** Headline under the terminal shot. */
+function ProductHeading() {
   return (
-    <Reveal className="text-center">
-      <p className="inline-flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand-deep">
-        <span className="relative flex size-2">
-          <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
-          <span className="relative inline-flex size-2 rounded-full bg-go" />
-        </span>
-        {stats ? (
-          <span>
-            {nf.format(stats.launches_24h)} launches today<span className="hidden sm:inline"> on Robinhood Chain</span>
-          </span>
-        ) : (
-          'Live on Robinhood Chain'
-        )}
-      </p>
-      <h2 className="mx-auto mt-4 max-w-[15ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">
+    <Reveal className="mt-12 text-center md:mt-16">
+      <h2 className="mx-auto max-w-[15ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">
         every launch. before everyone else.
       </h2>
       <p className="mx-auto mt-4 max-w-[46ch] text-muted md:text-lg">
@@ -236,16 +226,15 @@ function ProductHeading({ stats }: { stats: Stats | null }) {
 }
 
 /**
- * Stand-in for the product shot and the safety section while their data loads: the same heading,
- * then roughly the same height, so nothing on screen moves when they arrive.
+ * Stand-in for the product shot and the safety section while their data loads: a dark frame the
+ * terminal's size right under the hero, then roughly the rest of the height, so nothing moves.
  */
 export function LiveSectionsFallback() {
   return (
-    <div aria-busy className="min-h-[2450px] md:min-h-[2200px]">
-      <section className="relative pt-6 md:pt-4">
+    <div aria-busy className="min-h-[2400px] md:min-h-[2150px]">
+      <section className="relative pt-2 md:pt-0">
         <div className="mx-auto max-w-7xl px-4 md:px-8">
-          <ProductHeading stats={null} />
-          <div className="theme-terminal mt-14 h-[480px] rounded-2xl border border-black/10 bg-surface md:mt-16 md:h-[560px]" />
+          <div className={`theme-terminal rounded-2xl border border-black/10 bg-surface ${TERMINAL_H}`} />
         </div>
       </section>
     </div>
@@ -253,14 +242,12 @@ export function LiveSectionsFallback() {
 }
 
 export function ProductShot({
-  stats,
   trending,
   fresh,
   focus,
   trades,
   clones,
 }: {
-  stats: Stats | null;
   trending: DexToken[];
   fresh: TokenCard[];
   focus: DexToken;
@@ -268,13 +255,11 @@ export function ProductShot({
   clones: TokenCard[];
 }) {
   return (
-    <section id="trenches" className="relative scroll-mt-16 pt-6 md:pt-4">
+    <section id="trenches" className="relative scroll-mt-16 pt-2 md:pt-0">
       <div className="mx-auto max-w-7xl px-4 md:px-8">
-        <ProductHeading stats={stats} />
-
-        <Reveal delay={0.1} className="relative mt-14 md:mt-16">
+        <Reveal className="relative">
           {/* Desktop terminal: trending tokens, a live chart and the fakes we caught */}
-          <div className="theme-terminal overflow-hidden rounded-2xl border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]">
+          <div className={`theme-terminal overflow-hidden rounded-2xl ${TERMINAL_H} border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]`}>
             <div className="flex items-center gap-6 border-b border-white/5 px-4 py-3">
               <span className="flex items-center gap-1.5 text-sm font-semibold tracking-[-0.03em]">
                 <Image src="/logo-mark-64.png" alt="" width={16} height={16} />
@@ -405,31 +390,9 @@ export function ProductShot({
             </div>
           </div>
 
-          {/* Phone with more fresh launches and their verdicts, overlapping the desktop */}
-          {fresh.length > 4 && (
-          <div className="theme-terminal absolute -bottom-48 -right-2 hidden w-[230px] rotate-[4deg] rounded-[34px] border border-black/20 bg-[#0a0d0b] p-2 shadow-[0_30px_70px_-20px_rgba(24,32,26,0.6)] xl:-right-12 xl:block">
-            <div className="rounded-[27px] bg-surface p-3">
-              <div className="mx-auto h-4 w-16 rounded-full bg-black" />
-              <div className="mt-3 text-[11px] font-semibold">Just checked</div>
-              <ul className="mt-2 space-y-2.5">
-                {fresh.slice(4, 9).map((t) => (
-                  <li key={t.address} className="rounded-xl bg-white/[0.04] p-2.5">
-                    <div className="flex items-center gap-1.5 text-[10px]">
-                      <TokenAvatar t={t} size={20} />
-                      <span className="truncate font-semibold">{t.symbol}</span>
-                      <span className="text-muted">{age(t.created_at)}</span>
-                      <RiskTag risk={t.risk} className="ml-auto" />
-                    </div>
-                    <div className="mt-1 font-mono text-[10px] text-muted">
-                      MC {usd(t.market_cap_usd)} · {t.holders} holders
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          )}
         </Reveal>
+
+        <ProductHeading />
       </div>
     </section>
   );
