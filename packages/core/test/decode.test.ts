@@ -93,6 +93,38 @@ describe('decodeLogs: PONS curve', () => {
       ['sell', 10n ** 23n, 2n * 10n ** 15n],
     ]);
   });
+
+  it('maps a PONS v2 launch (migrator event, real FRI13 log) to its curve, with no dev-buy price', () => {
+    const token = '0x9c25ec97e7041b455d4b25849f8e861951049705' as Address;
+    const curve = '0x3a532dec75793987a65ebe7daede1b6074a03f88' as Address;
+    const creator = '0xc375071e3209fa6bd835846edab1a22ec4261486' as Address;
+    const t = (a: Address) => pad(a, { size: 32 });
+    const words = (...v: bigint[]) => encodeAbiParameters(v.map(() => ({ type: 'uint256' })), v);
+    const logs = [
+      log('0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e', [TOPICS.ponsV2Launch, t(token), t(curve), t(creator)], words(0n, 0n, 42n * 10n ** 17n)),
+      log(curve, [TOPICS.ponsBuy, t(USER), t(USER)], words(10n ** 16n, 5n * 10n ** 23n, 1n, 1n)),
+    ];
+    const r = decodeLogs(logs, emptyCtx);
+    expect(r.launches[0]).toMatchObject({ token, launchpad: 'pons', creator, pool: curve, initialPrice: null });
+    expect(r.pools[0]).toMatchObject({ id: curve, token, dex: 'pons-curve' });
+    expect(r.swaps.map((s) => [s.token, s.side])).toEqual([[token, 'buy']]);
+  });
+
+  it('decodes a launch emitting both the v1 and the v2 event once (one pool, v1 dev buy kept)', () => {
+    const token = '0x9c25ec97e7041b455d4b25849f8e861951049705' as Address;
+    const curve = '0x3a532dec75793987a65ebe7daede1b6074a03f88' as Address;
+    const creator = '0xc375071e3209fa6bd835846edab1a22ec4261486' as Address;
+    const t = (a: Address) => pad(a, { size: 32 });
+    const words = (...v: bigint[]) => encodeAbiParameters(v.map(() => ({ type: 'uint256' })), v);
+    for (const order of [0, 1]) {
+      const v1 = log('0xe33e9e479df8802cb0866d5d05258bec4cf62948', [TOPICS.ponsLaunch, t(token), t(curve), t(creator)], words(0n, 2n * 10n ** 16n, 10n ** 24n));
+      const v2 = log('0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e', [TOPICS.ponsV2Launch, t(token), t(curve), t(creator)], words(0n, 0n, 42n * 10n ** 17n));
+      const r = decodeLogs(order ? [v2, v1] : [v1, v2], emptyCtx);
+      expect(r.pools.filter((p) => p.id === curve)).toHaveLength(1);
+      expect(r.launches).toHaveLength(1);
+      expect(r.launches[0]!.initialPrice).toEqual({ quoteRaw: 2n * 10n ** 16n, tokenRaw: 10n ** 24n });
+    }
+  });
 });
 
 describe('decodeLogs: v3 / v2 pairs (any factory)', () => {

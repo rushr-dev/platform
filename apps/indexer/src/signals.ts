@@ -31,8 +31,8 @@ export async function loadSnapshot(
   rpc: Rpc | null,
 ): Promise<{ snapshot: TokenSnapshot; devFunder: string | null } | null> {
   const [t] = await sql<
-    { address: string; symbol: string; total_supply: string; deployer: string; created_at: Date; created_block: string; main_pool: string | null; launch_indexed: boolean; launchpad: string | null; holders: number }[]
-  >`select address, symbol, total_supply, deployer, created_at, created_block, main_pool, launch_indexed, launchpad, holders from tokens where address = ${token}`;
+    { address: string; symbol: string; name: string; total_supply: string; deployer: string; created_at: Date; created_block: string; main_pool: string | null; launch_indexed: boolean; launchpad: string | null; holders: number }[]
+  >`select address, symbol, name, total_supply, deployer, created_at, created_block, main_pool, launch_indexed, launchpad, holders from tokens where address = ${token}`;
   if (!t) return null;
   const createdAt = Math.floor(t.created_at.getTime() / 1000);
   const excluded = [...EXCLUDED, ...(t.main_pool && t.main_pool.length === 42 ? [t.main_pool] : [])];
@@ -101,6 +101,33 @@ export async function loadSnapshot(
       and not coalesce((s.data->>'spam')::bool, false)
     order by organic desc limit 1`;
 
+  // Transfer tax: recent trades that were the only swap of this token in their tx, with the trader's net
+  // flow of the token in that tx (what actually reached or left the wallet).
+  const taxRows = await sql<{ side: 'buy' | 'sell'; token_amount: string; net: string }[]>`
+    with sw as (
+      select s.tx, s.side, s.token_amount, s.trader from swaps s
+      where s.token = ${token}
+        and not exists (select 1 from swaps o where o.tx = s.tx and o.token = s.token and o.log_index <> s.log_index)
+        -- Transfers recorded for the tx (not for history we skipped), and a real wallet as the trader
+        -- (a router fallback means the recipient wasn't resolved, so its net flow says nothing).
+        and exists (select 1 from transfers x where x.tx = s.tx and x.token = s.token)
+        and s.trader <> all(${EXCLUDED})
+      order by s.block desc, s.log_index desc limit 40
+    )
+    select sw.side, sw.token_amount::text,
+      coalesce(sum(case when tr.to = sw.trader then tr.amount when tr."from" = sw.trader then -tr.amount else 0 end), 0)::text as net
+    from sw left join transfers tr on tr.tx = sw.tx and tr.token = ${token}
+    group by sw.tx, sw.side, sw.token_amount`;
+  const [counts] = await sql<{ buys: number; sells: number }[]>`
+    select count(*) filter (where side = 'buy')::int as buys, count(*) filter (where side = 'sell')::int as sells
+    from swaps where token = ${token}`;
+  // Launch farms: the same name and symbol from several different wallets within a day.
+  const [farm] = await sql<{ n: number }[]>`
+    select count(distinct deployer)::int as n from tokens
+    where lower(symbol) = lower(${t.symbol}) and lower(name) = lower(${t.name}) and address <> ${token}
+      and deployer <> ${t.deployer} and created_at > ${t.created_at}::timestamptz - interval '24 hours'
+      and created_at < ${t.created_at}::timestamptz + interval '24 hours'`;
+
   const snapshot: TokenSnapshot = {
     address: t.address,
     symbol: t.symbol,
@@ -126,6 +153,9 @@ export async function loadSnapshot(
     twinOrganicHolders,
     launchpad: t.launchpad,
     now: Math.floor(Date.now() / 1000),
+    taxSamples: taxRows.map((r) => ({ side: r.side, swapAmount: BigInt(r.token_amount), traderNet: BigInt(r.net) })),
+    tradeCounts: counts ?? { buys: 0, sells: 0 },
+    sameNameDeployers24h: farm?.n ?? 0,
   };
 
   return { snapshot, devFunder };

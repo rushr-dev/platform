@@ -60,6 +60,16 @@ export interface TokenSnapshot {
   /** Launchpad id, or 'uniswap-v4' for a plain pool (no launchpad). */
   launchpad: string | null;
   now: number;
+  /**
+   * Early single-swap trades with the trader's net token flow in the same tx, to measure transfer
+   * tax: buys where the pool sent `swapAmount` and the trader ended up with `traderNet`, sells where
+   * the trader gave up `-traderNet` and the pool got `swapAmount`. Optional (older callers).
+   */
+  taxSamples?: { side: 'buy' | 'sell'; swapAmount: bigint; traderNet: bigint }[];
+  /** Buys and sells so far (honeypot check). Optional. */
+  tradeCounts?: { buys: number; sells: number };
+  /** Other tokens with this exact name and symbol launched in the last 24h by different deployers (farms). */
+  sameNameDeployers24h?: number;
 }
 
 export interface Reason {
@@ -85,8 +95,15 @@ export interface TokenSignals {
     rugs: number;
     migrated: number;
     serialLauncher: boolean;
+    /** Same name and symbol relaunched by several fresh wallets within a day (a launch farm). */
+    farm?: boolean;
     bestAthMarketCapUsd: number | null;
   };
+  /** Transfer tax measured from real trades, in bps (null = not enough trades yet). */
+  buyTaxBps?: number | null;
+  sellTaxBps?: number | null;
+  /** Many buys, no sell at all: possibly can't be sold. */
+  noSells?: boolean;
   copycat: boolean;
   /** Organic holders of the stronger same-ticker token this one copies (0 when not a copycat). */
   twinOrganicHolders: number;
@@ -120,7 +137,42 @@ export const THRESHOLDS = {
   copycatTwinMinHolders: 50,
   /** ...and at least this many times this token's organic holders. */
   copycatTwinRatio: 3,
+  /** Same name+symbol launched by at least this many different deployers in 24h: a farm. */
+  farmDeployers24h: 3,
+  /** Trades of each side needed before a tax is reported. */
+  taxMinSamples: 2,
+  /** Buys with zero sells, after this long, read as possibly unsellable. */
+  noSellsMinBuys: 20,
+  noSellsMinAgeSeconds: 600,
 };
+
+/**
+ * Transfer tax in bps from observed trades (median of samples; null below the minimum). A buy's tax is
+ * the share of what the pool sent that didn't reach the trader; a sell's, the share of what the trader
+ * gave that didn't reach the pool. Samples outside [0, 100%] (other transfers in the tx) are ignored.
+ */
+export function measureTax(samples: TokenSnapshot['taxSamples'] = []): { buyTaxBps: number | null; sellTaxBps: number | null } {
+  const median = (xs: number[]) => {
+    if (xs.length < THRESHOLDS.taxMinSamples) return null;
+    const sorted = [...xs].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)]!;
+  };
+  const bps = (num: bigint, den: bigint) => (den > 0n ? Number(((den - num) * 10_000n) / den) : -1);
+  const buys: number[] = [];
+  const sells: number[] = [];
+  for (const x of samples) {
+    if (x.side === 'buy' && x.traderNet > 0n) {
+      const t = bps(x.traderNet, x.swapAmount);
+      if (t >= 0 && t <= 10_000) buys.push(t);
+    } else if (x.side === 'sell' && x.traderNet < 0n) {
+      const t = bps(x.swapAmount, -x.traderNet);
+      if (t >= 0 && t <= 10_000) sells.push(t);
+    }
+  }
+  // Rounding dust (a few wei) isn't tax.
+  const clean = (v: number | null) => (v === null ? null : v < 5 ? 0 : v);
+  return { buyTaxBps: clean(median(buys)), sellTaxBps: clean(median(sells)) };
+}
 
 /** Another token with this ticker has a far bigger organic community: this one rides its name. */
 function isCopycat(s: TokenSnapshot) {
@@ -226,9 +278,14 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     launches7d,
     rugs,
     migrated: s.devTokens.filter((t) => t.migrated).length,
-    serialLauncher: launches7d >= THRESHOLDS.serialLaunches7d,
+    serialLauncher: launches7d >= THRESHOLDS.serialLaunches7d || (s.sameNameDeployers24h ?? 0) >= THRESHOLDS.farmDeployers24h,
+    farm: (s.sameNameDeployers24h ?? 0) >= THRESHOLDS.farmDeployers24h,
     bestAthMarketCapUsd: athValues.length ? Math.max(...athValues) : null,
   };
+  const tax = measureTax(s.taxSamples);
+  const noSells =
+    !!s.tradeCounts && s.tradeCounts.buys >= THRESHOLDS.noSellsMinBuys && s.tradeCounts.sells === 0 &&
+    s.now - s.createdAt >= THRESHOLDS.noSellsMinAgeSeconds;
 
   const signals: Omit<TokenSignals, 'risk' | 'verdict' | 'reasons'> = {
     holders: s.holderCount,
@@ -242,6 +299,9 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     freshWalletsPct: s.holders.length ? round1((fresh.length / s.holders.length) * 100) : 0,
     airdroppedHolders: s.airdropped.length,
     dev,
+    buyTaxBps: tax.buyTaxBps,
+    sellTaxBps: tax.sellTaxBps,
+    noSells,
     copycat: isCopycat(s),
     twinOrganicHolders: isCopycat(s) ? s.twinOrganicHolders : 0,
     spam: isPlainPool(s.launchpad) && airdropShare(s) >= THRESHOLDS.airdropShareFake,
@@ -257,7 +317,12 @@ function judge(
   const add = (level: Reason['level'], text: string) => reasons.push({ level, text });
 
   if (x.copycat) add('high', `copycat: another $${s.symbol} has ${x.twinOrganicHolders} real holders`);
-  if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
+  if (x.dev.farm) add('high', `launch farm: ${s.sameNameDeployers24h} copies of $${s.symbol} by fresh wallets in 24h`);
+  else if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
+  if (x.noSells) add('high', `${s.tradeCounts!.buys} buys and no sells: may not be sellable`);
+  if (x.sellTaxBps != null && x.sellTaxBps >= 5_000) add('high', `sell tax ${x.sellTaxBps / 100}%`);
+  else if (x.sellTaxBps != null && x.sellTaxBps >= 1_000) add('medium', `sell tax ${x.sellTaxBps / 100}%`);
+  if (x.buyTaxBps != null && x.buyTaxBps >= 1_000) add('medium', `buy tax ${x.buyTaxBps / 100}%`);
   if (x.dev.rugs >= 2) add('high', `dev's past tokens: ${x.dev.rugs} of ${x.dev.launches} rugged`);
   else if (x.dev.rugs === 1) add('medium', `dev has 1 rugged token`);
   if (x.bundledStillHeldPct !== null && x.bundledStillHeldPct >= 20) add('high', `${x.bundledStillHeldPct}% still held by the launch bundle`);

@@ -45,7 +45,7 @@ export function tradeTopics(): Hex[] {
 
 /** Launches, pool creations and migrations only (sparse): the first pass of a full-history backfill. */
 export function catalogTopics(): Hex[] {
-  return [TOPIC0.v4Initialize, DOPPLER_CREATE, DOPPLER_MIGRATE, TOPICS.liftLaunch, TOPICS.ponsLaunch, TOPICS.ponsGraduate];
+  return [TOPIC0.v4Initialize, DOPPLER_CREATE, DOPPLER_MIGRATE, TOPICS.liftLaunch, ...PONS_LAUNCH_TOPICS, TOPICS.ponsGraduate];
 }
 
 /** All topic0s the indexer subscribes to, for one OR-filtered eth_getLogs call. */
@@ -57,13 +57,16 @@ export function subscribedTopics(): Hex[] {
     DOPPLER_CREATE,
     DOPPLER_MIGRATE,
     TOPICS.liftLaunch,
-    TOPICS.ponsLaunch,
+    ...PONS_LAUNCH_TOPICS,
     TOPICS.ponsBuy,
     TOPICS.ponsSell,
     TOPICS.ponsGraduate,
     ...PAIR_SWAP_TOPICS,
   ];
 }
+
+/** PONS launch events: v1 launcher and the v2 deployer (same topic layout). */
+export const PONS_LAUNCH_TOPICS: Hex[] = [TOPICS.ponsLaunch, TOPICS.ponsV2Launch];
 
 /** Swap events of v3-style and v2-style pools (any factory). */
 export const PAIR_SWAP_TOPICS: Hex[] = [TOPICS.v3Swap, TOPICS.pancakeV3Swap, TOPICS.v2Swap];
@@ -274,14 +277,21 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
         token, launchpad: 'liftfun', creator: topicAddr(l.topics[2]), quote: lc(`0x${word(l.data, 0).slice(26)}`),
         pool: (l.topics[3] ?? '').toLowerCase() || null, block: m.block, time: m.time, tx: m.tx,
       });
-    } else if (t0 === TOPICS.ponsLaunch) {
+    } else if (t0 === TOPICS.ponsLaunch || t0 === TOPICS.ponsV2Launch) {
       const token = topicAddr(l.topics[1]);
       const curve = topicAddr(l.topics[2]);
+      // Most v2 launches emit both events for the same curve: keep the first (v1 carries the dev buy).
+      if (newPools.has(curve)) {
+        if (t0 === TOPICS.ponsV2Launch) continue;
+        out.pools.splice(out.pools.findIndex((p) => p.id === curve), 1);
+      }
       newTokens.add(token);
       const quote = ctx.curveQuote?.(curve) ?? NATIVE_ETH;
       // data: creator?, quote paid by the creator's first buy, tokens it got.
-      const devIn = l.data.length >= 2 + 64 * 3 ? uint(l.data, 1) : 0n;
-      const devOut = l.data.length >= 2 + 64 * 3 ? uint(l.data, 2) : 0n;
+      // (v2 launches carry the graduation threshold instead; their dev buy is an ordinary curve buy.)
+      const v1 = t0 === TOPICS.ponsLaunch && l.data.length >= 2 + 64 * 3;
+      const devIn = v1 ? uint(l.data, 1) : 0n;
+      const devOut = v1 ? uint(l.data, 2) : 0n;
       launchByToken.set(token, {
         token, launchpad: 'pons', creator: topicAddr(l.topics[3]), quote, pool: curve, block: m.block, time: m.time, tx: m.tx,
         initialPrice: devIn > 0n && devOut > 0n ? { quoteRaw: devIn, tokenRaw: devOut } : null,

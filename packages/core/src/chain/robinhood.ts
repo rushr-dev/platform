@@ -119,6 +119,11 @@ export const TOPICS = {
   liftDevBuy: '0x34b6bd41bb4087aa5e8294323c3f441554c538e0b5107fc056bd9ce45654083d',
   /** PONS launch. topics: [sig, token, curve, creator?]; data: creator?, ethIn (dev buy), tokensOut */
   ponsLaunch: '0xdcacba5e347ae7abd91cb519eb877af8fa7774e347b85dd3ddcd24a2ba8cdf37',
+  /**
+   * PONS v2 launch (PonsV2LaunchDeployer 0x3711cea4…, emitted by the migrator 0x7ed598bc…). Same topics as
+   * ponsLaunch [sig, token, curve, creator]; data: 0, 0, graduation threshold. The curve emits ponsBuy/ponsSell.
+   */
+  ponsV2Launch: '0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607',
   /** PONS curve buy (emitted by the per-token curve). topics: [sig, buyer, recipient]; data: ethIn, tokensOut, fee, fee */
   ponsBuy: '0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455',
   /** PONS curve sell. topics: [sig, seller, recipient]; data: tokensIn, ethOut, fee, fee */
@@ -206,6 +211,17 @@ export const MINOR_V4_LAUNCHERS: Record<Address, Address> = {
   '0x15e5e7206c661a1e881f5cd33a94eaf2328fa8cc': '0xaa7a943666b72a305a53962dd5b28c5f9d8a37a7',
   '0x48b8f6ad3a1b4aa477314c9a23035b8f84dde8cc': '0xd3f2cc1731b7fd17f28798835c2e02f0a1839a94',
   '0x745d717620052a97a22deee2e5eba59583f3e0cc': '0x16cf6788b762ee8969744586ed16fc5705140dd7',
+};
+
+/**
+ * Launch platforms that go straight to a v4 pool with their own hook (no curve), identified from the
+ * pool's hook (factory names from verified contracts on Blockscout). They stay launchpad 'uniswap-v4' for
+ * columns and filters; this only labels them (cards' `platform`).
+ */
+export const V4_PLATFORMS: Record<Address, { id: string; name: string }> = {
+  '0x0af57f62982d03066ef917acad87f771c06528ec': { id: 'fobo', name: 'Fobo' }, // FoboHook, FoboFactory 0xd7e538e9…
+  '0x48b8f6ad3a1b4aa477314c9a23035b8f84dde8cc': { id: 'clanker', name: 'Clanker' }, // Clanker 0xd3f2cc17…
+  '0x15e5e7206c661a1e881f5cd33a94eaf2328fa8cc': { id: 'uniswap-launch-factory', name: 'UniswapLaunchFactoryV3' }, // single deployer
 };
 
 /** Contracts that move tokens on behalf of users; never treat them as the trader or a holder cluster. */

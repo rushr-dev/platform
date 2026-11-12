@@ -1,5 +1,10 @@
 import type { Sql } from 'postgres';
+import { V4_PLATFORMS } from '@rushr/core';
 import { Rpc } from './rpc';
+import { WALLET_SQL, walletPositions } from './wallets';
+
+const PLATFORM_HOOKS = Object.keys(V4_PLATFORMS);
+const PLATFORM_IDS = PLATFORM_HOOKS.map((h) => V4_PLATFORMS[h as keyof typeof V4_PLATFORMS]!.id);
 
 /**
  * Reads shared by the HTTP API and the realtime gateways (snapshots). Shapes follow docs/realtime.md.
@@ -26,8 +31,12 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
         else (select q.symbol from tokens q where q.address = t.quote) end as quote_symbol,
       (select count(*)::int from swaps x where x.token = t.address and x.time > now() - interval '24 hours') as trades_24h,
       coalesce(substring(t.twitter from '(?:x|twitter)\.com/([A-Za-z0-9_]{1,30})(?:[/?#]|$)'), null) as twitter_handle,
-      -- Not measured yet: transfer tax needs a simulated buy/sell; fees paid need gas data. Null until then.
-      t.tax_bps as buy_tax_bps, t.tax_bps as sell_tax_bps, null::float8 as fees_paid_usd
+      -- Tax is measured from real trades (signals); null until a token has 2 buys / 2 sells. Fees: not tracked yet.
+      coalesce((s.data->>'buyTaxBps')::int, t.tax_bps) as buy_tax_bps, coalesce((s.data->>'sellTaxBps')::int, t.tax_bps) as sell_tax_bps,
+      coalesce((s.data->>'noSells')::bool, false) as no_sells, coalesce((s.data->'dev'->>'farm')::bool, false) as farm,
+      null::float8 as fees_paid_usd,
+      -- Launch platform behind a hooked v4 pool (Fobo, Clanker, ...), else the launchpad itself.
+      coalesce((select (${PLATFORM_IDS}::text[])[array_position(${PLATFORM_HOOKS}::text[], p.hooks)] from pools p where p.id = t.main_pool), t.launchpad) as platform
     from tokens t left join signals s on s.token = t.address
     where t.address = any(${where.addresses ?? []})`;
 }
@@ -340,7 +349,7 @@ export async function tokenDetail(sql: Sql, token: string) {
 
 /**
  * Recompute wallet_pnl from positions (+ current prices) and realized PnL per window from swaps.
- * Unrealized counts held tokens at the current price minus their average cost.
+ * Unrealized counts the tokens actually held (balances) at the current price minus their share of the cost.
  */
 export async function refreshWalletPnl(sql: Sql) {
   return sql`
@@ -348,15 +357,16 @@ export async function refreshWalletPnl(sql: Sql) {
       volume_usd, trades, tokens_traded, win_rate, best_trade_usd, last_trade_at, updated_at)
     select p.wallet,
       sum(p.realized_usd),
-      sum(case when t.price_usd is not null and p.held_tokens > 0
-               then p.held_tokens / power(10, t.decimals) * t.price_usd - p.cost_basis_usd else 0 end),
+      sum(${sql.unsafe(WALLET_SQL.UNREALIZED)}),
       coalesce(max(w.r24), 0), coalesce(max(w.r7), 0), coalesce(max(w.r30), 0),
       sum(p.bought_usd + p.sold_usd), sum(p.buys + p.sells)::int, count(*)::int,
-      (count(*) filter (where p.held_tokens = 0 and p.sells > 0 and p.realized_usd > 0))::numeric
-        / nullif(count(*) filter (where p.held_tokens = 0 and p.sells > 0), 0),
+      -- Win rate over closed positions (nothing left in the wallet) that sold something.
+      (count(*) filter (where coalesce(b.amount, 0) <= 0 and p.sells > 0 and p.realized_usd > 0))::numeric
+        / nullif(count(*) filter (where coalesce(b.amount, 0) <= 0 and p.sells > 0), 0),
       max(w.best), max(p.last_trade_at), now()
     from positions p
     join tokens t on t.address = p.token
+    left join balances b on b.token = p.token and b.wallet = p.wallet
     left join (
       select trader, sum(realized_usd) filter (where time > now() - interval '24 hours') r24,
         sum(realized_usd) filter (where time > now() - interval '7 days') r7, sum(realized_usd) r30, max(realized_usd) best
@@ -369,25 +379,14 @@ export async function refreshWalletPnl(sql: Sql) {
       best_trade_usd = excluded.best_trade_usd, last_trade_at = excluded.last_trade_at, updated_at = excluded.updated_at`;
 }
 
-/** A wallet's PnL summary and its positions (top 100 by total PnL magnitude), unrealized at current prices. */
-export async function walletPnl(sql: Sql, wallet: string) {
+/** A wallet's PnL summary and one page of its positions (held = actual balance, see wallets.ts). */
+export async function walletPnl(sql: Sql, wallet: string, pg: { offset: number; limit: number } = { offset: 0, limit: 100 }) {
   const [summary] = await sql`
     select wallet, realized_usd::float8, unrealized_usd::float8, realized_24h_usd::float8, realized_7d_usd::float8, realized_30d_usd::float8,
       volume_usd::float8, trades, tokens_traded, win_rate::float8, best_trade_usd::float8, last_trade_at, updated_at
     from wallet_pnl where wallet = ${wallet}`;
-  const positions = await sql`
-    select p.token, t.symbol, t.name, t.image_url, t.price_usd::float8 as price_usd,
-      p.bought_tokens::text, p.bought_usd::float8, p.sold_tokens::text, p.sold_usd::float8, p.buys, p.sells,
-      p.held_tokens::text, p.cost_basis_usd::float8, p.realized_usd::float8,
-      case when t.price_usd is not null and p.held_tokens > 0
-           then (p.held_tokens / power(10, t.decimals) * t.price_usd - p.cost_basis_usd)::float8 else 0 end as unrealized_usd,
-      (p.unbacked_sold_tokens > 0) as unbacked, p.first_trade_at, p.last_trade_at
-    from positions p join tokens t on t.address = p.token
-    where p.wallet = ${wallet}
-    order by abs(p.realized_usd + case when t.price_usd is not null and p.held_tokens > 0
-                 then p.held_tokens / power(10, t.decimals) * t.price_usd - p.cost_basis_usd else 0 end) desc
-    limit 100`;
-  return { summary: summary ?? null, positions };
+  const { total, positions, next_offset } = await walletPositions(sql, wallet, pg);
+  return { summary: summary ?? null, positions, total_positions: total, next_offset };
 }
 
 /** Everything a token page needs at once (the realtime `token:` snapshot, docs/realtime.md). */

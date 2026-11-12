@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeSignals, type TokenSnapshot } from '../src/signals/compute';
+import { computeSignals, measureTax, type TokenSnapshot } from '../src/signals/compute';
 
 const E18 = 10n ** 18n;
 const SUPPLY = 1_000_000_000n * E18;
@@ -121,5 +121,50 @@ describe('computeSignals', () => {
     expect(s.freshWalletsPct).toBe(75);
     expect(s.risk).toBe('high');
     expect(s.reasons.map((r) => r.text)).toContain('20% still held by the launch bundle');
+  });
+});
+
+describe('tax, no-sells and launch farms', () => {
+  it('measures buy and sell tax from what reached the trader or the pool', () => {
+    // 5% buy tax: the pool sent 100, the trader kept 95. 10% sell tax: the trader gave 100, the pool got 90.
+    const samples = [
+      { side: 'buy' as const, swapAmount: 100n * E18, traderNet: 95n * E18 },
+      { side: 'buy' as const, swapAmount: 40n * E18, traderNet: 38n * E18 },
+      { side: 'sell' as const, swapAmount: 90n * E18, traderNet: -100n * E18 },
+      { side: 'sell' as const, swapAmount: 45n * E18, traderNet: -50n * E18 },
+      // other transfers in the tx: ignored
+      { side: 'buy' as const, swapAmount: 10n * E18, traderNet: 30n * E18 },
+    ];
+    expect(measureTax(samples)).toEqual({ buyTaxBps: 500, sellTaxBps: 1000 });
+    // A normal token: wei-level rounding reads as 0; one sample isn't enough.
+    expect(measureTax([
+      { side: 'buy', swapAmount: 10n ** 21n, traderNet: 10n ** 21n - 3n },
+      { side: 'buy', swapAmount: 10n ** 20n, traderNet: 10n ** 20n },
+      { side: 'sell', swapAmount: 10n ** 20n, traderNet: -(10n ** 20n) },
+    ])).toEqual({ buyTaxBps: 0, sellTaxBps: null });
+  });
+
+  it('flags a heavy sell tax and a token nobody has sold', () => {
+    const taxed = computeSignals(base({
+      taxSamples: [
+        { side: 'sell', swapAmount: 40n * E18, traderNet: -100n * E18 },
+        { side: 'sell', swapAmount: 4n * E18, traderNet: -10n * E18 },
+      ],
+    }));
+    expect(taxed.sellTaxBps).toBe(6000);
+    expect(taxed.risk).toBe('high');
+    expect(taxed.reasons.map((r) => r.text)).toContain('sell tax 60%');
+    const stuck = computeSignals(base({ tradeCounts: { buys: 40, sells: 0 } }));
+    expect(stuck.noSells).toBe(true);
+    expect(stuck.reasons.map((r) => r.text)).toContain('40 buys and no sells: may not be sellable');
+    // Too early to tell.
+    expect(computeSignals(base({ tradeCounts: { buys: 40, sells: 0 }, now: T0 + 120 })).noSells).toBe(false);
+  });
+
+  it('marks a launch farm (same token relaunched by fresh wallets) as a serial launcher', () => {
+    const s = computeSignals(base({ symbol: 'TURBO', sameNameDeployers24h: 14 }));
+    expect(s.dev).toMatchObject({ serialLauncher: true, farm: true });
+    expect(s.risk).toBe('high');
+    expect(s.reasons[0]!.text).toContain('launch farm: 14 copies');
   });
 });
