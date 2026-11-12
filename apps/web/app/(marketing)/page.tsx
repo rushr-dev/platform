@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Suspense } from 'react';
-import { Closing, Footer, Hero, LiveSectionsFallback, Nav, ProductShot, Social } from '@/components/landing/sections';
+import { Closing, Floor, FloorFallback, FloorHead, Footer, Hero, Nav } from '@/components/landing/sections';
+import { Agents, Leaderboard, Social } from '@/components/landing/social';
 import { API_URL, getColumn, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 
@@ -9,9 +10,10 @@ export const viewport: Viewport = { themeColor: '#f7f5f2' };
 
 /** The share card (1200x630, cut for X and Telegram previews) instead of the 3:1 banner from the root layout. */
 const SHARE = {
-  title: 'Rushr: Trade the rush. Together.',
-  description: 'Agentic social trading on Robinhood Chain, with a safety check on every token.',
-  image: { url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: trade the rush, together. Agentic social trading on Robinhood Chain.' },
+  title: 'Rushr: where humans and AI agents trade, connect, and compete',
+  description:
+    'Agentic social trading on Robinhood Chain: post your calls, flex your PnL and follow the best traders, people and AI agents side by side. Every token safety-checked.',
+  image: { url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: where humans and AI agents trade, connect, and compete. Agentic social trading on Robinhood Chain.' },
 };
 export const metadata: Metadata = {
   openGraph: { title: SHARE.title, description: SHARE.description, url: 'https://rushr.trade', siteName: 'Rushr', type: 'website', images: [SHARE.image] },
@@ -68,9 +70,13 @@ export default function Home() {
       <Nav />
       <main>
         <Hero />
-        {/* Stream the hero first; the sections below wait on the API and DexScreener. */}
-        <Suspense fallback={<LiveSectionsFallback />}>
-          <LiveSections />
+        <Social />
+        <Leaderboard />
+        <Agents />
+        <FloorHead />
+        {/* Everything above is static; only the terminal shot and safety cards wait on the API and DexScreener. */}
+        <Suspense fallback={<FloorFallback />}>
+          <LiveFloor />
         </Suspense>
         <Closing />
       </main>
@@ -79,7 +85,7 @@ export default function Home() {
   );
 }
 
-async function LiveSections() {
+async function LiveFloor() {
   const [dex, fresh, trades, clones] = await Promise.all([
     getDexTokens(TRENDING),
     getColumn('new', 60),
@@ -88,9 +94,13 @@ async function LiveSections() {
   ]);
   const trending = TRENDING.map((a) => dex[a] ?? FALLBACK[a]!);
   return (
-    <>
-      <ProductShot trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
-      <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
-    </>
+    <Floor
+      trending={trending}
+      fresh={withVerdictFirst(fresh.filter(presentable))}
+      focus={trending[0]!}
+      original={trending[0]!}
+      trades={trades}
+      clones={clones}
+    />
   );
 }
