@@ -9,6 +9,7 @@ import {
 
 export { tokenSummaries } from './data';
 import { loadSnapshot } from './signals';
+import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
 
@@ -188,7 +189,35 @@ api.get('/tokens/:address/bubblemap', async (c) => {
 api.get('/wallets/:address/pnl', async (c) => {
   const wallet = addr(c.req.param('address'));
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
-  return c.json(await walletPnl(c.var.sql, wallet), 200, cache(10));
+  return c.json(await walletPnl(c.var.sql, wallet, page((k) => c.req.query(k))), 200, cache(10));
+});
+
+/**
+ * What a wallet holds now (from Transfers, not trades), by $ value: amount, decimals, price, value, 24h
+ * change, icon, cost basis and PnL where it traded. Paged with ?offset=&limit= (default 200, max 500).
+ * Balances of tokens indexed after launch are checked against the chain in the background.
+ */
+api.get('/wallets/:address/holdings', async (c) => {
+  const wallet = addr(c.req.param('address'));
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
+  const out = await walletHoldings(c.var.sql, wallet, page((k) => c.req.query(k), 200));
+  c.executionCtx.waitUntil(
+    (async () => {
+      const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+      try { await repairBalances(sql, c.env.RPC_URL, wallet); } catch { /* best effort */ } finally { await sql.end({ timeout: 5 }); }
+    })(),
+  );
+  return c.json(out, 200, cache(10));
+});
+
+/** One position: bought, sold, held (actual balance), cost basis, realized and unrealized PnL, plus the trades. */
+api.get('/wallets/:address/positions/:token', async (c) => {
+  const wallet = addr(c.req.param('address'));
+  const token = addr(c.req.param('token'));
+  if (!/^0x[0-9a-f]{40}$/.test(wallet) || !/^0x[0-9a-f]{40}$/.test(token)) return c.json({ error: 'bad address' }, 400);
+  const out = await walletPosition(c.var.sql, wallet, token);
+  if (!out) return c.json({ error: 'not found' }, 404);
+  return c.json(out, 200, cache(10));
 });
 
 /** Dev page: stats plus every token from the deployer. */
