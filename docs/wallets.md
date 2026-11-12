@@ -17,6 +17,31 @@ Status 2026-11-12: **decided.**
 7. **Pricing:** an Enterprise quote for ~10k–100k MAU and ~1M signatures/month (published pay-as-you-go comes to ≈ $11.5–16k/month).
 8. **Exit:** if Privy is unavailable, what is the recovery path besides user export? Is there an SLA?
 
+### Answers from the live dev app (2026-11-12)
+`packages/trade/scripts/privy-dev-check.ts` was run against the founder's Privy dev app with throwaway P-256 keys:
+- a "user" key quorum owning the wallet and the policy
+- Rushr's signer key quorum
+- an "agent" key quorum
+
+It only calls `eth_signTransaction`, so **nothing was broadcast**, and the test wallet has no funds. **20/20 checks passed.** Re-run: `RUSHR_MAIN_CHECKOUT=<main checkout> pnpm --filter @rushr/trade exec tsx scripts/privy-dev-check.ts`.
+
+| Question | Answer |
+| --- | --- |
+| **1. Policies on 4663** | **Yes**, policies are enforced when signing for chain 4663. Allowed: `RushrRouter.buy`/`sell` and `approve(RushrRouter)`. Denied with `400 policy_violation`: a plain ETH transfer, `sellAnyPool`, a buy over the 0.25 ETH cap, the same buy with `chain_id 1`, a sell carrying ETH, `approve` to another spender, a call to another contract. A request without an authorization signature returns 401. The signed tx decodes to chain 4663 with `from` equal to the wallet. Not tested by design: Privy broadcasting on 4663 (`eth_sendTransaction`), since we broadcast through our own RPC. |
+| **2. User-owned policies** | **Yes.** `owner_id` = the user's key quorum is accepted. `PATCH /v1/policies/{id}` is refused with the app secret alone (401 missing signature) and with Rushr's authorization key (401 no valid signature). Rushr's key also can't re-add itself to the wallet without a policy (401). |
+| **3. Revoke one signer** | **Yes.** The owner `PATCH`es the wallet's `additional_signers` with one signer left out. Afterwards the removed agent gets 401, and Rushr's signer keeps working. |
+| **4. Shared 24 h cap** | **Works** with one app-level aggregation (`POST /v1/aggregations`, rolling 86,400 s sum of `value` on chain 4663), referenced from each policy as `field_source: "reference"`, `field: "aggregation.<id>"`. It counts per wallet, and the check **includes the current request**: after 0.76 ETH signed, the next 0.25 ETH buy (total 1.01 ETH) was denied. Privy's docs still note that concurrent requests can race, so the per-trade cap stays the hard bound and the server serialises signing per wallet. |
+| **5. Limits** | Not revealed by the API. Learned: Privy allows **one policy per wallet**, plus a per-signer `override_policy_ids`, which is what we use. Signers per wallet and policies per app: still to ask Privy. |
+| **6. Latency** | 340–480 ms per signature, median ≈ 380 ms, **from a laptop in Asia**, not co-located with Privy. Privy states ~100 ms co-located. Measure again from Workers in production. |
+| **7. Pricing** | Still to ask Privy (Enterprise quote). |
+| **8. Exit** | Still to ask Privy (SLA, recovery). Confirmed: the owner key can sign anything, including a plain transfer, outside the signer policy. That is the user's withdrawal and exit path while Privy is up. |
+
+Schema corrections made after reading Privy's OpenAPI spec:
+- Calldata conditions are `<function>.<param>`, decoded against a single-function ABI. There is no `function_selector` field.
+- The aggregation reference uses `field_source: "reference"`.
+
+Both are reflected in `packages/trade/src/policy.ts`. The test artifacts (one wallet with no funds, one policy, one aggregation, three key quorums) remain in the dev app.
+
 **Direction (founder):** every user gets an embedded, self-custodial, exportable wallet. Once, the user grants Rushr's server a **revocable, policy-limited signer**, so quick-buy needs no popup. Provider-enforced policies fence that signer, so a compromised Rushr server can't drain users.
 
 **Recommendation in one line:** use **Privy** embedded wallets with one **session signer** (P-256 authorization key, held in a cloud KMS) per purpose: quick-trade and each in-app agent. Each signer carries a per-user Privy **policy owned by the user**: only Rushr's two router contracts, approvals only to those routers, value caps per tx and per rolling 24 h, an expiry, and everything else denied. The routers force the output to the trader. **Turnkey** is a close second and the fallback. The design depends on one Rushr contract being audited: a router that builds Uniswap routes itself (see the threat model).
@@ -207,12 +232,12 @@ Each one is revocable on its own from the Permissions page. Quick-trade and agen
 Verified:
 - 63 unit tests pass. The signature produced by `PrivySessionSigner` verifies with WebCrypto against the canonical payload. Canonical JSON, DER conversion, policy contents, the gates and policy-denial handling are all covered.
 - `signer`, `policy` and `agent` bundle for Workers (`workerd` conditions) with no Node built-ins.
-- Not verified: Privy's live API. Header and field names follow Privy's docs and must be checked once the founder's dev app exists (questions at the top).
+- Verified live against the founder's Privy dev app (see "Answers from the live dev app" at the top): request signing, policy enforcement, user-owned policies, per-signer revoke and the 24 h cap.
 
-### Next, once the founder has the Privy dev app
-1. Confirm the open questions.
-2. Check `PrivySessionSigner` against Privy's dev environment, signing only, never broadcasting.
-3. Pick the KMS and implement `AuthorizationKey` for it.
-4. Add a Permissions page (grant, caps, revoke, export) in the terminal (Terminal stream).
+### Next
+1. Ask Privy the remaining questions: signer and policy limits, pricing, SLA and exit.
+2. Pick the KMS and implement `AuthorizationKey` for it.
+3. Build the user-side grant flow in the web app: the client SDK `addSigners` with the user as policy owner. The dev check used a key quorum to stand in for the user.
+4. Add a Permissions page (grant, caps, revoke, export) in the terminal (Terminal stream), behind `NEXT_PUBLIC_SWAP_ENABLED`.
 
 One-click trading stays off until RushrRouter's independent audit; until then trades go through the wallet confirmation flow.

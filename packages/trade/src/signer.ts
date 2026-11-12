@@ -104,6 +104,44 @@ export function derToRaw(der: Uint8Array): Uint8Array {
 
 const b64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 
+/**
+ * Any Privy API request carrying authorization signatures (wallet RPC, wallet/policy updates). Each key
+ * signs the RFC 8785 canonical {version, method, url, body, headers}; several signatures are comma
+ * separated (Privy's direct implementation). `keys: []` sends no signature header.
+ */
+export async function signPrivyRequest(p: {
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  url: string;
+  body: unknown;
+  appId: string;
+  appSecret: string;
+  keys: AuthorizationKey[];
+  expiryMs?: number;
+  idempotencyKey?: string;
+}): Promise<{ url: string; init: RequestInit; signedPayload: string }> {
+  const url = p.url.replace(/\/+$/, '');
+  const headers: Record<string, string> = { 'privy-app-id': p.appId };
+  if (p.expiryMs !== undefined) headers['privy-request-expiry'] = String(p.expiryMs);
+  if (p.idempotencyKey) headers['privy-idempotency-key'] = p.idempotencyKey;
+  const body = JSON.parse(JSON.stringify(p.body));
+  const signedPayload = canonicalize({ version: 1, method: p.method, url, body, headers });
+  const sigs = await Promise.all(p.keys.map(async (k) => b64(await k.signDer(new TextEncoder().encode(signedPayload)))));
+  return {
+    url,
+    signedPayload,
+    init: {
+      method: p.method,
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Basic ${btoa(`${p.appId}:${p.appSecret}`)}`,
+        ...headers,
+        ...(sigs.length ? { 'privy-authorization-signature': sigs.join(',') } : {}),
+      },
+      body: JSON.stringify(body),
+    },
+  };
+}
+
 // ------------------------------------------------------------------ session signer
 
 /** Unsigned EIP-1559 transaction as Privy's eth_signTransaction expects it (quantities as hex strings). */
@@ -173,24 +211,7 @@ export class PrivySessionSigner implements SessionSigner {
       },
     };
     const now = this.cfg.now?.() ?? Math.floor(Date.now() / 1000);
-    const expiry = String((now + (this.cfg.requestTtlSeconds ?? 60)) * 1000);
-    const headers = { 'privy-app-id': this.cfg.appId, 'privy-request-expiry': expiry };
-    const signedPayload = canonicalize({ version: 1, method: 'POST', url, body: JSON.parse(JSON.stringify(body)), headers });
-    const sig = await this.cfg.authorizationKey.signDer(new TextEncoder().encode(signedPayload));
-    return {
-      url,
-      signedPayload,
-      init: {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Basic ${btoa(`${this.cfg.appId}:${this.cfg.appSecret}`)}`,
-          ...headers,
-          'privy-authorization-signature': b64(sig),
-        },
-        body: JSON.stringify(body),
-      },
-    };
+    return signPrivyRequest({ method: 'POST', url, body, appId: this.cfg.appId, appSecret: this.cfg.appSecret, keys: [this.cfg.authorizationKey], expiryMs: (now + (this.cfg.requestTtlSeconds ?? 60)) * 1000 });
   }
 
   async signTransaction(walletId: string, tx: SessionTx): Promise<Hex> {
@@ -199,7 +220,8 @@ export class PrivySessionSigner implements SessionSigner {
     const text = await r.text();
     if (!r.ok) {
       // A policy denial comes back here: surface it as such, never retry around it.
-      const denied = r.status === 403 || /polic/i.test(text);
+      // Live Privy (2026-11-12): HTTP 400 {"error":"RPC request denied due to policy violation","code":"policy_violation"}.
+      const denied = /policy_violation/.test(text) || r.status === 403 || /polic/i.test(text);
       throw new TradeError(denied ? 'SIMULATION_REVERTED' : 'RPC_ERROR', `Privy ${denied ? 'policy denied' : 'error'} (${r.status}): ${text.slice(0, 200)}`);
     }
     const j = JSON.parse(text) as { data?: { signed_transaction?: Hex } };

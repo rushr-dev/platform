@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeFunctionData, getAddress, zeroAddress, type Address } from 'viem';
+import { decodeFunctionData, encodeFunctionData, getAddress, zeroAddress, type Address } from 'viem';
 import {
   assertOneClickAllowed,
   canonicalize,
@@ -10,7 +10,7 @@ import {
   rawToDer,
   WebCryptoAuthorizationKey,
 } from '../src/signer';
-import { allowedSelectors, buildSignerPolicy, defaultCaps, DEFAULT_CAPS } from '../src/policy';
+import { buildDailyValueAggregation, buildSignerPolicy, defaultCaps, DEFAULT_CAPS } from '../src/policy';
 import { buildRushrRouterSwap, routeFromPool, rushrPoolKey, rushrRouterAbi, RouteKind } from '../src/rushr-router';
 import { resolveConfig } from '../src/config';
 import { TRADE_ADDRESSES } from '../src/addresses';
@@ -99,12 +99,12 @@ describe('Privy session signer (REST, Workers-compatible)', () => {
       calls.push(String(u));
       return new Response(JSON.stringify({ method: 'eth_signTransaction', data: { signed_transaction: '0x02f8aa' } }), { status: 200 });
     }) as typeof fetch;
-    const denied = (async () => new Response('{"error":"Policy violation: transaction denied"}', { status: 403 })) as typeof fetch;
+    const denied = (async () => new Response('{"error":"RPC request denied due to policy violation","code":"policy_violation"}', { status: 400 })) as typeof fetch;
     const base = { appId: 'a', appSecret: 's', authorizationKey: new WebCryptoAuthorizationKey(kp.privateKey) };
     const tx = { to: ROUTER, data: '0x' as const, value: 1n, chainId: 4663 };
     expect(await new PrivySessionSigner({ ...base, fetch: ok }).signTransaction('w1', tx)).toBe('0x02f8aa');
     expect(calls).toHaveLength(1);
-    await expect(new PrivySessionSigner({ ...base, fetch: denied }).signTransaction('w1', tx)).rejects.toThrow(/policy denied \(403\)/);
+    await expect(new PrivySessionSigner({ ...base, fetch: denied }).signTransaction('w1', tx)).rejects.toThrow(/policy denied \(400\)/);
     await expect(new PrivySessionSigner({ ...base, fetch: ok }).buildRequest('../x', tx)).rejects.toThrow(/wallet id/);
   });
 
@@ -131,30 +131,46 @@ describe('Privy signer policy', () => {
     expect(DEFAULT_CAPS.grantSeconds).toBe(2_592_000);
   });
 
-  it('allows only the router trade selectors and router approvals, within caps and expiry', () => {
-    const p = buildSignerPolicy({ purpose: 'quick-trade', wallet: WALLET, rushrRouter: ROUTER, ponsRouter: PONS_ROUTER, caps: defaultCaps(1_000) });
-    const s = allowedSelectors();
-    const trade = p.rules[0]!;
-    const cond = (rule: typeof trade, field: string) => rule.conditions.find((c) => c.field === field)!;
-    expect(cond(trade, 'to').value).toEqual([ROUTER, PONS_ROUTER]);
-    expect(cond(trade, 'function_selector').value).toEqual([s.rushrBuy, s.rushrSell, s.ponsBuy, s.ponsSell]);
-    expect(cond(trade, 'function_selector').value).not.toContain(s.rushrSellAnyPool); // user-confirmed exits only
-    expect(cond(trade, 'value').value).toBe('250000000000000000');
-    expect(cond(trade, 'eth_value_24h').value).toBe('1000000000000000000');
-    expect(cond(trade, 'chain_id').value).toBe('4663');
-    expect(cond(trade, 'current_unix_timestamp').value).toBe(String(1_000 + 2_592_000));
-    const approve = p.rules[1]!;
-    expect(cond(approve, 'approve.spender').value).toEqual([ROUTER, PONS_ROUTER]);
-    expect(cond(approve, 'value').value).toBe('0');
+  it('one ALLOW rule per router function plus router approvals, in Privy schema, within caps and expiry', () => {
+    const p = buildSignerPolicy({ purpose: 'quick-trade', wallet: WALLET, rushrRouter: ROUTER, ponsRouter: PONS_ROUTER, caps: defaultCaps(1_000), dailyAggregationId: 'agg1', ownerId: 'userquorum' });
+    expect(p).toMatchObject({ version: '1.0', chain_type: 'ethereum', owner_id: 'userquorum' });
+    expect(p.rules.map((r) => r.name)).toEqual(['RushrRouter.buy', 'RushrRouter.sell', 'RushrPonsRouter.buy', 'RushrPonsRouter.sell', 'approve Rushr routers only']);
     expect(p.rules.every((r) => r.action === 'ALLOW' && r.method === 'eth_signTransaction')).toBe(true);
-    expect(new Set([s.rushrBuy, s.rushrSell, s.rushrSellAnyPool, s.ponsBuy, s.ponsSell]).size).toBe(5);
+    type C = { field_source: string; field: string; value: unknown };
+    const cond = (i: number, field: string) => (p.rules[i]!.conditions as C[]).find((c) => c.field === field)!;
+    expect(cond(0, 'to').value).toBe(ROUTER);
+    expect(cond(2, 'to').value).toBe(PONS_ROUTER);
+    expect(cond(0, 'buy.deadline')).toMatchObject({ field_source: 'ethereum_calldata', operator: 'gt', value: '0' });
+    expect(cond(0, 'value')).toMatchObject({ operator: 'lte', value: '250000000000000000' });
+    expect(cond(1, 'value')).toMatchObject({ operator: 'eq', value: '0' }); // sells carry no ETH
+    expect(cond(0, 'aggregation.agg1')).toMatchObject({ field_source: 'reference', operator: 'lte', value: '1000000000000000000' });
+    expect(cond(0, 'chain_id').value).toBe('4663');
+    expect(cond(0, 'current_unix_timestamp').value).toBe(String(1_000 + 2_592_000));
+    expect(cond(4, 'approve.spender').value).toEqual([ROUTER, PONS_ROUTER]);
+    expect(cond(4, 'value').value).toBe('0');
+    expect(JSON.stringify(p)).not.toContain('sellAnyPool');
   });
 
-  it('per-agent policies are independent and validate caps', () => {
-    const a = buildSignerPolicy({ purpose: 'agent:7', wallet: WALLET, rushrRouter: ROUTER, caps: { perTradeWei: 1n, dailyWei: 5n, expiresAt: 9 } });
+  it('each rule ABI decodes exactly its function: real buy/sell calldata yes, sellAnyPool no', () => {
+    const p = buildSignerPolicy({ purpose: 'q', wallet: WALLET, rushrRouter: ROUTER, caps: defaultCaps(1_000), dailyAggregationId: 'a' });
+    const abiOf = (i: number) => (p.rules[i]!.conditions as { abi?: unknown[] }[]).find((c) => c.abi)!.abi as never;
+    const route = { kind: 1, token: PONS, quote: TRADE_ADDRESSES.weth, fee: 3000, tickSpacing: 0, hooks: zeroAddress };
+    const buy = encodeFunctionData({ abi: rushrRouterAbi, functionName: 'buy', args: [route, 1n, 100n, false] });
+    const sell = encodeFunctionData({ abi: rushrRouterAbi, functionName: 'sell', args: [route, 1n, 1n, 100n, false] });
+    const any = encodeFunctionData({ abi: rushrRouterAbi, functionName: 'sellAnyPool', args: [route, 1n, 1n, 100n, false] });
+    expect(decodeFunctionData({ abi: abiOf(0), data: buy }).args).toContain(100n);
+    expect(decodeFunctionData({ abi: abiOf(1), data: sell }).args).toContain(100n);
+    expect(() => decodeFunctionData({ abi: abiOf(0), data: sell })).toThrow();
+    expect(() => decodeFunctionData({ abi: abiOf(1), data: any })).toThrow();
+    expect(() => decodeFunctionData({ abi: abiOf(0), data: any })).toThrow();
+  });
+
+  it('per-agent policies are independent and validate caps; aggregation is a rolling 24 h value sum on 4663', () => {
+    const a = buildSignerPolicy({ purpose: 'agent:7', wallet: WALLET, rushrRouter: ROUTER, caps: { perTradeWei: 1n, dailyWei: 5n, expiresAt: 9 }, dailyAggregationId: 'a' });
     expect(a.name).toBe(`rushr:agent:7:${WALLET}`);
-    expect(a.rules[0]!.conditions.find((c) => c.field === 'to')!.value).toEqual([ROUTER]);
-    expect(() => buildSignerPolicy({ purpose: 'x', wallet: WALLET, rushrRouter: ROUTER, caps: { perTradeWei: 5n, dailyWei: 1n, expiresAt: 9 } })).toThrow(/caps/);
+    expect(a.rules).toHaveLength(3);
+    expect(() => buildSignerPolicy({ purpose: 'x', wallet: WALLET, rushrRouter: ROUTER, caps: { perTradeWei: 5n, dailyWei: 1n, expiresAt: 9 }, dailyAggregationId: 'a' })).toThrow(/caps/);
+    expect(buildDailyValueAggregation()).toMatchObject({ method: 'eth_signTransaction', metric: { field_source: 'ethereum_transaction', field: 'value', function: 'sum' }, window: { type: 'rolling', seconds: 86_400 } });
   });
 });
 
