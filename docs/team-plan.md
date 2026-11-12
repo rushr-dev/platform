@@ -113,3 +113,40 @@ The protocol is Data's `docs/realtime.md` (data branch). The terminal client (`a
 4. `stats.priceChangePct` should be measured against the last price before the window, not the first trade in it.
 5. The client sends v1 `subscribe` for the legacy `trenches` topic before `hello` arrives: answer `bad_topic` and keep the socket.
 6. Plain-pool tokens: the `trenches:*` topics carry launchpad tokens only (like `GET /tokens?column=`). The "Plain pools" toggle still reads them over HTTP; a `plain` variant of the topics would let it go live too.
+
+### Terminal → Data: trenches card fields (2026-11-12)
+The GMGN-style trenches cards read these optional fields on every token card (`/tokens?column=`, the `trenches:*` and `token:` socket payloads). Until they exist the cards hide them; please use these names, or tell Terminal yours:
+- `tax_pct` (number, percent; the larger of buy and sell), or `buy_tax_pct` and `sell_tax_pct`.
+- `quote_symbol` ("WETH", "USDG", "MSTR"…). Without it, cards show ETH/WETH/USDG and Robinhood stock quotes from the `quote` address and hide unknown quotes.
+- `buys_24h` and `sells_24h` (counts). The card shows TX = their sum with a buy/sell ratio bar, and the "Transactions" sort uses it.
+- `creator_x` (the creator's X handle, without @).
+- `fees_24h_usd` (shown as F).
+- `initial_market_cap_usd`: the market cap at launch, shown (dimmed) instead of "–" until the first trade gives a live one.
+
+### Terminal → Data: profile page (2026-11-12)
+The FOMO-style `/me` and `/u/<handle>` pages read `/wallets/:w/pnl` today. Each section below shows an empty state until its field or endpoint exists:
+- **PnL history** for the portfolio chart: `GET /wallets/:w/pnl/history?window=24h|7d|30d|all` → `{ points: [{ t: ISO, value_usd, pnl_usd }] }`, roughly 50–200 points per window.
+- **Wallet trades** for the Transactions tab: `GET /wallets/:w/trades?side=buy|sell&min_usd=&cursor=` → `{ items: [{ tx, token, symbol, image_url, side, amount_usd, token_amount, market_cap_usd (at trade time), at }], next_cursor }`.
+- **`decimals`** on each entry in `positions`. Until then, held amounts assume 18 decimals.
+- **ETH/USD price** (for example `eth_usd` on `/stats` or `GET /prices/eth`). Until then the cash card reads DexScreener's WETH pair.
+- **`avg_hold_seconds`** in the pnl `summary`. The header's "Avg hold" shows "—" until it exists.
+
+### Terminal → Agents: profile page (2026-11-12)
+The profile uses `GET /v1/members/:ref`, `PATCH /me`, `POST /me/avatar|banner`, follows, `/me/relationship/:ref`, `/suggestions` and `/members/:ref/callouts`, all from `claude/agents-profiles`. Until that branch is live, `/u/<handle>` shows "check back soon" and the rail and feed show empty states. Callouts can optionally carry `entry.marketCapUsd` and `resultPct`; the feed shows "$X at $Y MC" and "+Z% since" from them.
+
+### Terminal → Data: token-page position (2026-11-12)
+The token page's trade panel reads the wallet's position for that token from `/wallets/:w/pnl`. That list stops at 100 positions, so active wallets can be missing the token they're looking at. Please add:
+- `GET /wallets/:w/positions/:token` → one position in the same shape as an entry in `positions` (bought/sold in $ and tokens, `held_tokens`, `cost_basis_usd`, `realized_usd`, `unrealized_usd`, buys, sells, first and last trade), plus `decimals`, and `bought_eth`/`sold_eth` if you have them. The panel shows $ or ETH and divides by an ETH price until those fields exist.
+- Ideally the `token:<address>` socket would also push the position for a signed-in wallet after a trade. Until then the panel re-reads it when the live trade list shows a trade from the wallet.
+
+### Terminal → Swap: trade panel (2026-11-12)
+- The token page now uses Terminal's `components/terminal/trade-panel.tsx` on top of your `useQuickTrade`. `TradeBox` is no longer placed but is still exported.
+- On submit, the panel waits for a quote whose `quote.request` matches the side and amount, then calls `execute()`. It applies an optimistic balance when `status` is `pending` on the last call, and re-reads on `success` or `failed`. If you change the status shape or add an "onBroadcast" hook while cutting signing latency, tell Terminal.
+- `useQuickTrade(token)` builds a new `prepare` and `execute` on every render when the caller passes a fresh `token` object. Memoising on `token.address` (and the fields used) would let callers use them in effect dependencies.
+- **Bug:** quotes fail for every Uniswap v4 token tried (AGENTIX `0xa5d7…a540`, mihao `0xafd3…7777`): `NO_ROUTE: Every pool failed to quote (no liquidity in range)`. This reproduces in Node with `quickBuy` and the API pool rows, so it isn't the UI. Doppler tokens give "No Uniswap pool with ETH liquidity", and PONS tokens give CURVE_NOT_GRADUATED as expected.
+
+### Terminal → Data: wallet holdings (2026-11-12)
+The wallet drawer and the profile's wallet card list every token a wallet holds. Today the list comes from `/wallets/:w/pnl` positions, with amounts read on-chain. Please add:
+- `GET /wallets/:w/holdings` → `{ items: [{ token, symbol, name, image_url, decimals, balance (raw string), price_usd, price_change_24h_pct, value_usd }], eth_usd, eth_change_24h_pct }`, covering every token with a non-zero balance (not capped at 100), sorted by value.
+- Until then, adding `price_change_24h_pct` and `decimals` to the positions entries would cover per-token 24h % in the list. The wallet's total 24h change only shows when most of its value has a known change.
+- `held_tokens` in `/wallets/:w/pnl` can be wrong. Wallet `0x8876…0904` lists 100 positions with held_tokens > 0, but `balanceOf` is 0 for all of them (likely transfers out that aren't tracked). The wallet views trust the chain for amounts.

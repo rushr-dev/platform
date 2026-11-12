@@ -37,6 +37,31 @@ export interface TokenCard {
   migrated_at?: string | null;
   /** Sum of the pools the API has measured (v3/v2 today); absent before the pools API deploy. */
   liquidity_usd?: number | null;
+  // Trenches card fields requested from Data (docs/team-plan.md, Requests). All optional: the
+  // cards hide whatever isn't there yet.
+  /** Transfer tax in percent (the larger of buy/sell when they differ). */
+  tax_pct?: number | null;
+  buy_tax_pct?: number | null;
+  sell_tax_pct?: number | null;
+  /** Quote asset symbol (WETH, USDG, MSTR…); the card falls back to the `quote` address. */
+  quote_symbol?: string | null;
+  /** Buys and sells in the last 24h. */
+  buys_24h?: number | null;
+  sells_24h?: number | null;
+  /** The creator's X handle, without @. */
+  creator_x?: string | null;
+  /** Fees paid in the last 24h, USD. */
+  fees_24h_usd?: number | null;
+  /** Market cap at launch: shown until the first trade gives a live one. */
+  initial_market_cap_usd?: number | null;
+  // Data's names (1863313): taxes in basis points, fees paid, 24h trade count, the token's X handle.
+  buy_tax_bps?: number | null;
+  sell_tax_bps?: number | null;
+  fees_paid_usd?: number | null;
+  trades_24h?: number | null;
+  twitter_handle?: string | null;
+  /** Rushr quote token address (0x0 = native ETH). */
+  quote?: string | null;
   /** Block time (unix seconds) of the trade that triggered a live update. */
   block_time?: number | null;
 }

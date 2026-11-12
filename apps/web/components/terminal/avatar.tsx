@@ -59,7 +59,7 @@ export function GeneratedAvatar({
   const x = Math.cos(rad) * 0.5;
   const y = Math.sin(rad) * 0.5;
   return (
-    <svg viewBox="0 0 40 40" width={size} height={size} aria-hidden className="block rounded-full">
+    <svg viewBox="0 0 40 40" width={size} height={size} aria-hidden className="block">
       <defs>
         <linearGradient id={id} x1={0.5 - x} y1={0.5 - y} x2={0.5 + x} y2={0.5 + y}>
           <stop offset="0" stopColor={from} />
@@ -81,7 +81,7 @@ export function GeneratedAvatar({
       </g>
       {/* Soft top-left sheen so it reads as a coin, not a flat sticker. */}
       <circle cx="13" cy="10" r="16" fill="#fff" opacity="0.07" />
-      <circle cx="20" cy="20" r="19.5" fill="none" stroke="#fff" strokeOpacity="0.12" />
+      
       <text
         x="20"
         y="20"
