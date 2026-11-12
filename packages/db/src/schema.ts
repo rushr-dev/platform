@@ -66,7 +66,8 @@ export const pools = pgTable(
     token: text('token').notNull(),
     quote: text('quote').notNull(), // 0x0 (native ETH), WETH, USDG or a stock token
     tokenIsCurrency0: boolean('token_is_currency0').notNull().default(false),
-    dex: text('dex').notNull(), // 'uniswap-v4' | 'pons-curve'
+    dex: text('dex').notNull(), // 'uniswap-v4' | 'pons-curve' | 'v3' | 'v2' (v3/v2 include every fork)
+    venue: text('venue'), // v3/v2 only: DEX name (uniswap, ramses, aero, up, topaz, ...), 'other' if unknown
     launchpad: text('launchpad'),
     hooks: text('hooks'),
     createdBlock: bigint('created_block', { mode: 'bigint' }).notNull(),
@@ -128,6 +129,21 @@ export const balances = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.token, t.wallet] }), index('balances_wallet_idx').on(t.wallet)],
+);
+
+/**
+ * Staging for a full-history holder backfill: balances aggregated from Transfers before the
+ * token's first indexed transfer, merged into `balances` in one transaction when the job ends.
+ */
+export const holderBackfill = pgTable(
+  'holder_backfill',
+  {
+    token: text('token').notNull(),
+    wallet: text('wallet').notNull(),
+    amount: amount('amount').notNull(),
+    firstReceivedAt: timestamp('first_received_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.token, t.wallet] })],
 );
 
 export const wallets = pgTable(

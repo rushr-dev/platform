@@ -34,9 +34,13 @@ export const TOPIC0 = {
 export const DOPPLER_CREATE = toEventSelector('Create(address,address,address,address)');
 export const DOPPLER_MIGRATE = toEventSelector('Migrate(address,address)');
 
-/** Everything except ERC-20 Transfers: launches, pools, swaps, migrations. Used for backfills (transfers are fetched per token). */
+/**
+ * Chain-wide topics for the live socket: launches, v4 pools and swaps, curves, migrations.
+ * Excludes ERC-20 Transfers and v3/v2 pair swaps (the socket bills per byte; pair swaps go on a
+ * separate subscription filtered to the pools we track, see `PAIR_SWAP_TOPICS`).
+ */
 export function tradeTopics(): Hex[] {
-  return subscribedTopics().filter((t) => t !== TOPIC0.transfer);
+  return subscribedTopics().filter((t) => t !== TOPIC0.transfer && !PAIR_SWAP_TOPICS.includes(t));
 }
 
 /** Launches, pool creations and migrations only (sparse): the first pass of a full-history backfill. */
@@ -57,8 +61,12 @@ export function subscribedTopics(): Hex[] {
     TOPICS.ponsBuy,
     TOPICS.ponsSell,
     TOPICS.ponsGraduate,
+    ...PAIR_SWAP_TOPICS,
   ];
 }
+
+/** Swap events of v3-style and v2-style pools (any factory). */
+export const PAIR_SWAP_TOPICS: Hex[] = [TOPICS.v3Swap, TOPICS.pancakeV3Swap, TOPICS.v2Swap];
 
 
 export interface Launch {
@@ -77,7 +85,10 @@ export interface PoolInfo {
   token: Address;
   quote: Address;
   tokenIsCurrency0: boolean;
-  dex: 'uniswap-v4' | 'pons-curve';
+  /** Protocol family: how swaps are decoded. 'v3' and 'v2' cover every fork (see `venue`). */
+  dex: 'uniswap-v4' | 'pons-curve' | 'v3' | 'v2';
+  /** DEX name for v3/v2 pools (from PAIR_FACTORIES; 'other' when the factory isn't listed). */
+  venue?: string | null;
   launchpad: LaunchpadId | null;
   hooks: Address | null;
   block: bigint;
@@ -145,6 +156,8 @@ export interface DecodeResult {
   ethUsd: EthUsdObservation[];
   /** v4 pool ids that had swaps but whose Initialize we never saw (resolve, then decode again). */
   unknownPools: string[];
+  /** Addresses that emitted v3/v2 Swap events and aren't known pools (resolve token0/token1, then decode again). */
+  unknownPairs: string[];
 }
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
@@ -171,14 +184,20 @@ function meta(l: RawLog) {
  * Transfer comes before its launch event in the same tx), then swaps and transfers.
  */
 export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
-  const out: DecodeResult = { launches: [], pools: [], swaps: [], transfers: [], migrations: [], ethUsd: [], unknownPools: [] };
+  const out: DecodeResult = { launches: [], pools: [], swaps: [], transfers: [], migrations: [], ethUsd: [], unknownPools: [], unknownPairs: [] };
   const unknown = new Set<string>();
+  const unknownPairs = new Set<string>();
   const newPools = new Map<string, PoolInfo>();
   const newTokens = new Set<string>();
   const launchByToken = new Map<string, Launch>();
   const refPools = new Map<string, { ethIs0: boolean }>(ETH_USD_REFERENCE_POOLS.map((id) => [id, { ethIs0: true }])); // ETH/USDG pools for price
   const getPool = (id: string) => newPools.get(id) ?? ctx.getPool(id);
   const tracked = (t: string) => newTokens.has(t) || ctx.isTracked(t as Address);
+  // v3/v2 pools are contracts holding the token: never the trader.
+  const isPool = (a: Address) => {
+    const p = getPool(a);
+    return p?.dex === 'v3' || p?.dex === 'v2';
+  };
 
   // ---- pass 1: launches and pools
   for (const l of logs) {
@@ -314,8 +333,23 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
       const side = tokenDelta > 0n ? 'buy' : 'sell'; // amounts are from the swapper's side
       out.swaps.push({
         ...m, pool: id, token: pool.token, quote: pool.quote, side,
-        trader: resolveTrader(txTransfers.get(m.tx), pool.token, side, topicAddr(l.topics[2])),
+        trader: resolveTrader(txTransfers.get(m.tx), pool.token, side, topicAddr(l.topics[2]), isPool),
         tokenAmount: abs(tokenDelta), quoteAmount: abs(quoteDelta),
+      });
+    } else if (t0 === TOPICS.v3Swap || t0 === TOPICS.pancakeV3Swap || t0 === TOPICS.v2Swap) {
+      const addr = lc(l.address);
+      const pool = getPool(addr);
+      if (!pool) {
+        unknownPairs.add(addr);
+        continue;
+      }
+      if (pool.dex !== 'v3' && pool.dex !== 'v2') continue;
+      const swap = decodePairSwap(l, pool);
+      if (!swap) continue;
+      out.swaps.push({
+        ...m, pool: addr, token: pool.token, quote: pool.quote, side: swap.side,
+        trader: resolveTrader(txTransfers.get(m.tx), pool.token, swap.side, topicAddr(l.topics[2]), isPool),
+        tokenAmount: swap.tokenAmount, quoteAmount: swap.quoteAmount,
       });
     } else if (t0 === TOPICS.ponsBuy || t0 === TOPICS.ponsSell) {
       const pool = getPool(lc(l.address));
@@ -331,7 +365,40 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
     }
   }
   out.unknownPools = [...unknown];
+  out.unknownPairs = [...unknownPairs];
   return out;
+}
+
+/**
+ * One v3-style or v2-style Swap log, from the swapper's side.
+ * v3 (and forks): amount0/amount1 are int256 deltas of the *pool* (positive = paid into the pool),
+ * so the swapper buys the token when the pool's token amount is negative.
+ * v2: amount0In, amount1In, amount0Out, amount1Out (In = paid into the pair).
+ */
+export function decodePairSwap(
+  l: Pick<RawLog, 'topics' | 'data'>,
+  pool: Pick<PoolInfo, 'tokenIsCurrency0'>,
+): { side: 'buy' | 'sell'; tokenAmount: bigint; quoteAmount: bigint } | null {
+  const t0 = l.topics[0];
+  if (t0 === TOPICS.v3Swap || t0 === TOPICS.pancakeV3Swap) {
+    if (l.data.length < 2 + 64 * 2) return null;
+    const a0 = signed256(word(l.data, 0));
+    const a1 = signed256(word(l.data, 1));
+    const tok = pool.tokenIsCurrency0 ? a0 : a1;
+    const quo = pool.tokenIsCurrency0 ? a1 : a0;
+    if (tok === 0n) return null;
+    return { side: tok < 0n ? 'buy' : 'sell', tokenAmount: abs(tok), quoteAmount: abs(quo) };
+  }
+  if (t0 === TOPICS.v2Swap) {
+    if (l.data.length < 2 + 64 * 4) return null;
+    const [in0, in1, out0, out1] = [0, 1, 2, 3].map((i) => uint(l.data, i)) as [bigint, bigint, bigint, bigint];
+    // Net per side (a pair can be paid on both sides in one swap, e.g. fee-on-transfer refunds).
+    const tok = pool.tokenIsCurrency0 ? out0 - in0 : out1 - in1; // > 0: swapper received tokens
+    const quo = pool.tokenIsCurrency0 ? in1 - out1 : in0 - out0;
+    if (tok === 0n) return null;
+    return { side: tok > 0n ? 'buy' : 'sell', tokenAmount: abs(tok), quoteAmount: abs(quo) };
+  }
+  return null;
 }
 
 /** The wallet that ends up with the token (buy) or first gives it up (sell), skipping routers. */
@@ -340,19 +407,26 @@ export function resolveTrader(
   token: Address,
   side: 'buy' | 'sell',
   fallback: Address,
+  /** Known pools are skipped too: in a multi-pool route the token passes through other pools. */
+  isPool: (a: Address) => boolean = () => false,
 ): Address {
   const own = (transfers ?? []).filter((t) => t.token === token);
+  const skip = (a: Address) => INFRA.has(a) || isPool(a);
   if (side === 'buy') {
     for (let i = own.length - 1; i >= 0; i--) {
       const to = own[i]!.to;
-      if (!INFRA.has(to)) return to;
+      if (!skip(to)) return to;
     }
   } else {
-    for (const t of own) if (!INFRA.has(t.from)) return t.from;
+    for (const t of own) if (!skip(t.from)) return t.from;
   }
   return fallback;
 }
 
+function signed256(w: Hex): bigint {
+  const v = BigInt(w);
+  return v >= 1n << 255n ? v - (1n << 256n) : v;
+}
 function signed128(w: Hex): bigint {
   const v = BigInt(w);
   return v >= 1n << 255n ? v - (1n << 256n) : v;

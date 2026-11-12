@@ -12,6 +12,8 @@ export interface Env {
   /** First run only: how many blocks before head to start from (default 33000 ≈ 1h). */
   START_BLOCKS_BACK?: string;
   HYPERDRIVE?: Hyperdrive;
+  /** '1': stream v3/v2 swaps of tracked pools over the socket (address-filtered). Otherwise polling only (~2-4s). */
+  LIVE_PAIRS?: string;
   CHAIN_POLLER: DurableObjectNamespace<ChainPoller>;
   LIVE_FEED: DurableObjectNamespace<LiveFeed>;
   BACKFILLER: DurableObjectNamespace<Backfiller>;
@@ -31,6 +33,12 @@ export type EnrichMessage =
  * US) is the retired one, stopped via /admin/poller-legacy/stop.
  */
 export const poller = (env: Env) => env.CHAIN_POLLER.get(env.CHAIN_POLLER.idFromName('main-apac'), { locationHint: 'apac' });
+
+/** Pool-history backfill queue (a Backfiller instance of its own), next to the database. */
+export const poolHistory = (env: Env) => env.BACKFILLER.get(env.BACKFILLER.idFromName('pools'), { locationHint: 'apac' });
+
+/** Full-history holder backfill queue (a Backfiller instance of its own), next to the database. */
+export const holderHistory = (env: Env) => env.BACKFILLER.get(env.BACKFILLER.idFromName('holders'), { locationHint: 'apac' });
 
 export function dbUrl(env: Env): string {
   const url = env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL;

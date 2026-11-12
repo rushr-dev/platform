@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import postgres, { type Sql } from 'postgres';
-import { ROBINHOOD_CHAIN, tradeTopics, type RawLog } from '@rushr/core';
-import { dbUrl, type Env } from './env';
+import { PAIR_SWAP_TOPICS, ROBINHOOD_CHAIN, tradeTopics, type RawLog } from '@rushr/core';
+import { dbUrl, poolHistory, type Env } from './env';
 import { Pipeline, type BatchStats, type RangeStats } from './pipeline';
 import { tokenSummaries } from './api';
 import type { FeedEvent } from './feed';
@@ -74,6 +74,9 @@ export class ChainPoller extends DurableObject<Env> {
   private live: LiveStats = { connected: false, logs: 0, batches: 0, swaps: 0, launches: 0, lastLatencyMs: null, reconnects: 0 };
   private queue: Promise<unknown> = Promise.resolve();
   private signalQueuedAt = new Map<string, number>();
+  /** Address-filtered subscription for v3/v2 swaps of tracked pools (LIVE_PAIRS=1). */
+  private pairSub: { id: string | null; pools: number; checkedAt: number } = { id: null, pools: 0, checkedAt: 0 };
+  private pairsDirty = true;
 
   private init() {
     if (!this.pipeline) {
@@ -141,7 +144,7 @@ export class ChainPoller extends DurableObject<Env> {
     return {
       cursor: cursor?.toString() ?? null,
       running: (await this.ctx.storage.getAlarm()) !== null,
-      live: this.live,
+      live: { ...this.live, pairPools: this.env.LIVE_PAIRS === '1' ? this.pairSub.pools : null },
       last: this.last ?? null,
       attempt: (await this.ctx.storage.get('attempt')) ?? null,
       stage: (await this.ctx.storage.get('stage')) ?? null,
@@ -193,6 +196,7 @@ export class ChainPoller extends DurableObject<Env> {
         cursor = to;
         await this.queueSignals([...stats.newTokens, ...stats.touched]);
         await this.queueMetadata(stats.newTokens);
+        await this.handOffPools(pipeline);
         await this.publish(stats, 'poll');
         this.last = {
           logs: stats.logs, launches: stats.launches, swaps: stats.swaps, transfers: stats.transfers, ms: stats.ms,
@@ -226,9 +230,46 @@ export class ChainPoller extends DurableObject<Env> {
     await old?.end({ timeout: 0 }).catch(() => undefined);
   }
 
+  /** Pools discovery just added: replay their recent swaps (pool-history backfill), and stream them live. */
+  private async handOffPools(p: Pipeline) {
+    const ids = p.takeDiscoveredPools();
+    if (!ids.length) return;
+    this.pairsDirty = true;
+    try {
+      await poolHistory(this.env).enqueuePools(ids);
+    } catch (err) {
+      console.error('pool history enqueue failed', err);
+    }
+  }
+
+  /**
+   * Keep the pair-swap subscription in step with the v3/v2 pools we track: re-subscribe when the set
+   * changed (checked at most every 30s). Off unless LIVE_PAIRS=1; polling covers these swaps anyway.
+   */
+  private async syncPairSubscription() {
+    if (this.env.LIVE_PAIRS !== '1' || !this.ws || !this.live.connected || !this.sql) return;
+    if (!this.pairsDirty && Date.now() - this.pairSub.checkedAt < 30_000) return;
+    this.pairSub.checkedAt = Date.now();
+    this.pairsDirty = false;
+    const rows = await this.sql<{ id: string }[]>`select id from pools where dex in ('v3', 'v2') order by id`;
+    if (!rows.length || (rows.length === this.pairSub.pools && this.pairSub.id)) return;
+    if (this.pairSub.id) this.ws.send(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'eth_unsubscribe', params: [this.pairSub.id] }));
+    this.pairSub = { id: null, pools: rows.length, checkedAt: Date.now() };
+    this.ws.send(
+      JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'eth_subscribe',
+        params: ['logs', { address: rows.map((r) => r.id), topics: [PAIR_SWAP_TOPICS] }],
+      }),
+    );
+  }
+
   /** Open (or keep) the eth_subscribe socket. Called on every alarm, so a drop reconnects within ~2s. */
   private async openSocket(): Promise<void> {
-    if (this.ws) return;
+    if (this.ws) {
+      await this.syncPairSubscription().catch((err) => console.error('pair subscription failed', err));
+      return;
+    }
+    this.pairSub = { id: null, pools: 0, checkedAt: 0 };
     try {
       const res = await fetch(this.env.RPC_URL, { headers: { Upgrade: 'websocket' } });
       const ws = res.webSocket;
@@ -317,6 +358,14 @@ export class ChainPoller extends DurableObject<Env> {
       else this.live.connected = true;
       return;
     }
+    if (msg.id === 2) {
+      if (msg.error) {
+        console.error('pair eth_subscribe failed', msg.error.message);
+        this.pairSub.pools = 0;
+      } else this.pairSub.id = (msg as { result?: string }).result ?? null;
+      return;
+    }
+    if (msg.id === 3) return;
     if (!msg.params?.result) return;
     this.buffer.push(msg.params.result);
     this.flushTimer ??= setTimeout(() => void this.flush(), FLUSH_MS);
@@ -331,6 +380,7 @@ export class ChainPoller extends DurableObject<Env> {
       const stats = await this.liveSerial((p) => p.ingest(logs));
       await this.queueSignals([...stats.newTokens, ...stats.touched]);
       await this.queueMetadata(stats.newTokens);
+      await this.handOffPools(this.livePipeline!);
       await this.publish(stats, 'live');
       const newest = Math.max(...logs.map((l) => (l.blockTimestamp ? Number(l.blockTimestamp) : 0)));
       this.live.logs += logs.length;

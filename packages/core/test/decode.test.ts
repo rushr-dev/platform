@@ -94,3 +94,116 @@ describe('decodeLogs: PONS curve', () => {
     ]);
   });
 });
+
+describe('decodeLogs: v3 / v2 pairs (any factory)', () => {
+  const PONS = '0x39dbed3a2bd333467115de45665cc57f813c4571' as Address;
+  const t = (a: Address) => pad(a, { size: 32 });
+  const pairCtx = (pools: Record<string, { tokenIsCurrency0: boolean; dex: 'v3' | 'v2'; quote: Address }>): DecodeContext => ({
+    isTracked: (a) => a === PONS,
+    getPool: (id) => {
+      const p = pools[id];
+      return p && { id, token: PONS, launchpad: null, hooks: null, block: 0n, time: 0, venue: null, ...p };
+    },
+  });
+
+  it('decodes a real Aero CL swap (WETH/PONS, token1 = PONS): PONS paid into the pool is a sell', () => {
+    const pool = '0x1d87bbf4643bc7569db04353fa29af8225918eb5' as Address;
+    const l = log(
+      pool,
+      [TOPICS.v3Swap, '0x0000000000000000000000009ee35bf1bd69a03c6f0393582030fce8bb93d418', '0x000000000000000000000000082738d007001080a00099a000004f3006152085'],
+      '0xffffffffffffffffffffffffffffffffffffffffffffffffffe39228e4db71c6000000000000000000000000000000000000000000000005fc1b394aff79a4df00000000000000000000000000000000000000752501376f66f13722a1fecf1400000000000000000000000000000000000000000000004025dd2d31f35144880000000000000000000000000000000000000000000000000000000000017428',
+    );
+    const r = decodeLogs([l], pairCtx({ [pool]: { tokenIsCurrency0: false, dex: 'v3', quote: QUOTES.WETH as Address } }));
+    expect(r.unknownPairs).toEqual([]);
+    expect(r.swaps).toHaveLength(1);
+    expect(r.swaps[0]).toMatchObject({
+      side: 'sell', pool, token: PONS, quote: QUOTES.WETH,
+      tokenAmount: 0x5fc1b394aff79a4dfn,
+      quoteAmount: (1n << 256n) - 0xffffffffffffffffffffffffffffffffffffffffffffffffffe39228e4db71c6n,
+      // no transfers in this test: falls back to the recipient topic
+      trader: '0x082738d007001080a00099a000004f3006152085',
+    });
+  });
+
+  it('decodes a v3 buy (token0 = PONS paid out by the pool) and resolves the trader from transfers', () => {
+    const pool = '0x7a192e71564ec66ee0763e328a3ac274942de4e1' as Address;
+    const router = '0x278d858f05b94576c1e6f73285886876ff6ef8d2' as Address;
+    const data = encodeAbiParameters(
+      [{ type: 'int256' }, { type: 'int256' }, { type: 'uint160' }, { type: 'uint128' }, { type: 'int24' }],
+      [-(700n * 10n ** 18n), 100_000_000n, 2n ** 96n, 1n, 0],
+    );
+    const logs = [
+      transferLog(PONS, pool, router, 700n * 10n ** 18n, '0x10'),
+      transferLog(PONS, router, USER, 700n * 10n ** 18n, '0x10'),
+      log(pool, [TOPICS.v3Swap, t(router), t(router)], data, '0x10'),
+    ];
+    const r = decodeLogs(logs, pairCtx({ [pool]: { tokenIsCurrency0: true, dex: 'v3', quote: QUOTES.USDG as Address } }));
+    expect(r.swaps.map((s) => [s.side, s.trader, s.tokenAmount, s.quoteAmount])).toEqual([['buy', USER, 700n * 10n ** 18n, 100_000_000n]]);
+  });
+
+  it('skips other known pools when resolving the trader of a multi-pool route', () => {
+    const a = '0x10cc6bd38112cac182db90b6a71d8bb5939526ba' as Address;
+    const b = '0xed50bdeea8adc232f159486192a4157281d722ff' as Address;
+    const data = encodeAbiParameters(
+      [{ type: 'int256' }, { type: 'int256' }, { type: 'uint160' }, { type: 'uint128' }, { type: 'int24' }],
+      [10n ** 16n, -(5n * 10n ** 18n), 2n ** 96n, 1n, 0],
+    );
+    // a pays PONS to b (an arb leg), b pays USER: USER is the buyer, not pool b
+    const logs = [
+      transferLog(PONS, a, USER, 5n * 10n ** 18n, '0x11'),
+      transferLog(PONS, USER, b, 1n, '0x11'),
+      log(a, [TOPICS.v3Swap, t(USER), t(USER)], data, '0x11'),
+    ];
+    const ctx = pairCtx({
+      [a]: { tokenIsCurrency0: false, dex: 'v3', quote: QUOTES.WETH as Address },
+      [b]: { tokenIsCurrency0: false, dex: 'v3', quote: QUOTES.WETH as Address },
+    });
+    expect(decodeLogs(logs, ctx).swaps[0]).toMatchObject({ side: 'buy', trader: USER });
+  });
+
+  it('decodes a real PancakeSwap-v3-style swap (giga) the same way', () => {
+    const pool = '0x50e43b43a8ee1e07e0ac978e92adff7dfbfb88e7' as Address;
+    const l = log(
+      pool,
+      [TOPICS.pancakeV3Swap, '0x000000000000000000000000278d858f05b94576c1e6f73285886876ff6ef8d2', '0x000000000000000000000000278d858f05b94576c1e6f73285886876ff6ef8d2'],
+      '0xfffffffffffffffffffffffffffffffffffffffffffffffffffbe43a1d767685000000000000000000000000000000000000000000000000ddac130fe163aa12000000000000000000000000000000000000007585bc5a7e68c8b686eb9084bd000000000000000000000000000000000000000000000003cc350fb99923a2280000000000000000000000000000000000000000000000000000000000017469000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000717f039da280db',
+    );
+    const r = decodeLogs([l], pairCtx({ [pool]: { tokenIsCurrency0: false, dex: 'v3', quote: QUOTES.WETH as Address } }));
+    expect(r.swaps[0]).toMatchObject({ side: 'sell', tokenAmount: 0xddac130fe163aa12n });
+  });
+
+  it('decodes a real Uniswap v2 swap (WETH/PONS): PONS in, WETH out is a sell', () => {
+    const pair = '0x8018ee3ad3c0321be0e69536733cd28e29564dd4' as Address;
+    const l = log(
+      pair,
+      [TOPICS.v2Swap, '0x000000000000000000000000278d858f05b94576c1e6f73285886876ff6ef8d2', '0x000000000000000000000000278d858f05b94576c1e6f73285886876ff6ef8d2'],
+      '0x0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009791d98fb81bf16da000000000000000000000000000000000000000000000000002cee54bff5d9f80000000000000000000000000000000000000000000000000000000000000000',
+    );
+    const r = decodeLogs([l], pairCtx({ [pair]: { tokenIsCurrency0: false, dex: 'v2', quote: QUOTES.WETH as Address } }));
+    expect(r.swaps[0]).toMatchObject({ side: 'sell', tokenAmount: 0x9791d98fb81bf16dan, quoteAmount: 0x2cee54bff5d9f8n });
+  });
+
+  it('decodes a v2 buy and reports unknown pair addresses for resolution', () => {
+    const pair = '0x8018ee3ad3c0321be0e69536733cd28e29564dd4' as Address;
+    const data = encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }, { type: 'uint256' }], [10n ** 17n, 0n, 0n, 42n * 10n ** 18n]);
+    const r = decodeLogs([log(pair, [TOPICS.v2Swap, t(USER), t(USER)], data)], pairCtx({ [pair]: { tokenIsCurrency0: false, dex: 'v2', quote: QUOTES.WETH as Address } }));
+    expect(r.swaps[0]).toMatchObject({ side: 'buy', tokenAmount: 42n * 10n ** 18n, quoteAmount: 10n ** 17n, trader: USER });
+    const other = '0x9999999999999999999999999999999999999999' as Address;
+    expect(decodeLogs([log(other, [TOPICS.v2Swap, t(USER), t(USER)], data)], emptyCtx).unknownPairs).toEqual([other]);
+  });
+
+  it('keeps pair swaps off the chain-wide live socket topics', async () => {
+    const { tradeTopics, subscribedTopics, PAIR_SWAP_TOPICS } = await import('../src/ingest/decode');
+    for (const topic of PAIR_SWAP_TOPICS) {
+      expect(subscribedTopics()).toContain(topic);
+      expect(tradeTopics()).not.toContain(topic);
+    }
+  });
+
+  it('has topic constants that match the event signatures', async () => {
+    const { toEventSelector } = await import('viem');
+    expect(toEventSelector(ABIS.v3[1]!)).toBe(TOPICS.v3Swap);
+    expect(toEventSelector(ABIS.pancakeV3[0]!)).toBe(TOPICS.pancakeV3Swap);
+    expect(toEventSelector(ABIS.v2[1]!)).toBe(TOPICS.v2Swap);
+  });
+});

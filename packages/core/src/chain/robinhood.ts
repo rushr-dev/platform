@@ -59,6 +59,26 @@ export const UNISWAP = {
   permit2: '0x000000000022d473030f116ddee9f6b43ac78ba3',
 } as const;
 
+/**
+ * Factories of v3-style (concentrated liquidity) and v2-style pools, mapped to the venue name
+ * DexScreener uses. Confirmed 2026-11-12 from PONS pools (token0/token1/factory on each pool).
+ * Pools of unlisted factories are still indexed (venue 'other'): every Uniswap v3 fork emits the
+ * same Swap event, so discovery goes by the event and the pool's token0()/token1(), not the factory.
+ */
+export const PAIR_FACTORIES: Record<Address, { venue: string; kind: 'v3' | 'v2' }> = {
+  '0x1f7d7550b1b028f7571e69a784071f0205fd2efa': { venue: 'uniswap', kind: 'v3' },
+  '0xe7fef2bc860b25bbdeb6f6ab96d88baaa77ddad7': { venue: 'uniswap', kind: 'v3' },
+  '0x8bceaa40b9acdfaedf85adf4ff01f5ad6517937f': { venue: 'uniswap', kind: 'v2' },
+  '0x0d1ebb179cdbca88d74c923c4255cb2b17474afd': { venue: 'uniswap', kind: 'v2' },
+  '0xe0c4ceb92d08ca985bb70fe0a22feb121a9854a8': { venue: 'ramses', kind: 'v3' },
+  '0xc63d7338c178e805c544b8f897066bd3bbcbe136': { venue: 'aero', kind: 'v3' }, // Slipstream-style CL
+  '0x1ac9db4a2608ba45d6127b1737949b51bb54b7f3': { venue: 'up', kind: 'v3' },
+  '0xaa5865dc3a60b25d305226d66fd573021f0d8ffb': { venue: 'topaz', kind: 'v3' },
+  '0xdedb80903df19f9db9b393eb66e07511cb9abda2': { venue: 'nami', kind: 'v3' },
+  '0xece6ecd61177336ea6fb9b17937ac439d85ee20b': { venue: 'giga', kind: 'v3' }, // PancakeSwap v3 events
+  '0xea561e058313b96011e5070ca7d0f027a44e3748': { venue: 'robinswap', kind: 'v3' },
+};
+
 export const ABIS = {
   erc20: parseAbi([
     'event Transfer(address indexed from, address indexed to, uint256 value)',
@@ -75,6 +95,10 @@ export const ABIS = {
   v3: parseAbi([
     'event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)',
     'event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick)',
+  ]),
+  /** PancakeSwap v3 forks add protocol fees to the Swap event (same first words as Uniswap v3). */
+  pancakeV3: parseAbi([
+    'event Swap(address indexed sender, address indexed recipient, int256 amount0, int256 amount1, uint160 sqrtPriceX96, uint128 liquidity, int24 tick, uint128 protocolFeesToken0, uint128 protocolFeesToken1)',
   ]),
   v2: parseAbi([
     'event PairCreated(address indexed token0, address indexed token1, address pair, uint256)',
@@ -101,6 +125,12 @@ export const TOPICS = {
   ponsSell: '0x8113d738abdcb6b38357e9d53a54a7157861a09031b453651f0fe7fe151f59df',
   /** PONS curve graduation (emitted by the curve). data: [ponsMigrator, ethRaised, tokensMigrated]. Liquidity moves to a v4 pool with the PONS v2 hook in the same tx. */
   ponsGraduate: '0xf8d37a90738ae063b8b8058b66f5880cf3cf7ab0c5d4fa78219696591dfbfb67',
+  /** Uniswap v3 Swap, also emitted by Ramses, Aero CL, up, Topaz, Nami and other v3 forks. topics: [sig, sender, recipient]; data: amount0, amount1 (int256, pool side), sqrtPrice, liquidity, tick */
+  v3Swap: '0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67',
+  /** PancakeSwap v3 Swap (v3 layout plus two protocol-fee words). */
+  pancakeV3Swap: '0x19b47279256b2a23a1665c810c8d55a1758940ee09377d4f8d26497a3577dc83',
+  /** Uniswap v2 Swap. topics: [sig, sender, to]; data: amount0In, amount1In, amount0Out, amount1Out */
+  v2Swap: '0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822',
   /** Robinhood stock tokens emit this alongside Transfer. */
   transferWithScaledUI: '0x37e7f0db430edc9dd31bc66f25f8449353aa0818f503b906747dd8f286cd3802',
 } as const satisfies Record<string, Hex>;

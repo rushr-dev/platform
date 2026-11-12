@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
-import { dbUrl, poller as pollerOf, type Env, type EnrichMessage } from './env';
+import { dbUrl, holderHistory, poolHistory, poller as pollerOf, type Env, type EnrichMessage } from './env';
 import { Rpc } from './rpc';
 import { recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
@@ -104,6 +104,40 @@ app.post('/admin/backfill/:action', async (c) => {
 app.get('/admin/backfill', async (c) => {
   const job = c.env.BACKFILLER.get(c.env.BACKFILLER.idFromName('main'));
   return c.json(await job.status());
+});
+
+// Pool-history backfill (last 48h of swaps of newly discovered pools). POST ?token=<address> queues all its pools.
+app.get('/admin/pools', async (c) => c.json(await poolHistory(c.env).poolStatus()));
+app.post('/admin/pools/backfill', async (c) => {
+  const token = c.req.query('token')?.toLowerCase();
+  if (!token) return c.json({ error: 'token required' }, 400);
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const rows = await sql<{ id: string }[]>`select id from pools where token = ${token}`;
+    await poolHistory(c.env).enqueuePools(rows.map((r) => r.id));
+    return c.json({ queued: rows.length });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+// Full-history holder backfill. POST ?tokens=a,b,c, or ?top=N for the N tracked tokens with the most 24h volume.
+app.get('/admin/holders', async (c) => c.json(await holderHistory(c.env).holderStatus()));
+app.post('/admin/holders/backfill', async (c) => {
+  let tokens = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const top = Number(c.req.query('top') ?? 0);
+  if (top > 0) {
+    const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+    try {
+      const rows = await sql<{ address: string }[]>`select address from tokens order by volume_24h_usd desc nulls last limit ${Math.min(top, 200)}`;
+      tokens = [...tokens, ...rows.map((r) => r.address)];
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+  if (!tokens.length) return c.json({ error: 'tokens or top required' }, 400);
+  await holderHistory(c.env).enqueueHolders(tokens);
+  return c.json({ queued: tokens.length });
 });
 
 // Dev: resolve icon and socials for every token that hasn't been tried yet.
