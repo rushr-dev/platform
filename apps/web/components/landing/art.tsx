@@ -1,5 +1,3 @@
-/* eslint-disable @next/next/no-img-element */
-
 /**
  * Sketch art from public/art, served from pre-sized files (`<name>-<width>.webp`, plus
  * `<name>-<width>.avif` when `avif` is set). Images are unoptimized on Cloudflare, so the
