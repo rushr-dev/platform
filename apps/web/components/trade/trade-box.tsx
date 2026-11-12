@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { erc20Abi, formatUnits, parseUnits } from 'viem';
+import { erc20Abi, formatUnits, parseEther, parseUnits } from 'viem';
 import Link from 'next/link';
 import { feeLine } from '@rushr/trade';
 import { tradingAvailable } from './flag';
-import { chainClient, useQuickTrade, type TradeStatus, type TradeToken } from './use-quick-trade';
+import { chainClient, useKeepWarm, useQuickTrade, type TradeStatus, type TradeToken } from './use-quick-trade';
 
 /**
  * Trade box for the token page (Terminal places it). Beta v0: quick buy / sell from the user's Privy
@@ -55,14 +55,23 @@ function TradeBoxInner({ token }: { token: TradeToken }) {
     }
   }, [amount, side, token.decimals]);
 
-  // Debounced quote on input change.
+  // Debounced quote on input change, then kept prebuilt (refreshed every few seconds) while signed in,
+  // so pressing Buy/Sell only signs and broadcasts.
   useEffect(() => {
     const t = setTimeout(() => void q.prepare(side, amountIn), 350);
     return () => clearTimeout(t);
   }, [side, amountIn, settings, q.ack, q.wallet]);
+  useKeepWarm(q, side, amountIn, !!q.wallet);
 
   const t = q.trade;
   const busy = q.status.kind === 'sending' || q.status.kind === 'pending';
+  const presetWei = (p: number | string) => {
+    try {
+      return parseEther(String(p));
+    } catch {
+      return 0n;
+    }
+  };
   const outDecimals = side === 'buy' ? token.decimals : 18;
   const outSymbol = side === 'buy' ? token.symbol : 'ETH';
   const needsAck = t?.blockers.some((b) => b.code === 'RISK_ACK_REQUIRED');
@@ -106,7 +115,7 @@ function TradeBoxInner({ token }: { token: TradeToken }) {
       <div className="mt-2 flex flex-wrap gap-1">
         {side === 'buy'
           ? settings.buyPresets.map((p) => (
-              <button key={p} type="button" onClick={() => setAmount(String(p))} className="rounded-lg bg-surface-2 px-2 py-1 font-mono text-xs text-muted hover:text-ink">
+              <button key={p} type="button" onClick={() => setAmount(String(p))} onPointerEnter={() => q.wallet && q.warm('buy', presetWei(p))} className="rounded-lg bg-surface-2 px-2 py-1 font-mono text-xs text-muted hover:text-ink">
                 {p}
               </button>
             ))
@@ -188,11 +197,15 @@ export function Status({ status }: { status: TradeStatus }) {
     case 'quoting':
       return <p className="mt-2 text-xs text-muted">Getting a fresh quote…</p>;
     case 'sending':
-      return <p className="mt-2 text-xs text-muted">Signing {status.step}/{status.total}: {status.label}…</p>;
+      return (
+        <p className="mt-2 text-xs text-muted">
+          {status.label === 'buy' ? 'Buying' : status.label === 'sell' ? 'Selling' : `Step ${status.step}/${status.total}: ${status.label}`}…
+        </p>
+      );
     case 'pending':
       return (
         <p className="mt-2 text-xs text-muted">
-          Pending {status.step}/{status.total}…{' '}
+          Submitted{status.total > 1 ? ` ${status.step}/${status.total}` : ''}, confirming…{' '}
           <a className="underline" href={`https://robinhoodchain.blockscout.com/tx/${status.hash}`} target="_blank" rel="noreferrer">
             view
           </a>
@@ -201,7 +214,7 @@ export function Status({ status }: { status: TradeStatus }) {
     case 'success':
       return (
         <p className="mt-2 text-xs text-brand">
-          Done.{' '}
+          Confirmed in {(status.ms / 1000).toFixed(1)}s.{' '}
           <a className="underline" href={status.url} target="_blank" rel="noreferrer">
             View on explorer
           </a>

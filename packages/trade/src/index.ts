@@ -19,3 +19,4 @@ export * from './quote';
 export * from './simulate';
 export * from './types';
 export * from './universal-router';
+export * from './fast-send';

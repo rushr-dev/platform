@@ -11,7 +11,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "simulate": "tsx scripts/simulate.ts"
+    "simulate": "tsx scripts/simulate.ts",
+    "test:live": "LIVE=1 vitest run test/live"
   },
   "dependencies": {
     "@rushr/core": "workspace:*",

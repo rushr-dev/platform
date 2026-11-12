@@ -5,7 +5,7 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
 ## Beta trading v0 (2026-11-12)
 
 **What it is:** quick buy and sell with **no confirmation popup**:
-- **Signing:** client-side, in the user's own **Privy embedded wallet**, with `sendTransaction(tx, { uiOptions: { showWalletUIs: false } })`. Rushr's servers hold **no signing key for humans**.
+- **Signing:** client-side, in the user's own **Privy embedded wallet**, with its UI off. Since the fast path (below) the wallet only signs (`signTransaction`) and the page broadcasts; Rushr's servers hold **no signing key for humans**.
 - **Route:** through **Uniswap's audited Universal Router**, with our fee in the same tx: `TRANSFER` on buys, `PAY_PORTION` + `SWEEP` on sells, recipient = the user.
 - **Contracts:** no RushrRouter or RushrPonsRouter. Those stay for agents and offline one-click, after the audit.
 - **Fee and treasury:** 0.5% (0.45% referred), paid to the treasury `0x447a…5E40`.
@@ -13,19 +13,76 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
 ### Pieces
 | Where | What |
 | --- | --- |
-| `packages/trade/src/quick.ts` | `quickBuy` / `quickSell` / `prepareQuickTrade` build the exact wallet calls. Sells add `approve(Permit2)`, then `Permit2.approve(Universal Router, 30 days)`, then the swap. Guardrails are applied and the calls are simulated before sending (`eth_simulateV1` from the user's address), with gas taken from the simulation |
-| **One Privy setup** (Terminal's) | `components/terminal/auth/privy-host.tsx` loads Privy lazily (email and EVM wallet login; an embedded wallet for every user on chain 4663; wallet UIs off) and fills `lib/auth`. The trade UI uses only `useAuth()`, `auth.login()` and `auth.sendTransaction()`, so it imports no Privy and adds nothing to page bundles. Settings come from Terminal's `lib/settings` / `/settings`: buy and sell presets, quick-buy amount, slippage (auto or fixed), per-trade cap |
+| `packages/trade/src/quick.ts` | `quickBuy` / `quickSell` / `prepareQuickTrade` build the exact wallet calls. Sells add `approve(Permit2)`, then `Permit2.approve(Universal Router, 30 days)`, then the swap; buys return those approvals as `sellApprovals` so the app sends them right after the buy. Guardrails are applied and the calls are simulated before sending (`eth_simulateV1` from the user's address). Gas limit = max(simulated + 30%, a generous per-venue floor) |
+| `packages/trade/src/fast-send.ts` | `TxPipeline`: cached nonce and fee cap per wallet, sign-only, a check that the signed bytes are exactly the requested tx from the user's address, then `eth_sendRawTransactionSync` (receipt in one round trip), with a polling fallback |
+| **One Privy setup** (Terminal's) | `components/terminal/auth/privy-host.tsx` loads Privy lazily (email and EVM wallet login; an embedded wallet for every user on chain 4663; wallet UIs off) and fills `lib/auth`. The trade UI uses only `useAuth()`, `auth.login()`, `auth.signTransaction()` (and `auth.sendTransaction()` as a fallback), so it imports no Privy and adds nothing to page bundles. Settings come from Terminal's `lib/settings` / `/settings`: buy and sell presets, quick-buy amount, slippage (auto or fixed), per-trade cap |
 | `apps/web/components/trade/trade-box.tsx` | `TradeBox` for the token page: buy/sell, presets, % sells, quote (receive, min, fee, route), warnings and blockers, the "I understand" toggle, a link to `/settings`, and tx status with an explorer link |
-| `apps/web/components/trade/quick-buy-button.tsx` | `QuickBuyButton` for trenches rows: one click (the `/settings` quick-buy amount), then quote, guards and a silent send |
-| `apps/web/components/trade/use-quick-trade.ts` | The hook: quote, honeypot/tax probe, guards, then `auth.sendTransaction` for each call in order and wait for each receipt. As soon as the swap is broadcast it calls `recordTrade(txHash)`: a best-effort `POST /v1/trades` (Data's ledger, Privy bearer token), retried once on `404 tx_not_found` |
+| `apps/web/components/trade/quick-buy-button.tsx` | `QuickBuyButton` for trenches rows: the buy (the `/settings` quick-buy amount) is prebuilt while the pointer is over the button, so a click only signs and broadcasts |
+| `apps/web/components/trade/use-quick-trade.ts` | The hook: prebuilt trades (quote, honeypot/tax probe, guards, simulation), refreshed every 4 s while in use; the send through `TxPipeline`; `recordTrade(txHash)` as soon as the swap hash is final (best-effort `POST /v1/trades`, Data's ledger, retried once on `404 tx_not_found`); the `rushr:trade` window event and stage timings |
 | `apps/web/components/trade/index.ts` | Exports `TradeBox`, `QuickBuyButton`, `isSwapEnabled`, `tradingAvailable` and `TradeToken` for Terminal to place. Everything renders nothing unless `NEXT_PUBLIC_SWAP_ENABLED=1` and a Privy app id are set |
 | `apps/web/components/trade/csp.ts` + `apps/web/middleware.ts` | Strict CSP with a per-request nonce on `/trenches`, `/token/*`, `/settings`, `/me`, `/u/*` and `/swap`. Privy is live on all of them, so all get the same CSP, and `/settings` is rendered per request so the nonce reaches its scripts |
 | `packages/trade/scripts/quick-sim.ts` | End-to-end simulation of the wallet calls on live state |
 
+### Fast path (latency, 2026-11-12)
+
+The founder's first real trades worked but felt slow next to GMGN. Measured stage by stage (`packages/trade/scripts/latency-bench.ts`, read-only, public RPC; the browser on a production build sees the same ~310–330 ms per RPC round trip from this laptop in Asia; Privy signing measured at 340–480 ms from the same place, see `docs/wallets.md`):
+
+| Stage (ms) | Before (v0) | After |
+| --- | --- | --- |
+| Pools: Rushr API + on-chain discovery | 600–1000 + ~640, on every trenches click | cached 20 s per token; off the click path |
+| Quote every pool | 400–500 | same, off the click path |
+| Re-quote the best pool at the final slippage | ~320 | 0 (slippage applied locally: `withSlippage`) |
+| Balances + gas price (+ allowances) | ~320, after the quotes | in parallel with the quotes |
+| Pre-send simulation | ~370 | same, off the click path |
+| Whole prepare (pools known) | 1406 (median of 5) | 952 (median of 5), and prebuilt |
+| Privy fills nonce/fees before signing | ~320 | 0 (local cache, refreshed in the background) |
+| Privy signing | ~380 | ~380 |
+| Broadcast | ~310 | part of the next row |
+| Receipt | viem's default 4 s polling: +0.3–4 s | `eth_sendRawTransactionSync`: one round trip + inclusion (blocks every ~100 ms): ≈ 0.4–0.5 s |
+| **Click → hash (trenches quick buy)** | **≈ 3.7–4.4 s** (everything above, every click) | **≈ 0.4 s** when prebuilt (hovered for ~1–2 s); a click with no hover first waits for the quote (≈ 1–2 s on the first quote of a token, ≈ 0.65 s with pools cached) |
+| **Click → hash (token page, Buy)** | ≈ 1.0 s with a quote under 10 s old, ≈ 2.4 s otherwise | **≈ 0.4 s** (the typed amount stays prebuilt while signed in) |
+| **Click → confirmed** | ≈ 1.3–8 s | **≈ 0.8–0.9 s** |
+
+The UI shows "Buying…" at 0 ms, "Submitted" when the hash is final and "Confirmed in N s" from the receipt. The founder's target of under ~300 ms to "submitted" can't be met with client-side signing from Asia: Privy's signing round trip alone is ~380 ms here. See `docs/wallets.md` for the server-side option.
+
+What changed:
+- **Prebuilt trades:** the token page keeps the typed amount quoted, guarded and simulated, refreshed every 4 s while signed in, the tab is visible and the page was used in the last 60 s. Buy presets prebuild on hover, trenches buttons while hovered or focused. Nothing is prebuilt for signed-out visitors.
+- **Sign-only:** `auth.signTransaction` (Privy `useSignTransaction`, UI off) with nonce, fee cap (2× base fee; tips are ignored on Arbitrum chains) and gas limit all given, so Privy makes no RPC calls. Before broadcasting, the signed bytes are decoded and compared with the request (to, data, value, nonce, chain, gas, fees), and the signer is recovered: anything else is never broadcast. If the wallet can't return a signed tx (nothing signed or sent), the hook falls back to Privy's own send for the session.
+- **Broadcast:** `eth_sendRawTransactionSync` on the chain's public RPC (checked: the method exists; the node rejected the probe payload, as expected). On a nonce or fee error it re-signs once with fresh values.
+- **Sells are one tx:** after a confirmed buy, the two approvals a sell needs are signed and sent in the background.
+- **Wallet warm-up:** trade components load Privy at mount instead of after the 1.5 s idle delay; once the embedded wallet exists, the bridge refreshes the access token and opens the wallet's provider (nothing is signed).
+- **Optimistic UI:** a `rushr:trade` window event (`submitting`, `submitted`, `confirmed`, `failed`, with token, side, amount, expected output, hash and timings) for Terminal's positions and toasts.
+- **Timings:** each trade logs `[rushr trade] …` in the console and keeps the last 20 in `window.__rushrTradeTimings` (ready, nonce/fee prep, sign, submitted, confirm, via sync/poll). The founder's next real trade gives the real numbers.
+
+Not verified yet: a real signed trade on this path (only the founder trades). Unit tests cover the pipeline (cached nonce/fees, sync and polling broadcast, nonce error, mismatched or bare signatures never broadcast); the production build was checked as a signed-out visitor.
+
+### Uniswap v4 "every quote fails" (Terminal's report, 2026-11-12)
+
+The v4 quote engine was not broken. Quoter, StateView and the PoolManager they read all match the chain, and pool keys from Data's rows hash to the pools that actually trade. Reproduced on 30 high-volume v4 tokens with `scripts/pool-survey.ts`:
+
+- **Liquidity withdrawn (22 of 30 plain v4 launches, incl. Terminal's AGENTIX and mihao):**
+  - The creator adds full-range liquidity at launch through the v4 PositionManager and removes all of it minutes later. AGENTIX: added at block 112574025, removed at 112580140 (~10 min), after 222 swaps.
+  - Active liquidity is 0 and the quoter can't fill either direction.
+  - GIRAFF quoted fine at 21:10 and was drained by 21:40.
+  - These tokens still show volume and market cap in the API (`liquidity_usd` is null).
+  - Now: blocker `LIQUIDITY_REMOVED`, "No liquidity left: the pool's liquidity was withdrawn by its provider…".
+- **Launch pools with only the token side (Doppler, fresh launches):**
+  - Buys quote; sells can't fill until others have bought.
+  - That used to read as "no liquidity in range"; it now reads "Nothing to sell into yet…" and is never mislabelled as withdrawn (both directions are probed).
+- **Hooks that reject a direction:** e.g. LLEAK's hook reverts sells with `0x6570f956`. Now: "This token's pool hook rejects sells right now (…)".
+- **Doppler tokens priced in USDG or a stock token** (92 of 100 Doppler launches; NVDA, SPCX, TTWO…):
+  - Routing ETH through that asset (multi-hop) isn't built.
+  - Now: blocker `NON_ETH_QUOTE`, "This token trades against USDG, not ETH…", instead of "no pool".
+- **Work:** plain v4 with native ETH (FLC), hooked v4 with WETH (LLEAK buys), Doppler with a WETH numeraire (E/ACC buys), graduated PONS.
+
+**Tests:**
+- Offline: `test/v4-classify.test.ts` (withdrawn vs one-sided vs non-ETH).
+- Live: `test/live/v4.live.test.ts` (`pnpm --filter @rushr/trade test:live`; read-only quotes plus `eth_simulateV1` buys and sells, skipped by default since chain state moves).
+
 ### Guardrails (client)
 - **Per-trade cap:** on the ETH side (buy input, expected sell output), from Terminal's `/settings`. Note: Terminal's default is 0.5 ETH, while the founder's spec said 0.25 ETH; the default lives in `lib/settings.ts` (Terminal).
 - **Slippage:** automatic. 5% base; +3% for tokens under 1 h old, +5% under 10 min; +3%/+5% for 5-min moves above 20%/50%; plus extra for impact above 2%. Capped at 15%, then the measured token tax is added on top, Terminal's `/settings` chooses **auto** (this) or a **fixed** percentage.
-- **Quote freshness:** quotes expire after 10 s and are refreshed automatically before sending.
+- **Quote freshness:** quotes expire after 10 s. Prebuilt trades refresh every 4 s; an expired one is rebuilt before sending.
 - **Safety:**
   - High-risk tokens need an "I understand" toggle once per token (remembered per browser).
   - The buy→sell honeypot probe blocks tokens that can't be sold back.
@@ -34,8 +91,8 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
   - **PONS tokens still on their curve are "tradable after graduation", even when other pools exist.** A curve token was found live with a stray **89%-fee** v4 pool.
   - Pools with a venue fee above 10% are never routed; above 3% shows a warning.
   - Price impact above 30% is a hard block.
-- **Balances:** ETH for amount plus gas (estimate ×1.5); token balance for sells.
-- **Status:** signing, then pending with an explorer link, then success or failure with an explorer link. Cancellations and revert reasons are shown in plain words.
+- **Balances:** ETH for amount plus gas (gas limit × 2× the gas price, matching the fee cap); token balance for sells.
+- **Status:** "Buying…/Selling…" at once, then "Submitted" with an explorer link, then "Confirmed in N s" or failure with an explorer link. Cancellations and revert reasons are shown in plain words.
 
 ### Security for silent client-side signing
 - **CSP** on the terminal and trade pages:
@@ -55,7 +112,7 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
   - **PONS:** quick buy, then quick sell with approvals, in one simulated block. Tokens received equal the quote to the wei, the treasury gets exactly 0.00005 ETH, and the sell pays ETH to the user.
   - **lift.fun token:** buy passes. Selling after a buy was proven earlier by the probe.
   - **PONS curve token:** blocked with "tradable after graduation".
-- 72 unit tests.
+- 78 unit tests.
 - Production build with the flag on, on Terminal's single Privy setup:
   - the trade box quotes for signed-out visitors (0.01 ETH ≈ 136 PONS, fee 0.00005 ETH) with Terminal's presets and cap
   - "Sign in to trade" opens the Rushr sign-in modal
