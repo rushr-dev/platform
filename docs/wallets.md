@@ -175,4 +175,44 @@ Each one is revocable on its own from the Permissions page. Quick-trade and agen
 4. **Default caps and expiry:** proposed 0.25 ETH per trade, 1 ETH per day, 30-day grants, user-adjustable.
 5. **KMS:** which cloud (AWS KMS P-256 or GCP KMS) holds the authorization keys.
 
-**Prototype plan (after decision 1):** a `packages/trade` signer interface (`SessionSigner.signTransaction(tx)`) with a Privy REST implementation for Workers (RFC 8785 + P-256 signature), behind `WALLETS_ENABLED=0`, tested against Privy's dev environment with simulations only. No real transactions until the founder approves the routers and caps.
+## Built so far (2026-11-12; nothing deployed, no real account or key)
+
+### `contracts/src/RushrRouter.sol` (audit-gated, not deployed)
+- **Structured routes:** `Route { kind (V2|V3|V4), token, quote (WETH, or ETH for v4), fee, tickSpacing, hooks }`. The contract builds the Universal Router v2.1 commands itself and takes **no arbitrary calldata**. Output always lands in the router and goes to `msg.sender`. `minOut` is checked on what the trader actually receives. The fee (0.5%, or 0.45% when referred) is taken in ETH.
+- **Entry points:**
+  - `buy`: any canonical v2/v3 pool, and v4 pools with allowlisted hooks.
+  - `sell`: **timelocked allowlisted pools only**.
+  - `sellAnyPool`: user-confirmed only, **never paused**, so users can always exit. The signer policy denies its selector.
+- **Allowlists:** the operator queues hooks and sell pools, and anyone activates them after `delay` (≥10 min). The guardian (a separate multisig) can cancel or remove immediately, pause `buy`/`sell`, and rotate the operator. There's no owner and no upgrades; the fees, treasury and guardian are immutable.
+- **Tests:**
+  - 9 unit tests: validation, timelock, roles, pause, stray ETH, and pool keys shared with TypeScript.
+  - 5 fork tests on the real Universal Router v2.1.2 and live pools:
+    - buy then sell through v3, v2 and native-ETH v4 with exact 0.5%/0.45% fees
+    - nothing left in our router, and the Universal Router's balances unchanged
+    - `minOut` enforced on buy and sell
+    - `sell` refused until the pool clears the timelock
+    - a lift.fun-hooked v4 pool refused until its hook is allowlisted, then bought and sold
+    - user exit while paused
+
+  Run with `forge test`, and `ROBINHOOD_RPC_URL=… forge test --match-contract Fork`.
+- **Compiler setting:** `evm_version` is now `cancun`. The Universal Router uses transient storage, and Robinhood Chain (ArbOS 61) runs Cancun.
+
+### `packages/trade`
+| Module | What |
+| --- | --- |
+| `rushr-router.ts` | `routeFromPool(pool)` (ETH/WETH Uniswap pools), `rushrPoolKey` (same as the contract's `poolKeyOf`), `buildRushrRouterSwap(quote, cfg, { sellMode })` → unsigned tx plus the `approve(RushrRouter)` approval |
+| `policy.ts` | `buildSignerPolicy({ purpose, wallet, rushrRouter, curveRouter, caps })`: the Privy policy JSON. It allows the routers' `buy`/`sell` and router approvals on chain 4663, with per-trade and rolling-24 h caps and expiry; `sellAnyPool` is deliberately not allowed. `defaultCaps(now)`: 0.25 ETH, 1 ETH, 30 days |
+| `signer.ts` | The `AuthorizationKey` (KMS boundary) interface; `PlaceholderKmsKey` (always refuses, until a KMS is chosen); `WebCryptoAuthorizationKey` (dev and tests only, imports Privy's `wallet-auth:` format); `PrivySessionSigner` (REST `POST /v1/wallets/{id}/rpc` `eth_signTransaction`, signed with an RFC 8785 canonical payload and DER P-256 signature); `createSessionSigner(env)` (returns `null` unless `WALLETS_ENABLED=1` and Privy is configured); `assertOneClickAllowed(cfg)` (refuses until `rushrRouter` is set **and** `rushrRouterAudited: true`) |
+
+Verified:
+- 63 unit tests pass. The signature produced by `PrivySessionSigner` verifies with WebCrypto against the canonical payload. Canonical JSON, DER conversion, policy contents, the gates and policy-denial handling are all covered.
+- `signer`, `policy` and `agent` bundle for Workers (`workerd` conditions) with no Node built-ins.
+- Not verified: Privy's live API. Header and field names follow Privy's docs and must be checked once the founder's dev app exists (questions at the top).
+
+### Next, once the founder has the Privy dev app
+1. Confirm the open questions.
+2. Check `PrivySessionSigner` against Privy's dev environment, signing only, never broadcasting.
+3. Pick the KMS and implement `AuthorizationKey` for it.
+4. Add a Permissions page (grant, caps, revoke, export) in the terminal (Terminal stream).
+
+One-click trading stays off until RushrRouter's independent audit; until then trades go through the wallet confirmation flow.

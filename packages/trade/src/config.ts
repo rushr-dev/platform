@@ -25,6 +25,10 @@ export interface TradeConfig {
   universalRouter: Address;
   /** Deployed RushrCurveRouter for PONS curves; null until deployed (curve routes are then unsupported). */
   curveRouter: Address | null;
+  /** Deployed RushrRouter (structured Uniswap routes, output only to the trader); null until deployed. */
+  rushrRouter: Address | null;
+  /** Set true only after RushrRouter's independent audit. Gates one-click (server-signed) trading. */
+  rushrRouterAudited: boolean;
   /** Default slippage in bps (on top of measured token tax). */
   defaultSlippageBps: number;
   /** Deadline for router txs, seconds from build time. */
@@ -38,6 +42,8 @@ export const DEFAULT_TRADE_CONFIG: TradeConfig = {
   feeRecipient: PLACEHOLDER_FEE_RECIPIENT,
   universalRouter: TRADE_ADDRESSES.universalRouter,
   curveRouter: null,
+  rushrRouter: null,
+  rushrRouterAudited: false,
   defaultSlippageBps: 100,
   deadlineSeconds: 300,
 };

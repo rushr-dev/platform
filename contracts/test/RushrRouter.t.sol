@@ -187,5 +187,10 @@ contract RushrRouterTest is Test {
         RushrRouter.Route memory d = _route(RushrRouter.Kind.V3, WETH, address(0));
         d.fee = 500;
         assertTrue(router.poolKeyOf(c) != router.poolKeyOf(d));
+        // Shared with packages/trade (rushrPoolKey): WETH/PONS v3 0.30%.
+        r.kind = RushrRouter.Kind.V3;
+        r.quote = WETH;
+        r.tickSpacing = 0;
+        assertEq(router.poolKeyOf(r), 0xa3f5a45e222714c4fc15486925f027adce5b0d0c9ae1ec4491443885f7e15796);
     }
 }

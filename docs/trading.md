@@ -215,7 +215,7 @@ An independent reviewer should confirm each item; deployment needs the founder's
 6. **Token weirdness:** fee-on-transfer, no-return-value ERC20s (handled by `_call`), tokens that revert on `approve(0)`, and blacklisting tokens.
 7. **Slippage and MEV:** `minTokensOut` is checked on what the recipient received, `minQuoteOut` on the net, and the deadline is enforced. Robinhood Chain has a sequencer, so confirm whether Timeboost or an express lane is enabled.
 8. **Immutables:** constructor arguments = the founder's treasury multisig, 50 and 45. Verify the deployed bytecode and arguments on Blockscout. There's no admin key to rotate, so a mistake means redeploying.
-9. **Compiler and settings:** solc 0.8.26, optimizer 10k runs, `evm_version = shanghai` (confirm Robinhood Chain's ArbOS supports `PUSH0`).
+9. **Compiler and settings:** solc 0.8.26, optimizer 10k runs, `evm_version = cancun` (Robinhood Chain, ArbOS 61, runs Cancun; the Universal Router needs transient storage).
 10. **Tests:** reviewer re-runs `forge test` and the fork suite at a fresh block, and adds their own cases.
 
 ### Using it from a server or agent
