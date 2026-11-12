@@ -1,14 +1,12 @@
 'use client';
 
-import Link from 'next/link';
 import { useState } from 'react';
-import { ArrowSquareOut, Bank, Check, Copy, CreditCard, GearSix, Key, Shuffle, Warning } from '@phosphor-icons/react';
-import { auth } from '@/lib/auth';
-import { fmtUnits, useBalances, USDG } from '@/lib/balances';
+import { ArrowSquareOut, Bank, Check, Copy, CreditCard, Shuffle, Warning } from '@phosphor-icons/react';
+import { USDG } from '@/lib/balances';
 import { EXPLORER } from '@/lib/format';
 
 /**
- * Own-profile wallet and funding. Only options verified to reach Robinhood Chain (4663) are shown
+ * Own-profile funding (the Deposit modal). Only options verified to reach Robinhood Chain (4663) are shown
  * (research 2026-11-12: Robinhood app transfers, Relay and Across bridges, MoonPay for USDG, the
  * canonical Arbitrum bridge). Links are exact official URLs: lookalike "Robinhood bridge" phishing
  * sites exist.
@@ -20,55 +18,40 @@ const ACROSS_URL = 'https://across.to/?to=robinhood';
 const CANONICAL_URL = 'https://portal.arbitrum.io/bridge?sourceChain=ethereum&destinationChain=robinhood-chain';
 const MOONPAY_URL = 'https://www.moonpay.com/buy';
 
-export function WalletFunding({ address }: { address: `0x${string}` | null }) {
-  const { balances, error, refresh } = useBalances(address);
+/** Deposit modal body: the address, the chain warning, and every verified way to fund it. */
+export function DepositPanel({ address }: { address: `0x${string}` | null }) {
   const [copied, setCopied] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-
   return (
-    <section className="rounded-2xl border border-white/[0.06] bg-surface p-4 sm:p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Wallet</h2>
-        <button type="button" onClick={refresh} className="text-[11px] text-muted hover:text-ink">
-          Refresh
-        </button>
-      </div>
-      <div className="mt-3 grid grid-cols-2 gap-2">
-        <Balance label="ETH" value={balances ? fmtUnits(balances.eth, 18, 5) : null} error={error} />
-        <Balance label="USDG" value={balances ? fmtUnits(balances.usdg, 6, 2) : null} error={error} />
-      </div>
+    <div>
+      <div className="text-[11px] text-muted">Your Rushr wallet on Robinhood Chain</div>
+      {address ? (
+        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+          <span className="min-w-0 flex-1 break-all rounded-xl border border-white/[0.06] bg-bg px-3 py-2 font-mono text-[13px]">{address}</span>
+          <button
+            type="button"
+            onClick={() =>
+              void navigator.clipboard?.writeText(address).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              })
+            }
+            className="flex items-center gap-1.5 rounded-xl bg-ink px-3 py-2 text-sm font-semibold text-bg hover:bg-white"
+          >
+            {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy'}
+          </button>
+          <a href={`${EXPLORER}/address/${address}`} target="_blank" rel="noreferrer" className="rounded-xl border border-white/[0.08] p-2 text-muted hover:text-ink" title="Open in explorer">
+            <ArrowSquareOut size={16} />
+          </a>
+        </div>
+      ) : (
+        <p className="mt-1.5 text-sm text-muted">Creating your wallet…</p>
+      )}
+      <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-risk-medium">
+        <Warning size={13} className="mt-px shrink-0" weight="fill" />
+        Only send ETH or USDG on Robinhood Chain (chain ID 4663). Funds sent on another network won&apos;t arrive.
+      </p>
 
-      <div className="mt-4">
-        <div className="text-[11px] text-muted">Your Rushr wallet on Robinhood Chain</div>
-        {address ? (
-          <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <span className="min-w-0 flex-1 break-all rounded-xl border border-white/[0.06] bg-bg px-3 py-2 font-mono text-[13px]">{address}</span>
-            <button
-              type="button"
-              onClick={() =>
-                void navigator.clipboard?.writeText(address).then(() => {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                })
-              }
-              className="flex items-center gap-1.5 rounded-xl bg-ink px-3 py-2 text-sm font-semibold text-bg hover:bg-white"
-            >
-              {copied ? <Check size={15} /> : <Copy size={15} />} {copied ? 'Copied' : 'Copy'}
-            </button>
-            <a href={`${EXPLORER}/address/${address}`} target="_blank" rel="noreferrer" className="rounded-xl border border-white/[0.08] p-2 text-muted hover:text-ink" title="Open in explorer">
-              <ArrowSquareOut size={16} />
-            </a>
-          </div>
-        ) : (
-          <p className="mt-1.5 text-sm text-muted">Creating your wallet…</p>
-        )}
-        <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-relaxed text-risk-medium">
-          <Warning size={13} className="mt-px shrink-0" weight="fill" />
-          Only send ETH or USDG on Robinhood Chain (chain ID 4663). Funds sent on another network won&apos;t arrive.
-        </p>
-      </div>
-
-      <h3 className="mt-5 text-sm font-semibold">Add funds</h3>
+      <h3 className="mt-5 text-sm font-semibold">Ways to add funds</h3>
       <div className="mt-2 space-y-2">
         <Option
           icon={Bank}
@@ -116,33 +99,6 @@ export function WalletFunding({ address }: { address: `0x${string}` | null }) {
           </div>
         </details>
       </div>
-
-      <div className="mt-5 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          disabled={!address}
-          onClick={() => {
-            setExportError(null);
-            auth.exportWallet().catch((e: Error) => setExportError(e.message || 'Export failed'));
-          }}
-          className="flex items-center justify-center gap-1.5 rounded-xl border border-risk-medium/30 py-2 text-sm text-risk-medium hover:bg-risk-medium/10 disabled:opacity-50"
-        >
-          <Key size={15} /> Export key
-        </button>
-        <Link href="/settings" className="flex items-center justify-center gap-1.5 rounded-xl border border-white/[0.08] py-2 text-sm text-muted hover:text-ink">
-          <GearSix size={15} /> Trading settings
-        </Link>
-      </div>
-      {exportError && <p className="mt-2 text-xs text-risk-high">{exportError}</p>}
-    </section>
-  );
-}
-
-function Balance({ label, value, error }: { label: string; value: string | null; error: boolean }) {
-  return (
-    <div className="rounded-xl border border-white/[0.06] bg-bg px-3 py-2.5">
-      <div className="text-[11px] text-muted">{label}</div>
-      <div className="mt-0.5 font-mono text-lg font-semibold">{value ?? (error ? '—' : <span className="inline-block h-5 w-16 animate-pulse rounded bg-white/[0.06] align-middle" />)}</div>
     </div>
   );
 }

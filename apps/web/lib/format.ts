@@ -102,3 +102,6 @@ const QUOTE_LABEL: Record<string, string> = {
   '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec': 'NVDA',
 };
 export const quoteLabel = (q: string | null | undefined) => (q ? (QUOTE_LABEL[q.toLowerCase()] ?? short(q, 2, 2)) : 'ETH');
+
+/** Counts: whole numbers under 1,000, then 1.2K / 3.4M. */
+export const countFmt = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? '—' : Math.abs(n) < 1000 ? String(Math.round(n)) : compact(n));
