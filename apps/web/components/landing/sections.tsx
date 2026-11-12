@@ -1,11 +1,15 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowRight, BellRinging, Robot, ShieldCheck, Trophy, UsersThree } from '@phosphor-icons/react/dist/ssr';
+import { ArrowRight, BellRinging, Robot, Trophy, UsersThree, XLogo } from '@phosphor-icons/react/dist/ssr';
 import type { RiskLevel, Stats, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Art } from './art';
+import { HeroLoop } from './hero-loop';
 import { Reveal } from './reveal';
+
+/** Rushr's own X account (no Telegram yet). */
+const X_URL = 'https://x.com/rushrtrade';
 
 const nf = new Intl.NumberFormat('en-US');
 const usd = (n: number | null | undefined) =>
@@ -67,6 +71,15 @@ export function Nav() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <a
+            href={X_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Rushr on X"
+            className="hidden size-9 place-items-center rounded-lg border border-line text-muted transition hover:text-ink sm:grid"
+          >
+            <XLogo size={16} weight="bold" />
+          </a>
           <Link
             href="/trenches"
             className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-ink/85 active:scale-[0.98]"
@@ -83,15 +96,15 @@ export function Nav() {
 
 export function Hero({ stats }: { stats: Stats | null }) {
   return (
-    <section className="relative isolate overflow-hidden">
-      <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-20">
-        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[140px] md:text-[168px]">
+    <section className="relative isolate overflow-hidden md:h-[min(84svh,760px)] md:min-h-[600px]">
+      <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-[clamp(3rem,8vh,5.5rem)]">
+        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[128px] md:text-[136px]">
           rushr
         </h1>
         <p className="rise mt-3 text-2xl font-medium tracking-[-0.03em] md:text-4xl" style={{ animationDelay: '0.06s' }}>
           trade the rush. together.
         </p>
-        <p className="rise mt-3 max-w-[46ch] text-base text-muted md:text-lg" style={{ animationDelay: '0.12s' }}>
+        <p className="rise mt-3 max-w-[46ch] text-base text-muted md:text-lg md:text-ink/70" style={{ animationDelay: '0.12s' }}>
           Agentic social trading on Robinhood Chain. Every token gets a safety check, so you know before you ape.
         </p>
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row" style={{ animationDelay: '0.18s' }}>
@@ -102,16 +115,18 @@ export function Hero({ stats }: { stats: Stats | null }) {
             Enter the trenches
           </Link>
           <a
-            href="#social"
+            href={X_URL}
+            target="_blank"
+            rel="noreferrer"
             className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-7 py-3.5 font-semibold transition hover:border-ink/20 active:scale-[0.98]"
           >
-            <ShieldCheck size={18} weight="bold" />
-            How the check works
+            <XLogo size={16} weight="bold" />
+            Follow on X
           </a>
         </div>
         {stats && (
           <p
-            className="rise mt-6 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted"
+            className="rise mt-6 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted md:rounded-full md:bg-bg/85 md:px-3 md:py-1.5 md:text-ink/65 md:backdrop-blur-sm"
             style={{ animationDelay: '0.24s' }}
           >
             <span className="relative flex size-2">
@@ -123,18 +138,23 @@ export function Hero({ stats }: { stats: Stats | null }) {
         )}
       </div>
 
-      {/* Key visual: the brand banner, blended into the paper and faded out at the bottom */}
-      <div
-        className="rise relative mx-auto mt-10 aspect-[16/10] w-full max-w-[1440px] [mask-image:linear-gradient(to_bottom,transparent,black_14%,black_72%,transparent)] sm:aspect-[2/1] md:mt-12 lg:aspect-[3/1]"
-        style={{ animationDelay: '0.3s' }}
-      >
+      {/*
+        Key visual: the banner scene. On phones it sits under the copy; from md up it is a full-bleed
+        background (with the optional living-sketch loop on top) and a soft paper scrim behind the text.
+      */}
+      <div className="relative mt-8 aspect-[16/10] w-full [mask-image:linear-gradient(to_bottom,transparent,black_16%,black_76%,transparent)] sm:aspect-[2/1] md:absolute md:inset-0 md:-z-10 md:mt-0 md:aspect-auto md:[mask-image:linear-gradient(to_bottom,black_78%,transparent)]">
         <Art
           name="banner"
-          widths={[800, 1400, 2400]}
+          widths={[800, 1600, 2400]}
           alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
           priority
-          sizes="(min-width: 1440px) 1440px, (min-width: 1024px) 100vw, (min-width: 640px) 150vw, 188vw"
-          className="object-cover object-[50%_40%] mix-blend-multiply"
+          sizes="(min-width: 768px) 2280px, (min-width: 640px) 150vw, 188vw"
+          className="object-cover object-[50%_45%] mix-blend-multiply"
+        />
+        <HeroLoop poster="/art/banner-1600.webp" className="object-cover object-[50%_45%] mix-blend-multiply" />
+        <div
+          aria-hidden
+          className="absolute inset-0 hidden bg-[radial-gradient(ellipse_480px_62%_at_50%_33%,rgba(247,245,242,0.95)_0%,rgba(247,245,242,0.86)_55%,rgba(247,245,242,0)_100%)] md:block"
         />
       </div>
     </section>
@@ -610,7 +630,7 @@ export function Closing() {
 export function Footer() {
   return (
     <footer className="border-t border-line">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 md:grid-cols-[2fr_1fr] md:px-8">
+      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 md:grid-cols-[1.6fr_1fr_1fr] md:px-8">
         <div>
           <div className="flex items-center gap-2">
             <Image src="/logo-mark.png" alt="" width={24} height={24} />
@@ -628,6 +648,10 @@ export function Footer() {
           <a href="#social" className="block hover:text-brand">Safety</a>
           <a href="#feed" className="block hover:text-brand">Social</a>
           <a href="#agents" className="block hover:text-brand">Agents</a>
+        </div>
+        <div className="space-y-2.5 text-sm">
+          <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>
+          <a href={X_URL} target="_blank" rel="noreferrer" className="block hover:text-brand">X (@rushrtrade)</a>
         </div>
       </div>
       <div className="mx-auto max-w-7xl border-t border-line px-4 py-6 text-xs text-muted md:px-8">© 2026 Rushr</div>
