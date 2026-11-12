@@ -712,7 +712,10 @@ export class Pipeline {
       add(t.token, t.from, -t.amount, t.time);
       add(t.token, t.to, t.amount, t.time);
     }
+    // Rows in key order: concurrent writers (poller lanes, pool history, hydrators) then lock the same
+    // rows in the same order instead of deadlocking.
     const rows = [...deltas.values()]
+      .sort((a, b) => (a.token === b.token ? (a.wallet < b.wallet ? -1 : 1) : a.token < b.token ? -1 : 1))
       .filter((d) => d.amount !== 0n)
       .map((d) => ({ token: d.token, wallet: d.wallet, amount: d.amount.toString(), first_received_at: d.first }));
     for (let i = 0; i < rows.length; i += 1000) {
@@ -734,7 +737,9 @@ export class Pipeline {
       if (!c) candles.set(key, { token: s.token, bucket, o: p, h: p, l: p, c: p, v: Number(usd), n: 1 });
       else Object.assign(c, { h: Math.max(c.h, p), l: Math.min(c.l, p), c: p, v: c.v + Number(usd), n: c.n + 1 });
     }
-    const rows = [...candles.values()].map((c) => ({
+    const rows = [...candles.values()]
+      .sort((a, b) => (a.token === b.token ? a.bucket.getTime() - b.bucket.getTime() : a.token < b.token ? -1 : 1))
+      .map((c) => ({
       token: c.token, interval: '1m', bucket: c.bucket, open: String(c.o), high: String(c.h), low: String(c.l),
       close: String(c.c), volume_usd: String(c.v), trades: c.n,
     }));
@@ -748,9 +753,12 @@ export class Pipeline {
 
   private async refreshTokenStats(tx: TransactionSql, touched: string[], priced: { s: DecodedSwap; priceUsd: string | null }[]) {
     if (!touched.length) return;
+    // Take the token rows' locks up front in address order (the updates below would lock them in scan
+    // order, which deadlocks against another writer touching the same tokens).
+    await tx`select 1 from tokens where address = any(${[...touched].sort()}) order by address for update`;
     const last = new Map<string, { price: string; time: number }>();
     for (const { s, priceUsd } of priced) if (priceUsd) last.set(s.token, { price: priceUsd, time: s.time });
-    for (const [token, { price, time }] of last) {
+    for (const [token, { price, time }] of [...last].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       const meta = this.tokens.get(token);
       if (!meta) continue;
       const mcap = String(Number(price) * (Number(meta.totalSupply) / 10 ** meta.decimals));
