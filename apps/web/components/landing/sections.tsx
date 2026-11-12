@@ -12,7 +12,6 @@ import { Reveal } from './reveal';
 /** Rushr's own X account (no Telegram yet). */
 const X_URL = 'https://x.com/rushrtrade';
 
-const nf = new Intl.NumberFormat('en-US');
 const usd = (n: number | null | undefined) =>
   n == null
     ? 'n/a'
