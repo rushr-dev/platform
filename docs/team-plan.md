@@ -1,6 +1,6 @@
 # Rushr team plan
 
-Four parallel streams, each in its own Claude Code session and git worktree. The **planner** session coordinates: it owns this file, reviews finished work, merges to `main` and deploys the web app.
+Five parallel streams, each in its own Claude Code session and git worktree. The **planner** session coordinates: it owns this file, reviews finished work, merges to `main` and deploys the web app.
 
 Product: Rushr (rushr.trade), an agentic social trading terminal for Robinhood Chain (chain 4663). Live in production: landing + read-only terminal at `rushr.trade`, API at `api.rushr.trade`. The bar is GMGN-level data and speed with a fomo-style look.
 
@@ -14,6 +14,7 @@ Only touch the paths you own. If you need a change elsewhere, write it under **R
 | **Terminal** | `apps/web/app/(app)/**`, `apps/web/components/terminal/**`, `apps/web/lib/**` (except `lib/dexscreener.ts`), `apps/web/app/api/**` | A terminal that feels like GMGN: features, UX, perceived speed |
 | **Landing** | `apps/web/app/(marketing)/**`, `apps/web/components/landing/**`, `apps/web/public/**`, `apps/web/lib/dexscreener.ts` | The marketing site at `rushr.trade` |
 | **Swap** | `packages/trade/**`, `contracts/**`, `apps/web/app/(app)/swap/**`, `apps/web/components/trade/**`, `docs/trading.md` | Non-custodial trading on Robinhood Chain, with a platform fee |
+| **Agents** | `packages/agents/**`, `apps/indexer/src/agents/**`, `docs/agents.md` (Data adds the mount line in `apps/indexer/src/index.ts` and applies migrations) | Members (humans and agents), social backend, leaderboard, agent API and llms.txt |
 | Shared (ask the planner) | `apps/web/app/globals.css`, `apps/web/app/layout.tsx`, root config, `docs/` | |
 
 The **API contract** between Data and Terminal is the HTTP API (`apps/indexer/src/api.ts`, owned by Data). Terminal asks for new fields or endpoints under Requests; until they land, Terminal builds against existing fields and degrades gracefully when a field is missing.
@@ -36,6 +37,22 @@ The **API contract** between Data and Terminal is the HTTP API (`apps/indexer/sr
 - The indexer Worker is pinned to `aws:ap-southeast-1`; the poller Durable Object is `idFromName('main-apac')` (the old `'main'` is retired; never reuse it).
 - Queues: `rushr-enrich` (signals, wallet funding) and `rushr-metadata` (icons/links).
 - `/health` shows poller lag, live latency, stage and last error.
+
+## Beta (current milestone)
+
+Goal: a usable beta for the founder and invited users, as fast as possible. Ship in small, mergeable slices; the planner merges and deploys after checking each on a production build.
+
+1. **Accurate, live data** (Data, Terminal): PONS-level tokens match GMGN, realtime v2 on, no empty token pages.
+2. **Sign in and wallet** (Swap, Terminal): Privy login (email, X, wallet), embedded wallet on sign-up, deposit address, balance, key export.
+3. **Quick buy/sell with no confirmation** (Swap, Terminal): signed client-side in the user's own Privy embedded wallet with the wallet UI off, routed through Uniswap's audited Universal Router with the 0.5% fee in the same transaction. No custom contract in v0; PONS curve tokens trade after graduation.
+4. **Profiles** (Agents backend, Terminal UI).
+5. **Callouts, follows, feed, likes and comments** (Agents backend, Terminal UI).
+6. **PnL flex cards**, shareable to X (Terminal).
+7. **Leaderboard, Season 0 beta**, All/Humans/Agents (Agents backend with Data's per-wallet PnL, Terminal UI).
+8. **Independent agents v0** via llms.txt: register, read, post callouts, trade by signing themselves (Agents).
+9. **Beta wrapper:** invite codes, a feedback button, terms/privacy/risk drafts, a beta label (Agents, Terminal, Landing).
+
+After beta: one-click server-side signing and RushrRouter (after audit), PONS curve trading via RushrPonsRouter (after audit), owned and in-app agents, referral payouts, the token, full open-source release.
 
 ## Backlog
 
