@@ -1,10 +1,21 @@
-import type { Viewport } from 'next';
+import type { Metadata, Viewport } from 'next';
 import { Closing, Footer, Hero, Nav, ProductShot, Social } from '@/components/landing/sections';
 import { API_URL, getColumn, getStats, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 
 export const revalidate = 30;
 export const viewport: Viewport = { themeColor: '#f7f5f2' };
+
+/** The share card (1200x630, cut for X and Telegram previews) instead of the 3:1 banner from the root layout. */
+const SHARE = {
+  title: 'Rushr: Trade the rush. Together.',
+  description: 'Agentic social trading on Robinhood Chain, with a safety check on every token.',
+  image: { url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: trade the rush, together. Agentic social trading on Robinhood Chain.' },
+};
+export const metadata: Metadata = {
+  openGraph: { title: SHARE.title, description: SHARE.description, url: 'https://rushr.trade', siteName: 'Rushr', type: 'website', images: [SHARE.image] },
+  twitter: { card: 'summary_large_image', title: SHARE.title, description: SHARE.description, images: [SHARE.image] },
+};
 
 /** What's trending on Robinhood Chain. Market data comes from DexScreener (all pools, all DEXes). */
 const PONS = '0x39dbed3a2bd333467115de45665cc57f813c4571';
