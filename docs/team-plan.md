@@ -68,3 +68,14 @@ Compare with GMGN's token page and trenches (screenshots in the planner's notes;
 
 ## Requests
 (Add cross-stream requests here: who needs what from whom.)
+
+### Terminal → Data (2026-11-12)
+The terminal already works around each of these; landing them makes the numbers exact and lets us drop the DexScreener fallback. All additive, no breaking changes.
+
+1. **Window stats on `/tokens/:a`** (or a new `/tokens/:a/stats`): for 5m, 1h, 6h, 24h: `price_change_pct`, `volume_usd`, `buys`, `sells`, `buy_usd`, `sell_usd`, `makers` (distinct traders). Today the terminal derives volume from 1m candles and the buy/sell split from the last 500 trades, so the split is partial for busy tokens.
+2. **Liquidity and pools:** `liquidity_usd` on the token card, and `/tokens/:a/pools` → `[{ pool, dex, version, quote, liquidity_usd, volume_24h_usd, created_at }]`. The pool panel uses DexScreener in the browser until then.
+3. **Sub-minute candles:** `/tokens/:a/candles?interval=1s|15s|30s` (from swaps, last ~6h). The terminal builds 1s/30s from the last 500 trades, which only covers a short span on busy tokens.
+4. **Trade paging and order:** `/tokens/:a/trades?before=<block>:<log_index>` for "load more", and `?order=asc` (oldest first) so Early buyers works for tokens with more than 500 trades.
+5. **Top traders:** `/tokens/:a/traders?sort=pnl|bought|sold&limit=100` → `{ wallet, buys, sells, bought_usd, sold_usd, bought_tokens, sold_tokens, balance, first_time, last_time }` over the full history. Today it is computed from the last 500 trades.
+6. **Maker tags on trades:** `tags` per trade row and per live socket trade (sniper, bundler, insider, fresh, dev), so tags show for makers outside the top 100 holders. Today tags come from `/holders` (top 100 only, ~2.2s).
+7. **Token amount on live trades** is already sent (`tokenAmount`); please keep it. A `maker_tags` field on the socket payload (item 6) would let the trades table tag rows the moment they land.
