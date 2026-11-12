@@ -1,6 +1,6 @@
 import type { Address, Hex } from 'viem';
-import type { FeeBreakdown, Side } from './fees.ts';
-import type { EncodedCommand, PoolKey } from './universal-router.ts';
+import type { FeeBreakdown, Side } from './fees';
+import type { EncodedCommand, PoolKey } from './universal-router';
 
 export type Venue = 'uniswap-v4' | 'uniswap-v3' | 'uniswap-v2' | 'pons-curve';
 

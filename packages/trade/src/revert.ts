@@ -1,5 +1,5 @@
 import { decodeErrorResult, type Address, type Hex } from 'viem';
-import { knownErrorsAbi } from './abis.ts';
+import { knownErrorsAbi } from './abis';
 
 /** Human-readable revert reason from revert data (unwraps Universal Router ExecutionFailed). */
 export function decodeRevert(data: Hex | undefined, depth = 0): string {

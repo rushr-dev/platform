@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, decodeFunctionData, zeroAddress, type Address, type PublicClient } from 'viem';
-import { buildSwap, planUniversalRouter } from '../src/build.ts';
-import { resolveConfig } from '../src/config.ts';
-import { isTradeError } from '../src/errors.ts';
-import { isBuildable, quotePool, rankQuotes } from '../src/quote.ts';
-import { analyzeSwapTransfers, NATIVE_TRANSFER_EMITTER, type TransferEvent } from '../src/simulate.ts';
-import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from '../src/addresses.ts';
-import { rushrCurveRouterAbi } from '../src/abis.ts';
-import { universalRouterAbi } from '../src/universal-router.ts';
-import type { PonsPool, Quote, SwapRequest, V2Pool, V3Pool, V4Pool } from '../src/types.ts';
+import { buildSwap, planUniversalRouter } from '../src/build';
+import { resolveConfig } from '../src/config';
+import { isTradeError } from '../src/errors';
+import { isBuildable, quotePool, rankQuotes } from '../src/quote';
+import { analyzeSwapTransfers, NATIVE_TRANSFER_EMITTER, type TransferEvent } from '../src/simulate';
+import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from '../src/addresses';
+import { rushrCurveRouterAbi } from '../src/abis';
+import { universalRouterAbi } from '../src/universal-router';
+import type { PonsPool, Quote, SwapRequest, V2Pool, V3Pool, V4Pool } from '../src/types';
 
 const TREASURY: Address = '0x1111111111111111111111111111111111111111';
 const TRADER: Address = '0x2222222222222222222222222222222222222222';

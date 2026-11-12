@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { feeOf, minOut, sellMinimums, slippageWithTax, splitBuyInput, splitSellOutput, priceImpactBps } from '../src/fees.ts';
-import { assertSignable, DEFAULT_TRADE_CONFIG, MAX_FEE_BPS, resolveConfig } from '../src/config.ts';
-import { isTradeError, sanitizeRpcMessage } from '../src/errors.ts';
+import { feeOf, minOut, sellMinimums, slippageWithTax, splitBuyInput, splitSellOutput, priceImpactBps } from '../src/fees';
+import { assertSignable, DEFAULT_TRADE_CONFIG, MAX_FEE_BPS, resolveConfig } from '../src/config';
+import { isTradeError, sanitizeRpcMessage } from '../src/errors';
 
 describe('fee math', () => {
   it('takes bps of the amount, rounding down', () => {

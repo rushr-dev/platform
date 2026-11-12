@@ -1,5 +1,5 @@
 import { zeroAddress, type Address, type Hex, type PublicClient } from 'viem';
-import { TRADE_ADDRESSES, V3_FEE_TIERS, V4_STANDARD_POOLS } from './addresses.ts';
+import { TRADE_ADDRESSES, V3_FEE_TIERS, V4_STANDARD_POOLS } from './addresses';
 import {
   ponsCurveAbi,
   ponsFactoryAbi,
@@ -8,10 +8,10 @@ import {
   v3FactoryAbi,
   v4PositionManagerAbi,
   v4StateViewAbi,
-} from './abis.ts';
-import { sortCurrencies, v4PoolId, V4_DYNAMIC_FEE_FLAG } from './math.ts';
-import type { Pool, PonsPool, QuoteAsset, V2Pool, V3Pool, V4Pool, Venue } from './types.ts';
-import type { PoolKey } from './universal-router.ts';
+} from './abis';
+import { sortCurrencies, v4PoolId, V4_DYNAMIC_FEE_FLAG } from './math';
+import type { Pool, PonsPool, QuoteAsset, V2Pool, V3Pool, V4Pool, Venue } from './types';
+import type { PoolKey } from './universal-router';
 import { ABIS, launchpadForHook } from '@rushr/core/chain/robinhood';
 
 export interface DiscoverOptions {

@@ -1,13 +1,13 @@
 import { zeroAddress, type Address, type PublicClient } from 'viem';
-import { TRADE_ADDRESSES } from './addresses.ts';
-import { v3PoolAbi, v3QuoterV2Abi, v4QuoterAbi, v4StateViewAbi } from './abis.ts';
-import type { TradeConfig } from './config.ts';
-import { TradeError, revertDataOf, sanitizeRpcMessage } from './errors.ts';
-import { decodeRevert } from './revert.ts';
-import { minOut, priceImpactBps, sellMinimums, splitBuyInput, splitSellOutput, type FeeBreakdown } from './fees.ts';
-import { ponsBuyOut, ponsSellOut, ponsSpotBuyOut, v2AmountOut, v2SpotOut } from './math.ts';
-import { discoverPools, type DiscoverOptions } from './pools.ts';
-import type { Pool, Quote, SwapRequest } from './types.ts';
+import { TRADE_ADDRESSES } from './addresses';
+import { v3PoolAbi, v3QuoterV2Abi, v4QuoterAbi, v4StateViewAbi } from './abis';
+import type { TradeConfig } from './config';
+import { TradeError, revertDataOf, sanitizeRpcMessage } from './errors';
+import { decodeRevert } from './revert';
+import { minOut, priceImpactBps, sellMinimums, splitBuyInput, splitSellOutput, type FeeBreakdown } from './fees';
+import { ponsBuyOut, ponsSellOut, ponsSpotBuyOut, v2AmountOut, v2SpotOut } from './math';
+import { discoverPools, type DiscoverOptions } from './pools';
+import type { Pool, Quote, SwapRequest } from './types';
 
 const Q192 = 1n << 192n;
 

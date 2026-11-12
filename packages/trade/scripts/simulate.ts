@@ -10,15 +10,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createPublicClient, formatEther, formatUnits, http, type Address, type PublicClient } from 'viem';
-import { robinhoodChain } from '../src/chain.ts';
-import { resolveConfig } from '../src/config.ts';
-import { findBestRoute, quotePool } from '../src/quote.ts';
-import { buildSwap } from '../src/build.ts';
-import { probeTokenSafety, simulateCalls, approvalCalls, swapCall, analyzeSwapTransfers } from '../src/simulate.ts';
-import { describeCommands } from '../src/universal-router.ts';
-import { TRADE_ADDRESSES } from '../src/addresses.ts';
-import { erc20Abi } from '../src/abis.ts';
-import type { Quote } from '../src/types.ts';
+import { robinhoodChain } from '../src/chain';
+import { resolveConfig } from '../src/config';
+import { findBestRoute, quotePool } from '../src/quote';
+import { buildSwap } from '../src/build';
+import { probeTokenSafety, simulateCalls, approvalCalls, swapCall, analyzeSwapTransfers } from '../src/simulate';
+import { describeCommands } from '../src/universal-router';
+import { TRADE_ADDRESSES } from '../src/addresses';
+import { erc20Abi } from '../src/abis';
+import type { Quote } from '../src/types';
 
 function rpcUrl(): string {
   if (process.env.RPC_URL) return process.env.RPC_URL;

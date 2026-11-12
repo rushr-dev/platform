@@ -93,5 +93,57 @@ So Axiom takes ~1% from the input on buys, in the same tx, through its own route
 - Route: venue, pool and router address, linked to the explorer
 - The terms page states the rate, the side it's taken from and that Rushr is non-custodial
 
-## Scaffold (`packages/trade`)
-See the package README section below; the details live next to the code.
+## Scaffold (`packages/trade`, `contracts/`, `/swap`)
+
+Status 2026-11-12. Nothing is signed or broadcast anywhere: verification is unit tests, `eth_simulateV1` and a local Foundry fork.
+
+### `packages/trade`
+| Module | What it does |
+| --- | --- |
+| `addresses.ts`, `chain.ts` | Trading contracts for 4663 from Uniswap's official list, the PONS factory, and a viem chain with multicall3 |
+| `config.ts` | `feeBps` (default 100, capped at 300), `feeRecipient` (**placeholder** `0x…fee1`), `universalRouter`, `curveRouter` (null until deployed). `assertSignable` refuses while the treasury is the placeholder |
+| `fees.ts` | Fee math: fee off the input on buys, off the gross output on sells (identical to `PAY_PORTION`), slippage minimums, tax-adjusted slippage |
+| `pools.ts` | Discovery: PONS curve via `getLaunchedToken`; Uniswap v3 (4 fee tiers) and v2 on WETH/USDG; v4 from the API's `main_pool` (PositionManager `poolKeys`, falling back to the `Initialize` event for hook-managed pools), indexer-supplied keys and standard hookless pools, checked with StateView |
+| `quote.ts` | V4Quoter, QuoterV2, v2 reserve math, PONS curve math (exact to the wei); price impact from spot; ranks by what the user receives and prefers routes we can build |
+| `universal-router.ts` | Typed encoder for Universal Router commands and v4 actions. **Note:** the routers on 4663 (v2.1) take an extra `uint256[] maxHopSlippage` on v2/v3 swaps and an extra `uint256` in v4 `ExactInputSingleParams`. The older layouts revert or misbehave (found by simulation, matched against live txs) |
+| `build.ts` | Unsigned tx plus required approvals (ERC-20 → Permit2, then `Permit2.approve` or a signed `PermitSingle` as `PERMIT2_PERMIT`) |
+| `permit2.ts` | PermitSingle EIP-712 typed data (for the user's wallet to sign) and allowance reads |
+| `simulate.ts` | `eth_simulateV1` with `traceTransfers`: approvals and swap in one block, received amount, fee actually paid to the treasury, transfer tax measured from the token's own `Transfer` logs, and a buy→sell honeypot probe |
+| `errors.ts`, `revert.ts` | `TradeError` codes for the UI. Revert decoding unwraps `ExecutionFailed`. RPC URLs are scrubbed from messages |
+
+Fee command plans (Universal Router):
+| Trade | Commands |
+| --- | --- |
+| Buy, native-ETH v4 pool | `TRANSFER(ETH→treasury, fee)` · `V4_SWAP(SWAP_EXACT_IN_SINGLE, SETTLE(router), TAKE_ALL)` |
+| Buy, WETH v2/v3/v4 pool | `TRANSFER` · `WRAP_ETH` · swap from router balance |
+| Buy with USDG | `PERMIT2_TRANSFER_FROM(USDG→treasury, fee)` · `PERMIT2_TRANSFER_FROM(USDG→router)` (v4) or swap with `payerIsUser` (v2/v3) |
+| Sell to ETH/WETH | swap into router · (`UNWRAP_WETH`) · `PAY_PORTION(ETH→treasury, feeBps)` · `SWEEP(ETH→user, minNet)` |
+| Sell to USDG | swap into router · `PAY_PORTION(USDG)` · `SWEEP(USDG, minNet)` |
+| PONS curve | `RushrCurveRouter.buy/sell` (not deployed) |
+
+Verified live (`pnpm --filter @rushr/trade simulate`, about 20–40 RPC calls per token):
+- PONS buy and sell through Uniswap v3, v2 and v4 (ETH) and v4 (USDG), on both Universal Routers. Tokens received equal the quote to the wei, and the treasury receives exactly 1%.
+- A lift.fun token (hooked v4 pool): buy is exact, and the buy→sell probe sells back. Its sell can't be quoted at current state, because the launch liquidity is one-sided until someone buys.
+- PONS curve quote equals the curve's own `buy()` output to the wei.
+
+Tests: `pnpm --filter @rushr/trade test` covers fee math, config guards, encodings (byte layouts matched to live txs), command plans for every venue and side, PONS math against on-chain values, transfer and tax analysis, and revert decoding (36 tests).
+
+### `contracts/RushrCurveRouter.sol` (not deployed)
+PONS curve buy and sell with the fee in ETH. Immutable factory, treasury and fee (≤3%); no owner and no arbitrary calls. `minOut` is checked on amounts actually received, ETH is accepted only mid-trade, and the curve approval is reset after each sell. Foundry has 14 unit and fuzz tests plus a fork test that buys and sells on a real PONS curve: 0.01 ETH in, the treasury gets exactly 1% each way, and nothing is left in the router. See `contracts/README.md`.
+
+### `/swap` test page
+`apps/web/app/(app)/swap` with `components/trade/*`:
+- connect an injected wallet (EIP-6963; accounts only)
+- token, buy or sell, ETH or USDG, slippage
+- all routes with impact, and the fee breakdown (Rushr fee, venue fees, minimum received, warnings)
+- **Simulate:** approvals and swap via `eth_simulateV1`, the ETH balance topped up inside the simulation only, plus the buy→sell probe
+- the unsigned tx and approvals shown for inspection
+
+Signing is disabled. Quotes use the **public** Robinhood RPC from the browser (it supports `eth_simulateV1` and CORS), so no secret ships and Alchemy isn't billed.
+
+### Open items
+- Founder decisions (top of this doc). Then set `feeRecipient` and `feeBps`, and enable signing behind `assertSignable`.
+- Multi-hop routes (e.g. token → USDG → ETH) and split routes. Today it's the best single pool.
+- Ramses, Aero and the other v3 forks: adapter in the fee router (phase 2).
+- **Data request:** v4 pool keys (`currency0/1, fee, tickSpacing, hooks`) per pool in the API, so hooked pools (Doppler) resolve without a getLogs call.
+- Integrating the trade box into the terminal's token page (Terminal stream) on top of `@rushr/trade`.

@@ -1,4 +1,4 @@
-import { TradeError } from './errors.ts';
+import { TradeError } from './errors';
 
 export const BPS = 10_000n;
 

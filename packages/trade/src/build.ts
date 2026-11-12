@@ -1,10 +1,10 @@
 import { encodeFunctionData, maxUint256, type Hex } from 'viem';
-import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from './addresses.ts';
-import { rushrCurveRouterAbi } from './abis.ts';
-import type { TradeConfig } from './config.ts';
-import { TradeError } from './errors.ts';
-import { cmd, encodeExecute, encodeV3Path, OPEN_DELTA, v4, type EncodedCommand, type PermitSingle } from './universal-router.ts';
-import type { Approval, BuiltSwap, Quote } from './types.ts';
+import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from './addresses';
+import { rushrCurveRouterAbi } from './abis';
+import type { TradeConfig } from './config';
+import { TradeError } from './errors';
+import { cmd, encodeExecute, encodeV3Path, OPEN_DELTA, v4, type EncodedCommand, type PermitSingle } from './universal-router';
+import type { Approval, BuiltSwap, Quote } from './types';
 
 const ETH = TRADE_ADDRESSES.eth;
 const WETH = TRADE_ADDRESSES.weth;

@@ -1,7 +1,7 @@
 import type { Address, PublicClient } from 'viem';
-import { TRADE_ADDRESSES } from './addresses.ts';
-import { erc20Abi, permit2Abi } from './abis.ts';
-import type { PermitSingle } from './universal-router.ts';
+import { TRADE_ADDRESSES } from './addresses';
+import { erc20Abi, permit2Abi } from './abis';
+import type { PermitSingle } from './universal-router';
 
 const MAX_UINT160 = (1n << 160n) - 1n;
 

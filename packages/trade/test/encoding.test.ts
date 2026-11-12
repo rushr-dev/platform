@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, decodeFunctionData, encodeErrorResult, parseAbi, toFunctionSelector, zeroAddress } from 'viem';
-import { cmd, encodeExecute, encodeV3Path, universalRouterAbi, v4 } from '../src/universal-router.ts';
-import { ponsBuyOut, ponsSellOut, sortCurrencies, v2AmountOut, v4PoolId } from '../src/math.ts';
-import { decodeRevert } from '../src/revert.ts';
-import { spotOutFromSqrtPrice } from '../src/quote.ts';
+import { cmd, encodeExecute, encodeV3Path, universalRouterAbi, v4 } from '../src/universal-router';
+import { ponsBuyOut, ponsSellOut, sortCurrencies, v2AmountOut, v4PoolId } from '../src/math';
+import { decodeRevert } from '../src/revert';
+import { spotOutFromSqrtPrice } from '../src/quote';
 
 const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const PONS = '0x39dbed3a2bd333467115de45665cc57f813c4571';

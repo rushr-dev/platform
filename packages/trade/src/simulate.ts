@@ -1,13 +1,13 @@
 import { encodeFunctionData, maxUint256, toHex, type Address, type Hex, type PublicClient } from 'viem';
-import { TRADE_ADDRESSES } from './addresses.ts';
-import { erc20Abi, permit2Abi } from './abis.ts';
-import { decodeRevert } from './revert.ts';
+import { TRADE_ADDRESSES } from './addresses';
+import { erc20Abi, permit2Abi } from './abis';
+import { decodeRevert } from './revert';
 export { decodeRevert };
-import type { TradeConfig } from './config.ts';
-import { TradeError, sanitizeRpcMessage } from './errors.ts';
-import { BPS } from './fees.ts';
-import { buildSwap } from './build.ts';
-import type { BuiltSwap, Pool, Quote } from './types.ts';
+import type { TradeConfig } from './config';
+import { TradeError, sanitizeRpcMessage } from './errors';
+import { BPS } from './fees';
+import { buildSwap } from './build';
+import type { BuiltSwap, Pool, Quote } from './types';
 
 /**
  * Simulation only: everything here runs through eth_simulateV1 / eth_call against current state with

@@ -1,6 +1,6 @@
 import { getAddress, isAddress, type Address } from 'viem';
-import { TRADE_ADDRESSES } from './addresses.ts';
-import { TradeError } from './errors.ts';
+import { TRADE_ADDRESSES } from './addresses';
+import { TradeError } from './errors';
 
 /**
  * Platform fee configuration. PLACEHOLDER VALUES: the founder sets the real treasury (a multisig) and

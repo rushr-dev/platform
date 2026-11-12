@@ -1,6 +1,6 @@
 import { encodeAbiParameters, keccak256, type Address, type Hex } from 'viem';
-import { BPS } from './fees.ts';
-import type { PoolKey } from './universal-router.ts';
+import { BPS } from './fees';
+import type { PoolKey } from './universal-router';
 
 /** Uniswap v2 getAmountOut with the 0.30% LP fee (997/1000). */
 export function v2AmountOut(amountIn: bigint, reserveIn: bigint, reserveOut: bigint): bigint {
