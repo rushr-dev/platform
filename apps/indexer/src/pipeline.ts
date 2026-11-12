@@ -4,6 +4,7 @@ import {
   LAUNCHPADS,
   NATIVE_ETH,
   PAIR_FACTORIES,
+  PONS_LAUNCH_TOPICS,
   QUOTES,
   TOPICS,
   STOCK_QUOTES,
@@ -239,7 +240,7 @@ export class Pipeline {
     lap('load');
     // PONS launch events don't say whether the curve is priced in ETH or USDG: ask the curves first.
     const launchedCurves = logs
-      .filter((l) => l.topics[0] === TOPICS.ponsLaunch && l.topics[2])
+      .filter((l) => PONS_LAUNCH_TOPICS.includes(l.topics[0] as Hex) && l.topics[2])
       .map((l) => `0x${l.topics[2]!.slice(26)}`.toLowerCase())
       .filter((c) => !this.pools.has(c));
     const curveQuotes = launchedCurves.length ? await this.rpc.curveQuotes(launchedCurves) : new Map<string, Address>();

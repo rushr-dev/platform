@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import postgres, { type Sql } from 'postgres';
 import type { Address, Hex } from 'viem';
-import { NATIVE_ETH, PAIR_SWAP_TOPICS, acceptsPrice, QUOTES, ROBINHOOD_CHAIN, STOCK_QUOTES, TOPICS, UNISWAP, decodeLogs, type PoolInfo, type RawLog } from '@rushr/core';
+import { NATIVE_ETH, PAIR_SWAP_TOPICS, PONS_LAUNCH_TOPICS, acceptsPrice, QUOTES, ROBINHOOD_CHAIN, STOCK_QUOTES, TOPICS, UNISWAP, decodeLogs, type PoolInfo, type RawLog } from '@rushr/core';
 import { dbUrl, holderHistory, poller as pollerOf, type Env } from './env';
 import { Pipeline } from './pipeline';
 import { Rpc } from './rpc';
@@ -117,7 +117,7 @@ export class TokenHydrator extends DurableObject<Env> {
             rpc.filteredLogs(0n, head, { address: UNISWAP.v4.poolManager, topics: q < token ? [INIT, null, topicOf(q), tok] : [INIT, null, tok, topicOf(q)] }),
           ),
         ),
-        rpc.filteredLogs(0n, head, { topics: [TOPICS.ponsLaunch, tok] }),
+        rpc.filteredLogs(0n, head, { topics: [PONS_LAUNCH_TOPICS, tok] }),
         rpc.filteredLogs(firstFrom, head, { address: token, topics: [TRANSFER] }),
       ]);
       const inits = initLists.flat();
@@ -211,7 +211,7 @@ export class TokenHydrator extends DurableObject<Env> {
   ) {
     const pairAddrs = [...new Set(logs.filter((l) => PAIR_SWAP_TOPICS.includes(l.topics[0] as Hex)).map((l) => l.address.toLowerCase()))];
     // PONS curves are priced in ETH or USDG (pairToken()); launch events don't say which.
-    const curves = [...new Set(logs.filter((l) => l.topics[0] === TOPICS.ponsLaunch && l.topics[2]).map((l) => addrOf(l.topics[2]!)))];
+    const curves = [...new Set(logs.filter((l) => PONS_LAUNCH_TOPICS.includes(l.topics[0] as Hex) && l.topics[2]).map((l) => addrOf(l.topics[2]!)))];
     const [keys, curveQuotes] = await Promise.all([
       pairAddrs.length ? rpc.pairKeys(pairAddrs) : Promise.resolve([]),
       curves.length ? rpc.curveQuotes(curves) : Promise.resolve(new Map<string, Address>()),

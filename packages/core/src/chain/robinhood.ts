@@ -119,6 +119,11 @@ export const TOPICS = {
   liftDevBuy: '0x34b6bd41bb4087aa5e8294323c3f441554c538e0b5107fc056bd9ce45654083d',
   /** PONS launch. topics: [sig, token, curve, creator?]; data: creator?, ethIn (dev buy), tokensOut */
   ponsLaunch: '0xdcacba5e347ae7abd91cb519eb877af8fa7774e347b85dd3ddcd24a2ba8cdf37',
+  /**
+   * PONS v2 launch (PonsV2LaunchDeployer 0x3711cea4…, emitted by the migrator 0x7ed598bc…). Same topics as
+   * ponsLaunch [sig, token, curve, creator]; data: 0, 0, graduation threshold. The curve emits ponsBuy/ponsSell.
+   */
+  ponsV2Launch: '0x8d4aad4953d0ca700d468f3753aa14432d1b35b43ec6409f051fb6aa43a89607',
   /** PONS curve buy (emitted by the per-token curve). topics: [sig, buyer, recipient]; data: ethIn, tokensOut, fee, fee */
   ponsBuy: '0xec36bf571f136799e8dc0b0b8bea4b04d8bd3d43de838aab0d5fc21d4cbfc455',
   /** PONS curve sell. topics: [sig, seller, recipient]; data: tokensIn, ethOut, fee, fee */
