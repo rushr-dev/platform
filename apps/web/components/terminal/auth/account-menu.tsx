@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { ArrowSquareOut, Check, Copy, GearSix, SignOut, Wallet } from '@phosphor-icons/react';
+import { ArrowSquareOut, Check, Copy, GearSix, SignOut, User, Wallet } from '@phosphor-icons/react';
 import { auth, displayName, useAuth } from '@/lib/auth';
 import { fmtUnits, useBalances } from '@/lib/balances';
 import { useMe } from '@/lib/members';
@@ -84,6 +84,14 @@ export function AccountMenu() {
           </div>
           {user.externalWallet && <WalletRow label="Signed in with" address={user.externalWallet} />}
           <div className="p-1.5">
+            <Link
+              href="/me"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-ink hover:bg-white/[0.04]"
+            >
+              <User size={15} /> Profile &amp; wallet
+            </Link>
             <MenuButton
               onClick={() => {
                 setOpen(false);
