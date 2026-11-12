@@ -107,8 +107,15 @@ export const THRESHOLDS = {
   freshWalletSeconds: 24 * 3600,
   serialLaunches7d: 5,
   rugDrawdown: 0.9,
-  /** Plain-pool tokens with at least this many airdropped holders are treated as spam clones. */
+  /**
+   * Airdrops pad holder counts, but real tokens get airdropped too (marketing, dusting). What matters
+   * is the share: at least this many airdropped holders...
+   */
   spamAirdroppedHolders: 20,
+  /** ...making up at least this share of all holders means the count is fake (spam, if a plain pool). */
+  airdropShareFake: 0.5,
+  /** ...or at least this share: worth a warning, not a verdict. */
+  airdropShareNotable: 0.2,
   /** Copycat: a same-ticker token with at least this many organic holders... */
   copycatTwinMinHolders: 50,
   /** ...and at least this many times this token's organic holders. */
@@ -119,6 +126,12 @@ export const THRESHOLDS = {
 function isCopycat(s: TokenSnapshot) {
   const own = Math.max(0, s.holderCount - s.airdropped.length);
   return s.twinOrganicHolders >= Math.max(THRESHOLDS.copycatTwinMinHolders, own * THRESHOLDS.copycatTwinRatio);
+}
+
+/** Share of holders that were airdropped (0 below the minimum count, so a handful never matters). */
+function airdropShare(s: TokenSnapshot) {
+  if (s.airdropped.length < THRESHOLDS.spamAirdroppedHolders) return 0;
+  return s.airdropped.length / Math.max(s.holderCount, s.airdropped.length);
 }
 
 const isPlainPool = (launchpad: string | null) => !launchpad || launchpad === 'uniswap-v4';
@@ -231,7 +244,7 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     dev,
     copycat: isCopycat(s),
     twinOrganicHolders: isCopycat(s) ? s.twinOrganicHolders : 0,
-    spam: isPlainPool(s.launchpad) && s.airdropped.length >= THRESHOLDS.spamAirdroppedHolders,
+    spam: isPlainPool(s.launchpad) && airdropShare(s) >= THRESHOLDS.airdropShareFake,
   };
   return { ...signals, ...judge(signals, s) };
 }
@@ -251,7 +264,12 @@ function judge(
   else if (x.bundledPct !== null && x.bundledPct >= 10) add('medium', `${x.bundledPct}% bought in the launch bundle`);
   if (x.insidersPct >= 15) add('high', `insiders hold ${x.insidersPct}%`);
   else if (x.insidersPct >= 5) add('medium', `insiders hold ${x.insidersPct}%`);
-  if (x.airdroppedHolders >= 20) add('high', `${x.airdroppedHolders} holders were airdropped (fake holder count)`);
+  const share = airdropShare(s);
+  if (share >= THRESHOLDS.airdropShareFake) {
+    add('high', `${x.airdroppedHolders} of ${s.holderCount} holders were airdropped (fake holder count)`);
+  } else if (share >= THRESHOLDS.airdropShareNotable) {
+    add('medium', `${Math.round(share * 100)}% of holders were airdropped`);
+  }
   if (x.top10Pct >= 50) add('high', `top 10 wallets hold ${x.top10Pct}%`);
   else if (x.top10Pct >= 30) add('medium', `top 10 wallets hold ${x.top10Pct}%`);
   if (x.devPct >= 10) add('medium', `dev still holds ${x.devPct}%`);

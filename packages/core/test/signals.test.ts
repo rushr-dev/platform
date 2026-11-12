@@ -72,6 +72,15 @@ describe('computeSignals', () => {
     expect(computeSignals(base({ symbol: 'AI', holderCount: 400, twinOrganicHolders: 500 })).copycat).toBe(false);
   });
 
+  it('treats a few airdropped wallets on a big real token as noise, not spam', () => {
+    // Real PONS: 1,036 holders, 182 of them received an airdrop (18%).
+    const s = computeSignals(
+      base({ symbol: 'PONS', launchpad: 'uniswap-v4', holderCount: 1036, airdropped: Array.from({ length: 182 }, (_, i) => `a${i}`) }),
+    );
+    expect(s.spam).toBe(false);
+    expect(s.verdict).not.toContain('airdropped');
+  });
+
   it('marks a plain-pool clone with a padded holder count as spam', () => {
     const airdropped = Array.from({ length: 206 }, (_, i) => `a${i}`);
     expect(computeSignals(base({ launchpad: 'uniswap-v4', airdropped })).spam).toBe(true);
