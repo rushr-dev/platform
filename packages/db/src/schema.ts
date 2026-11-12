@@ -140,6 +140,52 @@ export const positions = pgTable(
   (t) => [primaryKey({ columns: [t.wallet, t.token] }), index('positions_token_idx').on(t.token)],
 );
 
+/**
+ * Trades placed through Rushr (web, agents, API) and the platform fee each paid, for fee accounting and
+ * referral accruals. Recorded from the chain, never from client amounts: amounts and the fee actually
+ * received by the treasury come from the receipt and a call trace. See docs/trading.md.
+ */
+export const tradesLedger = pgTable(
+  'trades_ledger',
+  {
+    id: text('id').primaryKey(),
+    chainId: integer('chain_id').notNull(),
+    status: text('status', { enum: ['quoted', 'submitted', 'confirmed', 'failed'] }).notNull(),
+    txHash: text('tx_hash').notNull().unique(),
+    blockNumber: bigint('block_number', { mode: 'bigint' }),
+    ts: timestamp('ts', { withTimezone: true }).notNull(),
+    trader: text('trader').notNull(),
+    sourceKind: text('source_kind', { enum: ['web', 'agent', 'api'] }).notNull(),
+    sourceId: text('source_id'),
+    side: text('side', { enum: ['buy', 'sell'] }),
+    token: text('token'),
+    quoteAsset: text('quote_asset', { enum: ['ETH', 'USDG'] }),
+    venue: text('venue'),
+    poolId: text('pool_id'),
+    router: text('router'),
+    /** buy: quote paid in total (fee included); sell: tokens sold. Raw units. */
+    amountIn: amount('amount_in'),
+    /** buy: tokens received; sell: quote received after the fee. Raw units. */
+    amountOut: amount('amount_out'),
+    feeToken: text('fee_token'),
+    baseFeeBps: integer('base_fee_bps'),
+    /** Effective fee rate measured from the chain (fee / quote notional). */
+    feeBps: numeric('fee_bps'),
+    /** Received by the treasury in this tx: the payout basis. */
+    feeAmount: amount('fee_amount'),
+    referrer: text('referrer'),
+    referralCode: text('referral_code'),
+    referralDiscount: amount('referral_discount'),
+    referrerShareBps: integer('referrer_share_bps'),
+    referrerAccrual: amount('referrer_accrual'),
+    /** Anything that didn't match expectations (fee rate off, trader mismatch, no swap found, ...). */
+    flags: text('flags').array().notNull().default([]),
+    confirmAttempts: integer('confirm_attempts').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('trades_ledger_referrer_status_idx').on(t.referrer, t.status), index('trades_ledger_trader_ts_idx').on(t.trader, t.ts)],
+);
+
 /** Per-wallet PnL summary for profiles, refreshed about every minute from positions and swaps. */
 export const walletPnl = pgTable(
   'wallet_pnl',

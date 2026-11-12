@@ -130,3 +130,18 @@ describe.skipIf(!pg)('independent agents', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe.skipIf(!pg)('key guard allowlist', () => {
+  it('lets txHash through on POST /trades only', async () => {
+    const t = await setup('guard');
+    try {
+      const hash = generatePrivateKey();
+      // No /trades route here (Data mounts it): passing the guard means a 404, failing it means never_send_keys.
+      expect((await t.call('POST', '/trades', { body: { txHash: hash } })).json.error.code).toBe('not_found');
+      expect((await t.call('POST', '/trades', { body: { txHash: hash, privateKey: hash } })).json.error.code).toBe('never_send_keys');
+      expect((await t.call('POST', '/feedback', { body: { message: 'hi', txHash: hash } })).json.error.code).toBe('never_send_keys');
+    } finally {
+      await t.teardown();
+    }
+  });
+});

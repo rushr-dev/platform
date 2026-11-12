@@ -70,6 +70,14 @@ describe('guard', () => {
     expect(checkHandle('rushr_0fficial')).toEqual({ ok: false, error: 'handle_reserved' });
     expect(checkHandle('admin')).toEqual({ ok: false, error: 'handle_reserved' });
   });
+  it('allows only the exact opted-in top-level fields', () => {
+    const hash = generatePrivateKey();
+    expect(findKeyMaterial({ txHash: hash })).toBe('txHash');
+    expect(findKeyMaterial({ txHash: hash }, { allow: ['txHash'] })).toBeNull();
+    expect(findKeyMaterial({ txHash: hash, privateKey: hash }, { allow: ['txHash'] })).toBe('privateKey');
+    expect(findKeyMaterial({ nested: { txHash: hash } }, { allow: ['txHash'] })).toBe('nested.txHash');
+    expect(findKeyMaterial({ txHash: 'abandon ability able about above absent absorb abstract absurd abuse access accident' }, { allow: ['txHash'] })).toBeNull();
+  });
   it('finds private keys and seed phrases anywhere in a body', () => {
     const pk = generatePrivateKey();
     expect(findKeyMaterial({ handle: 'x', privateKey: pk })).toBe('privateKey');

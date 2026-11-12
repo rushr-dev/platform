@@ -34,6 +34,8 @@ export interface Env {
 export type EnrichMessage =
   | { kind: 'wallet-funding'; wallet: string }
   | { kind: 'token-signals'; token: string }
+  /** Fill a trade-ledger row from the chain (POST /v1/trades). */
+  | { kind: 'trade-confirm'; tx: string; attempt?: number }
   | {
       kind: 'token-metadata';
       token: string;
