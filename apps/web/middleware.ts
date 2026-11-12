@@ -3,7 +3,7 @@ import { buildCsp, newNonce } from '@/components/trade/csp';
 
 /**
  * Strict CSP with a per-request nonce on the terminal, account and trade pages (/trenches, /token,
- * /settings, /me, /swap): beta trading v0 signs in the browser, see components/trade/csp.ts. Next.js reads the nonce from the request's CSP header and puts
+ * /settings, /me, /u/*, /swap): beta trading v0 signs in the browser, see components/trade/csp.ts. Next.js reads the nonce from the request's CSP header and puts
  * it on its own scripts; these routes are dynamically rendered. The landing page is not matched.
  */
 export function middleware(req: NextRequest) {
@@ -18,5 +18,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/trenches', '/trenches/:path*', '/token/:path*', '/swap', '/swap/:path*', '/settings', '/settings/:path*', '/me', '/me/:path*'],
+  matcher: ['/trenches', '/trenches/:path*', '/token/:path*', '/swap', '/swap/:path*', '/settings', '/settings/:path*', '/me', '/me/:path*', '/u/:path*'],
 };
