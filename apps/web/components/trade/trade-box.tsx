@@ -87,7 +87,7 @@ function TradeBoxInner({ token }: { token: TradeToken }) {
             </button>
           ))}
         </div>
-        <Link href="/settings" className="ml-auto rounded-lg px-2 py-1 text-xs text-muted hover:text-ink" title={`Cap ${settings.maxTradeEth} ETH · max slippage ${settings.slippagePct}%`}>
+        <Link href="/settings" className="ml-auto rounded-lg px-2 py-1 text-xs text-muted hover:text-ink" title={`Cap ${settings.maxTradeEth} ETH · slippage ${typeof settings.slippagePct === 'number' ? `${settings.slippagePct}%` : 'auto'}`}>
           Settings
         </Link>
       </div>

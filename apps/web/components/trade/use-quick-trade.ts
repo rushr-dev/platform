@@ -67,11 +67,12 @@ function friendly(e: unknown): string {
 }
 
 /**
- * Slippage: automatic (5–15% by token age, volatility and impact, plus measured tax), never above the
- * user's "Max slippage" setting. If the token's tax needs more than that, the guard tells them.
+ * Slippage from Terminal's settings: 'auto' (the planned default) → automatic 5–15% by token age,
+ * volatility and impact, plus the measured tax; a number → exactly that fixed percentage.
  */
 function slippageFor(s: TradeSettings, auto: number): number {
-  return Math.min(auto, Math.round(s.slippagePct * 100));
+  const v = s.slippagePct as number | 'auto';
+  return typeof v === 'number' && Number.isFinite(v) ? Math.round(v * 100) : auto;
 }
 
 export function useQuickTrade(token: TradeToken) {

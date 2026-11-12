@@ -14,17 +14,17 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
 | Where | What |
 | --- | --- |
 | `packages/trade/src/quick.ts` | `quickBuy` / `quickSell` / `prepareQuickTrade` build the exact wallet calls. Sells add `approve(Permit2)`, then `Permit2.approve(Universal Router, 30 days)`, then the swap. Guardrails are applied and the calls are simulated before sending (`eth_simulateV1` from the user's address), with gas taken from the simulation |
-| **One Privy setup** (Terminal's) | `components/terminal/auth/privy-host.tsx` loads Privy lazily (email, X and wallet login; an embedded wallet for every user on chain 4663; wallet UIs off) and fills `lib/auth`. The trade UI uses only `useAuth()`, `auth.login()` and `auth.sendTransaction()`, so it imports no Privy and adds nothing to page bundles. Settings come from Terminal's `lib/settings` / `/settings`: buy and sell presets, quick-buy amount, max slippage, per-trade cap |
+| **One Privy setup** (Terminal's) | `components/terminal/auth/privy-host.tsx` loads Privy lazily (email and EVM wallet login; an embedded wallet for every user on chain 4663; wallet UIs off) and fills `lib/auth`. The trade UI uses only `useAuth()`, `auth.login()` and `auth.sendTransaction()`, so it imports no Privy and adds nothing to page bundles. Settings come from Terminal's `lib/settings` / `/settings`: buy and sell presets, quick-buy amount, slippage (auto or fixed), per-trade cap |
 | `apps/web/components/trade/trade-box.tsx` | `TradeBox` for the token page: buy/sell, presets, % sells, quote (receive, min, fee, route), warnings and blockers, the "I understand" toggle, a link to `/settings`, and tx status with an explorer link |
 | `apps/web/components/trade/quick-buy-button.tsx` | `QuickBuyButton` for trenches rows: one click (the `/settings` quick-buy amount), then quote, guards and a silent send |
 | `apps/web/components/trade/use-quick-trade.ts` | The hook: quote, honeypot/tax probe, guards, then `auth.sendTransaction` for each call in order and wait for each receipt |
 | `apps/web/components/trade/index.ts` | Exports `TradeBox`, `QuickBuyButton`, `isSwapEnabled`, `tradingAvailable` and `TradeToken` for Terminal to place. Everything renders nothing unless `NEXT_PUBLIC_SWAP_ENABLED=1` and a Privy app id are set |
-| `apps/web/components/trade/csp.ts` + `apps/web/middleware.ts` | Strict CSP with a per-request nonce on `/trenches`, `/token/*`, `/settings`, `/me` and `/swap`. Privy is live on all of them, so all get the same CSP, and `/settings` is rendered per request so the nonce reaches its scripts |
+| `apps/web/components/trade/csp.ts` + `apps/web/middleware.ts` | Strict CSP with a per-request nonce on `/trenches`, `/token/*`, `/settings`, `/me`, `/u/*` and `/swap`. Privy is live on all of them, so all get the same CSP, and `/settings` is rendered per request so the nonce reaches its scripts |
 | `packages/trade/scripts/quick-sim.ts` | End-to-end simulation of the wallet calls on live state |
 
 ### Guardrails (client)
 - **Per-trade cap:** on the ETH side (buy input, expected sell output), from Terminal's `/settings`. Note: Terminal's default is 0.5 ETH, while the founder's spec said 0.25 ETH; the default lives in `lib/settings.ts` (Terminal).
-- **Slippage:** automatic. 5% base; +3% for tokens under 1 h old, +5% under 10 min; +3%/+5% for 5-min moves above 20%/50%; plus extra for impact above 2%. Capped at 15%, then the measured token tax is added on top, **and never above the user's "Max slippage" setting**.
+- **Slippage:** automatic. 5% base; +3% for tokens under 1 h old, +5% under 10 min; +3%/+5% for 5-min moves above 20%/50%; plus extra for impact above 2%. Capped at 15%, then the measured token tax is added on top, Terminal's `/settings` chooses **auto** (this) or a **fixed** percentage.
 - **Quote freshness:** quotes expire after 10 s and are refreshed automatically before sending.
 - **Safety:**
   - High-risk tokens need an "I understand" toggle once per token (remembered per browser).
@@ -69,10 +69,7 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
    - development only: `http://localhost:3010` (Terminal) and `http://localhost:3012` (Swap)
 
    Remove localhost before launch, or use a separate dev app client.
-2. **Login methods:**
-   - **Email**
-   - **X / Twitter**: Privy's default credentials work for testing; for launch, add your own X OAuth app credentials so the consent screen says "Rushr"
-   - **External wallets**: MetaMask and WalletConnect for users who bring a wallet
+2. **Login methods** (founder decision): **email** and **EVM wallet** (MetaMask, WalletConnect) only. No X login, so no X OAuth setup. This is already the configuration in Terminal's `privy-host.tsx`; make the dashboard match.
 3. **Embedded wallets (Ethereum):**
    - enable, with **"Create on login: users without wallets"** (the code also sets this)
    - keep **key export enabled**, since users must be able to export
