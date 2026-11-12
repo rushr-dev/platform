@@ -52,8 +52,8 @@ export const ponsFactoryAbi = parseAbi(['function getLaunchedToken(address token
 
 /** RushrCurveRouter (contracts/src/RushrCurveRouter.sol). Not deployed. */
 export const rushrCurveRouterAbi = parseAbi([
-  'function buy(address token, uint256 minTokensOut, address recipient) payable returns (uint256 tokensOut)',
-  'function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient) returns (uint256 quoteOut)',
+  'function buy(address token, uint256 minTokensOut, address recipient, uint256 deadline) payable returns (uint256 tokensOut)',
+  'function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline) returns (uint256 quoteOut)',
   'function feeBps() view returns (uint16)',
   'function treasury() view returns (address)',
 ]);
@@ -79,5 +79,9 @@ export const knownErrorsAbi = parseAbi([
   'error SlippageExceeded(uint256 received, uint256 minimum)',
   'error UnknownCurve(address token)',
   'error CurveGraduated(address token)',
+  'error DeadlinePassed()',
+  'error Reentrancy()',
+  'error EthTransferFailed()',
+  'error TokenCallFailed()',
   'error Error(string)',
 ]);

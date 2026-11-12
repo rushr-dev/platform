@@ -107,14 +107,14 @@ export function buildSwap(q: Quote, cfg: TradeConfig, opts: BuildOptions = {}): 
     if (side === 'buy')
       return {
         quote: q,
-        tx: { to: router, value: q.amountIn, data: encodeFunctionData({ abi: rushrCurveRouterAbi, functionName: 'buy', args: [q.pool.token, q.minAmountOut, q.request.trader] }) },
+        tx: { to: router, value: q.amountIn, data: encodeFunctionData({ abi: rushrCurveRouterAbi, functionName: 'buy', args: [q.pool.token, q.minAmountOut, q.request.trader, deadline] }) },
         approvals: [],
         commands: [],
         deadline,
       };
     return {
       quote: q,
-      tx: { to: router, value: 0n, data: encodeFunctionData({ abi: rushrCurveRouterAbi, functionName: 'sell', args: [q.pool.token, q.amountIn, q.minAmountOut, q.request.trader] }) },
+      tx: { to: router, value: 0n, data: encodeFunctionData({ abi: rushrCurveRouterAbi, functionName: 'sell', args: [q.pool.token, q.amountIn, q.minAmountOut, q.request.trader, deadline] }) },
       approvals: [{ kind: 'erc20', token: q.pool.token, spender: router, amount: q.amountIn }],
       commands: [],
       deadline,
