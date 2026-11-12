@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import postgres, { type Sql } from 'postgres';
 import { dbUrl, poller as pollerOf, type Env } from './env';
 import { tokenSnapshot, trenchesList, TRENCHES_DEFAULTS, COLUMNS, type Column } from './data';
+import { hydrator } from './hydrator';
 
 /**
  * Realtime gateway (protocol v2, docs/realtime.md). Clients are spread over GATEWAY_COUNT instances;
@@ -202,9 +203,19 @@ export class Gateway extends DurableObject<Env> {
         this.snapshots.set(topic, entry);
         if (this.snapshots.size > 300) this.snapshots.delete(this.snapshots.keys().next().value!);
       }
-      const data = await entry.promise;
-      if (!data) {
-        ws.send(JSON.stringify({ type: 'error', code: 'bad_topic', message: 'unknown token', topic }));
+      const data = (await entry.promise) as { trades?: unknown[] } | null;
+      if (topic.startsWith('token:') && (!data || !data.trades?.length)) {
+        // Nothing indexed: fetch it from chain. The hydrator streams snapshots to this topic as they land.
+        this.snapshots.delete(topic);
+        const { state } = await hydrator(this.env, topic.slice(6)).hydrate(topic.slice(6));
+        if (!data || state === 'hydrating') {
+          const empty = { card: null, stats: null, pools: [], trades: [], candles: { '1s': [], '1m': [] } };
+          ws.send(JSON.stringify({ topic, type: 'snapshot', epoch: await this.currentEpoch(), seq: null, source: 'chain', data: { ...(data ?? empty), state } }));
+        } else {
+          ws.send(JSON.stringify({ topic, type: 'snapshot', epoch: await this.currentEpoch(), seq: entry.seq, source: 'index', data }));
+        }
+      } else if (!data) {
+        ws.send(JSON.stringify({ type: 'error', code: 'bad_topic', message: 'unknown topic', topic }));
       } else {
         ws.send(JSON.stringify({ topic, type: 'snapshot', epoch: await this.currentEpoch(), seq: entry.seq, source: 'index', data }));
         const replay = (this.recent.get(topic) ?? []).filter((d) => d.seq > entry!.seq);
@@ -278,8 +289,16 @@ export class Gateway extends DurableObject<Env> {
         }
       }
     }
-    // Hydration snapshots replace the cached one.
-    for (const e of events) if (e.type === 'snapshot') this.snapshots.delete(e.topic);
+    // Hydration snapshots replace the cached one; when indexing takes over, viewers get a numbered snapshot.
+    for (const e of events) {
+      if (e.type === 'snapshot') this.snapshots.delete(e.topic);
+      if (e.type === 'state' && (e.data as { state?: string } | null)?.state === 'live' && e.seq == null) {
+        this.snapshots.delete(e.topic);
+        for (const ws of this.ctx.getWebSockets()) {
+          if ((ws.deserializeAttachment() as Attachment | null)?.topics.includes(e.topic)) await this.sendSnapshot(ws, e.topic, true);
+        }
+      }
+    }
     if (this.recent.size > 500) for (const t of [...this.recent.keys()].slice(0, 100)) this.recent.delete(t);
     return sent;
   }

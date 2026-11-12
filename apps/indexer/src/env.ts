@@ -2,6 +2,7 @@ import type { ChainPoller } from './poller';
 import type { LiveFeed } from './feed';
 import type { Backfiller } from './backfill';
 import type { Gateway } from './gateway';
+import type { RpcBudget, TokenHydrator } from './hydrator';
 
 export interface Env {
   CHAIN_ID: string;
@@ -20,6 +21,9 @@ export interface Env {
   BACKFILLER: DurableObjectNamespace<Backfiller>;
   /** Realtime v2 gateways (docs/realtime.md). */
   GATEWAY: DurableObjectNamespace<Gateway>;
+  /** Read-through hydration, one per token, and its global rate limit. */
+  HYDRATOR: DurableObjectNamespace<TokenHydrator>;
+  RPC_BUDGET: DurableObjectNamespace<RpcBudget>;
   ENRICH_QUEUE: Queue<EnrichMessage>;
   /** Token metadata only, so new launches get icons without waiting behind signal recomputes. */
   METADATA_QUEUE: Queue<EnrichMessage>;

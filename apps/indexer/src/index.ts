@@ -12,6 +12,7 @@ export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
 export { Backfiller } from './backfill';
 export { Gateway } from './gateway';
+export { TokenHydrator, RpcBudget } from './hydrator';
 
 /** Follow-up delays for launch metadata that wasn't loadable on the first try. */
 const METADATA_RETRY_S = [10, 60, 300, 1800];
@@ -211,6 +212,22 @@ export default {
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
     await pollerOf(env).start();
+    // Every 15 minutes: holder backfill for tokens that matter (>= 50 holders or >= $10K 24h volume)
+    // whose Transfer history we don't have from the start (discovered mid-life, history too big then).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 5) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const rows = await sql<{ address: string }[]>`
+          select t.address from tokens t
+          where (t.holders >= 50 or t.volume_24h_usd >= 10000)
+            and not exists (select 1 from indexer_state i where i.key = 'holders:' || t.address)
+            and coalesce((select min(x.block) from transfers x where x.token = t.address), 0) > t.created_block + 100
+          order by t.volume_24h_usd desc nulls last limit 20`;
+        if (rows.length) await holderHistory(env).enqueueHolders(rows.map((r) => r.address));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
     // Every 15 minutes: retry metadata for active tokens that still have no icon, and any never tried.
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });

@@ -107,6 +107,12 @@ export interface PipelineOptions {
    * stay owned by the live path and the holder backfill, so nothing is counted twice).
    */
   skipTransfers?: boolean;
+  /** Cap the Transfer history fetched for discovered tokens even in historical mode. */
+  boundedHistory?: boolean;
+  /** Don't fetch discovered tokens' Transfer history at all (hydration: the holder backfill does it exactly). */
+  noHistory?: boolean;
+  /** Only discover pools of this token (hydration: other tokens met along the way are left to the poller). */
+  onlyToken?: string;
 }
 
 /** Quote tokens other than ETH/USDG (stock tokens, coins used as a pair's quote), priced from their own pools. */
@@ -424,6 +430,30 @@ export class Pipeline {
     return inserted;
   }
 
+  /**
+   * Start treating a token as tracked (written elsewhere, e.g. by a hydrator): load its row and pools,
+   * and forget any earlier decision to ignore them (the 7-day rule would otherwise drop an old token).
+   */
+  async adoptToken(token: string): Promise<boolean> {
+    await this.load();
+    const [t] = await this.sql<{ decimals: number; total_supply: string }[]>`select decimals, total_supply from tokens where address = ${token}`;
+    if (!t) return false;
+    this.tokens.set(token, { decimals: t.decimals, totalSupply: BigInt(t.total_supply) });
+    this.ignoredTokens.delete(token);
+    const pools = await this.sql<
+      { id: string; token: string; quote: string; token_is_currency0: boolean; dex: string; venue: string | null; fee: number | null; tick_spacing: number | null; launchpad: string | null; hooks: string | null; created_block: string; created_at: Date }[]
+    >`select id, token, quote, token_is_currency0, dex, venue, fee, tick_spacing, launchpad, hooks, created_block, created_at from pools where token = ${token}`;
+    for (const p of pools) {
+      this.ignoredPools.delete(p.id);
+      this.pools.set(p.id, {
+        id: p.id, token: p.token as Address, quote: p.quote as Address, tokenIsCurrency0: p.token_is_currency0, dex: p.dex as PoolInfo['dex'],
+        venue: p.venue, fee: p.fee, tickSpacing: p.tick_spacing, launchpad: p.launchpad as PoolInfo['launchpad'], hooks: p.hooks as Address | null,
+        block: BigInt(p.created_block), time: Math.floor(p.created_at.getTime() / 1000),
+      });
+    }
+    return true;
+  }
+
   /** Pools discovery added since the last call (the poller hands them to the pool-history backfill). */
   takeDiscoveredPools(): string[] {
     const out = this.discoveredPools;
@@ -511,6 +541,7 @@ export class Pipeline {
       }
       const token = (q0 ? key.currency1 : key.currency0) as Address;
       if (!this.tokens.has(token) && this.ignoredTokens.has(token)) { this.ignorePool(id, token); continue; }
+      if (this.opts.onlyToken && token !== this.opts.onlyToken) continue;
       candidates.push({ id, key, token, quote: (q0 ? key.currency0 : key.currency1) as Address });
     }
     const unknown = [...new Set(candidates.map((c) => c.token).filter((t) => !this.tokens.has(t)))].slice(0, MAX_ORIGIN_LOOKUPS);
@@ -555,9 +586,9 @@ export class Pipeline {
     // Past history is a nice-to-have (holder counts). A token with a huge one (spam airdrops, busy old
     // tokens) is tracked from now on instead, so discovery never stalls the live indexer.
     const history = await Promise.all(
-      newTokens.map((n, i) =>
-        this.rpc.transferLogs(n.token, n.origin.block, beforeBlock - 1n, this.opts.historical ? undefined : HISTORY_BUDGET).catch((err) => {
-          if (this.opts.historical && !(err instanceof HistoryTooLarge)) throw err;
+      newTokens.map((n, i) => this.opts.noHistory ? Promise.resolve([] as RawLog[]) :
+        this.rpc.transferLogs(n.token, n.origin.block, beforeBlock - 1n, this.opts.historical && !this.opts.boundedHistory ? undefined : HISTORY_BUDGET).catch((err) => {
+          if (this.opts.historical && !this.opts.boundedHistory && !(err instanceof HistoryTooLarge)) throw err;
           // Live: a slow or huge history (RPC timeout, too many logs) must not stall indexing. The
           // holder backfill (/admin/holders/backfill) can fill it in later.
           console.warn(`discover: skipped transfer history for ${meta[i]?.symbol ?? n.token} (${err instanceof HistoryTooLarge ? 'too large' : String(err).slice(0, 80)})`);

@@ -65,9 +65,9 @@ Every message from the server except `hello`/`pong`/`error` has this envelope:
 
 ```ts
 data: {
-  state: 'live' | 'hydrating' | 'partial';   // hydrating/partial: chain data still arriving, show "fetching from chain"
-  card: TokenCard;                            // same fields as GET /tokens/:a (summary + liquidity_usd)
-  stats: Stats;                               // windows, see `stats` below
+  state: 'live' | 'hydrating' | 'partial' | 'busy' | 'not_token';   // hydrating/partial: chain data still arriving, show "fetching from chain"
+  card: TokenCard | null;                     // same fields as GET /tokens/:a (summary + liquidity_usd); null/minimal while hydrating
+  stats: Stats | null;                        // windows, see `stats` below; null while hydrating
   pools: Pool[];                              // same shape as GET /tokens/:a/pools
   trades: Trade[];                            // newest first, up to 200
   candles: { '1s': Candle[]; '1m': Candle[] }; // 1s: last 30 min; 1m: last 24h. Older/coarser via GET /tokens/:a/candles
@@ -101,6 +101,9 @@ data: { tokens: TokenCard[] }   // same order and size as GET /tokens?column=<co
 `Column = 'new' | 'almost' | 'migrated'`.
 
 ### Hydration (tokens we had no data for)
+- Subscribing to a token we have nothing on (or no trades for) starts a fetch from chain. You first get a `snapshot` with `seq: null`, `source: "chain"` and `state: "hydrating"`. Its `card` may be null and `trades`/`candles` empty.
+- About 1-2s later a chain-built snapshot arrives with trades and candles for the last 30 min. In that one `card` is minimal (symbol, name, price, mcap), and `stats` is null and `pools` empty until the data is persisted.
+- `state` can also be `"busy"` (the server's fetch budget is spent; it retries on the next view, so resubscribe after ~60s) or `"not_token"` (the address is not an ERC-20; stop).
 - While the server fetches a token from chain, the topic gets `snapshot` messages with `seq: null`, `source: "chain"` and `state: "hydrating"`, and then `"partial"` as wider windows land: first the last 30 min, then 6h, then 24h. Each one fully replaces the previous.
 - When indexing takes over, the server sends a normal `snapshot` (numbered `seq`, `source: "index"`, `state: "live"`), and numbered deltas follow.
 - `source: "mixed"` means the snapshot combines indexed data with chain data still being persisted.
@@ -150,6 +153,7 @@ type Pool = {
 ```
 
 ## HTTP endpoints the protocol relies on (also usable directly)
+- `GET /tokens/:a` and `GET /tokens/:a/snapshot` for a token we don't have yet: **202** `{ address, state: "hydrating" | "busy", source: "chain" }`. The fetch has started; follow `token:<a>` on the socket. 404 only for addresses that aren't tokens.
 - `GET /tokens/:a/snapshot`: the `token:` snapshot `data` plus `epoch`/`seq`, for SSR.
 - `GET /tokens/:a/stats`: `Stats`.
 - `GET /tokens/:a/candles?interval=1s|15s|30s|1m|5m|15m|1h|4h`. The sub-minute intervals are computed from trades, 24h retention.

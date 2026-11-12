@@ -160,6 +160,17 @@ export class ChainPoller extends DurableObject<Env> {
     return tokens.length;
   }
 
+  /**
+   * A hydrator persisted a token we didn't track: start indexing it on both lanes. Returns the cursor,
+   * so the caller knows which transfers we'll record from here (the holder backfill covers the rest).
+   */
+  async adopt(token: string): Promise<{ cursor: string | null }> {
+    const pipeline = this.init();
+    await Promise.all([pipeline.adoptToken(token), this.livePipeline!.adoptToken(token)]);
+    this.pairsDirty = true;
+    return { cursor: (await pipeline.cursor())?.toString() ?? null };
+  }
+
   /** A gateway's full watched-topic set (debounced on its side). Returns the sequence epoch. */
   async registerTopics(index: number, topics: string[]): Promise<{ epoch: string }> {
     if (topics.length) this.registry.set(index, new Set(topics));

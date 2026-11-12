@@ -19,13 +19,16 @@
       { "name": "CHAIN_POLLER", "class_name": "ChainPoller" },
       { "name": "LIVE_FEED", "class_name": "LiveFeed" },
       { "name": "BACKFILLER", "class_name": "Backfiller" },
-      { "name": "GATEWAY", "class_name": "Gateway" }
+      { "name": "GATEWAY", "class_name": "Gateway" },
+      { "name": "HYDRATOR", "class_name": "TokenHydrator" },
+      { "name": "RPC_BUDGET", "class_name": "RpcBudget" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ChainPoller", "LiveFeed"] },
     { "tag": "v2", "new_sqlite_classes": ["Backfiller"] },
-    { "tag": "v3", "new_sqlite_classes": ["Gateway"] }
+    { "tag": "v3", "new_sqlite_classes": ["Gateway"] },
+    { "tag": "v4", "new_sqlite_classes": ["TokenHydrator", "RpcBudget"] }
   ],
   "queues": {
     "producers": [

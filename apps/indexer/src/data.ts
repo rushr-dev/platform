@@ -172,7 +172,10 @@ export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
     };
   });
   rows.sort((a, b) => b.volume_24h_usd - a.volume_24h_usd || (b.liquidity_usd ?? 0) - (a.liquidity_usd ?? 0));
-  return rows;
+  // Old tokens collect hundreds of empty spam pools (PONS: 872 v4 pools, 27 ever traded): list the ones
+  // with activity or liquidity, plus pools created in the last day, at most 50.
+  const dayAgo = Date.now() - 24 * 3600_000;
+  return rows.filter((r) => r.trades_24h > 0 || (r.liquidity_usd ?? 0) > 0 || r.created_at.getTime() > dayAgo || rows.length <= 10).slice(0, 50);
 }
 
 export interface Window {

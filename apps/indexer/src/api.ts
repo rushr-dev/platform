@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import postgres, { type Sql } from 'postgres';
 import { tagHolders } from '@rushr/core';
 import { dbUrl, type Env } from './env';
+import { hydrator } from './hydrator';
 import {
   POOL_TVL_TTL_S, minuteCandles, subMinuteCandles, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
 } from './data';
@@ -27,6 +28,17 @@ api.use('*', async (c, next) => {
 const cache = (seconds: number) => ({ 'cache-control': `public, max-age=${seconds}, s-maxage=${seconds}` });
 const addr = (s: string | undefined) => (s ?? '').toLowerCase();
 
+/**
+ * A token we have nothing on: ask its hydrator to fetch it from chain (coalesced per token, rate
+ * limited) and answer 202 so the page can show "fetching from chain" and follow the socket.
+ */
+async function hydrating(c: { env: Env; json: (b: unknown, s: 202 | 404) => Response }, token: string) {
+  if (!/^0x[0-9a-f]{40}$/.test(token)) return c.json({ error: 'not found' }, 404);
+  const { state } = await hydrator(c.env, token).hydrate(token);
+  if (state === 'not_token') return c.json({ error: 'not found' }, 404);
+  return c.json({ address: token, state, source: 'chain' }, 202);
+}
+
 /** Trenches columns. new / almost (bonding) / migrated, with GMGN-style filters. */
 api.get('/tokens', async (c) => {
   const q = (k: string) => c.req.query(k);
@@ -51,7 +63,7 @@ api.get('/tokens/:address', async (c) => {
   const sql = c.var.sql;
   const token = addr(c.req.param('address'));
   const [summary] = await tokenSummaries(sql, { addresses: [token] });
-  if (!summary) return c.json({ error: 'not found' }, 404);
+  if (!summary) return hydrating(c, token);
   const [extra] = await sql`
     select t.deployer, t.total_supply, t.decimals, t.main_pool, t.created_block, t.launch_indexed, t.description,
       s.data as signals, s.updated_at as signals_updated_at
@@ -78,8 +90,10 @@ api.get('/tokens/:address/stats', async (c) => {
 
 /** The realtime `token:` snapshot (docs/realtime.md), for server rendering. */
 api.get('/tokens/:address/snapshot', async (c) => {
-  const snap = await tokenSnapshot(c.var.sql, c.env.RPC_URL, addr(c.req.param('address')));
-  if (!snap) return c.json({ error: 'not found' }, 404);
+  const token = addr(c.req.param('address'));
+  const snap = await tokenSnapshot(c.var.sql, c.env.RPC_URL, token);
+  if (!snap) return hydrating(c, token);
+  if (!snap.trades.length) c.executionCtx.waitUntil(hydrator(c.env, token).hydrate(token).catch(() => undefined));
   return c.json({ ...snap, state: 'live', source: 'index' }, 200, cache(2));
 });
 
