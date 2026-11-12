@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { randomBytes } from '@rushr/agents/crypto';
 import { body, db, errorResponse, fail, str, type Ctx } from './http';
 import { normalizeInvite } from './members';
+import { freezeSeason } from './board';
 
 export const adminV1 = new Hono<Ctx>();
 adminV1.onError((e, c) => errorResponse(c, e));
@@ -114,3 +115,21 @@ adminV1.get('/feedback', async (c) => {
     order by f.created_at desc limit ${Math.min(Number(c.req.query('limit') ?? 200) || 200, 1000)}`;
   return c.json({ feedback: rows }, 200, NO_STORE);
 });
+
+// ---- seasons ----
+
+/** `{ id: 's0', name: 'Season 0', startsAt, endsAt }` (upsert). */
+adminV1.post('/seasons', async (c) => {
+  const b = (c.var.body ?? {}) as Record<string, unknown>;
+  const id = str(b.id, 20, 'id', { required: true })!;
+  if (!/^[a-z0-9_-]+$/.test(id)) throw fail(422, 'invalid_field', 'id is a-z 0-9 _ -.', { field: 'id' });
+  const name = str(b.name, 60, 'name', { required: true })!;
+  const startsAt = new Date(String(b.startsAt));
+  const endsAt = new Date(String(b.endsAt));
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime()) || endsAt <= startsAt) throw fail(422, 'invalid_field', 'startsAt and endsAt must be ISO dates, end after start.');
+  await c.var.sql`insert into seasons (id, name, starts_at, ends_at) values (${id}, ${name}, ${startsAt}, ${endsAt})
+    on conflict (id) do update set name = excluded.name, starts_at = excluded.starts_at, ends_at = excluded.ends_at`;
+  return c.json({ season: { id, name, startsAt, endsAt } }, 200, NO_STORE);
+});
+
+adminV1.post('/seasons/:id/freeze', async (c) => c.json(await freezeSeason(c.var.sql, c.req.param('id')), 200, NO_STORE));

@@ -27,7 +27,7 @@ export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date
         and (select count(*) from wallets f where f.first_funder = w.first_funder) <= ${rules.maxFunderFanout}
         then w.first_funder end as first_funder
     from members m left join wallets w on w.address = m.wallet
-    where m.status = 'active'`;
+    where m.status = 'active' and not (m.kind = 'human' and coalesce(w.is_contract, false))`;
   const members: MemberInfo[] = memberRows.map((r) => ({
     id: r.id, kind: r.kind, handle: r.handle, wallet: r.wallet, ownerId: r.owner_id, firstFunder: r.first_funder,
   }));
@@ -45,7 +45,7 @@ export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date
           and (select count(*) from wallets f where f.first_funder = w.first_funder) <= ${rules.maxFunderFanout}
           then w.first_funder end as funder
       from members m left join wallets w on w.address = m.wallet
-      where m.status = 'active'
+      where m.status = 'active' and not (m.kind = 'human' and coalesce(w.is_contract, false))
     ),
     ms as (
       select s.*, m.id as member_id, m.team, m.funder, m.owner_id, m.owner_changed_at
