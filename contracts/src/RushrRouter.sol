@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
+import {TreasuryTimelock} from "./TreasuryTimelock.sol";
+
 /// @dev Uniswap Universal Router v2.1 (Robinhood Chain: 0x204f…0498 official, 0x8876…0904 legacy).
 interface IUniversalRouter {
     function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) external payable;
@@ -30,7 +32,7 @@ interface IERC20R {
 ///
 ///         Fee: taken in ETH, from the input on buys and from the output on sells; `referralFeeBps` when
 ///         `referred`. NOT DEPLOYED. Audit-gated.
-contract RushrRouter {
+contract RushrRouter is TreasuryTimelock {
     // ------------------------------------------------------------------ types
 
     enum Kind {
@@ -57,8 +59,6 @@ contract RushrRouter {
     // ------------------------------------------------------------------ constants
 
     uint16 public constant MAX_FEE_BPS = 300;
-    uint256 public constant MIN_DELAY = 10 minutes;
-
     // Universal Router v2 commands / v4 actions / recipients (Commands.sol, Actions.sol, ActionConstants.sol)
     bytes1 internal constant V3_SWAP_EXACT_IN = 0x00;
     bytes1 internal constant V2_SWAP_EXACT_IN = 0x08;
@@ -77,11 +77,9 @@ contract RushrRouter {
 
     IUniversalRouter public immutable universalRouter;
     address public immutable weth;
-    address public immutable treasury;
     uint16 public immutable feeBps;
     uint16 public immutable referralFeeBps;
-    address public immutable guardian;
-    uint256 public immutable delay;
+    // guardian, delay and treasury (timelocked) live in TreasuryTimelock.
 
     // ------------------------------------------------------------------ state
 
@@ -115,9 +113,7 @@ contract RushrRouter {
     event Paused(bool paused);
     event OperatorChanged(address operator);
 
-    error ZeroAddress();
     error FeeTooHigh();
-    error DelayTooShort();
     error ZeroAmount();
     error DeadlinePassed();
     error BadRoute();
@@ -125,7 +121,6 @@ contract RushrRouter {
     error PoolNotAllowed(bytes32 pool);
     error SlippageExceeded(uint256 received, uint256 minimum);
     error IsPaused();
-    error NotGuardian();
     error NotOperator();
     error NotQueued();
     error TooEarly(uint256 eta);
@@ -141,11 +136,6 @@ contract RushrRouter {
         _lock = 2;
         _;
         _lock = 1;
-    }
-
-    modifier onlyGuardian() {
-        if (msg.sender != guardian) revert NotGuardian();
-        _;
     }
 
     modifier whenNotPaused() {
@@ -168,21 +158,14 @@ contract RushrRouter {
         address operator_,
         uint256 delay_,
         address[] memory initialHooks
-    ) {
-        if (
-            address(universalRouter_) == address(0) || weth_ == address(0) || treasury_ == address(0)
-                || guardian_ == address(0)
-        ) revert ZeroAddress();
+    ) TreasuryTimelock(treasury_, guardian_, delay_) {
+        if (address(universalRouter_) == address(0) || weth_ == address(0)) revert ZeroAddress();
         if (feeBps_ > MAX_FEE_BPS || referralFeeBps_ > feeBps_) revert FeeTooHigh();
-        if (delay_ < MIN_DELAY) revert DelayTooShort();
         universalRouter = universalRouter_;
         weth = weth_;
-        treasury = treasury_;
         feeBps = feeBps_;
         referralFeeBps = referralFeeBps_;
-        guardian = guardian_;
         operator = operator_;
-        delay = delay_;
         for (uint256 i; i < initialHooks.length; ++i) {
             hookAllowed[initialHooks[i]] = true;
             emit Activated(_hookKey(initialHooks[i]), true);

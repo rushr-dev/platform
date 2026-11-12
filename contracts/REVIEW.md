@@ -45,6 +45,22 @@ Rushr's one-click trading lets a server-held session signer (Privy, policy-limit
 1. **Reentrancy:** the lock covers every entry point and `receive`. External ETH sends happen last. The routers hold nothing between transactions.
 2. **Token weirdness:** fee-on-transfer, no-return-value ERC20s (handled by `_call`), tokens that revert on `approve(0)`, blacklisting tokens, rebasing tokens.
 3. **Slippage and MEV:** minimum outputs are checked on what the trader actually receives, and deadlines are enforced. Robinhood Chain has a sequencer, so confirm whether Timeboost or an express lane is enabled.
-4. **Immutables:** treasury (the founder's multisig), fee 50 and referral fee 45 bps; for RushrRouter also guardian, operator and delay. There's no admin key to fix mistakes, so a wrong argument means redeploying.
-5. **Compiler:** solc 0.8.26, optimizer 10,000 runs, `evm_version = cancun`.
-6. **Tests:** re-run `forge test` and the fork suites (`ROBINHOOD_RPC_URL=… forge test --match-contract Fork`) at a fresh block, and add your own cases.
+4. **Constructor arguments:**
+   - fee 50 and referral fee 45 bps
+   - guardian (a multisig, never the treasury key)
+   - `delay`: recommend **≥ 24 h** for treasury changes
+   - for RushrRouter, also the operator
+
+   Fees, guardian and delay are immutable, so a wrong value means redeploying.
+5. **Treasury timelock (`TreasuryTimelock`):**
+   - only the guardian can queue or cancel
+   - activation is impossible before `pendingTreasuryEta`
+   - re-queueing restarts the delay
+   - zero address rejected
+   - events on queue, change and cancel
+   - fees in flight use the treasury current at execution
+
+   Check that no path changes `treasury` without the delay.
+6. **EOA treasury (known risk):** the initial treasury is the founder's EOA `0x447a…5E40`. Confirm the key sits on a hardware wallet with regular sweeps, and that there's a plan (and the guardian's ability, tested) to `queueTreasury(safe)` before volume grows.
+7. **Compiler:** solc 0.8.26, optimizer 10,000 runs, `evm_version = cancun`.
+8. **Tests:** re-run `forge test` and the fork suites (`ROBINHOOD_RPC_URL=… forge test --match-contract Fork`) at a fresh block, and add your own cases.

@@ -21,15 +21,23 @@ Swaps ETH ↔ token on canonical Uniswap v2, v3 and v4 pools, with the Rushr pla
   - The **operator** queues hooks and sell pools.
   - **Anyone** activates a queued entry after the immutable `delay` (at least 10 minutes).
   - The **guardian** (a multisig) can cancel or remove entries immediately, pause `buy` and `sell`, and rotate the operator.
-  - There's no owner and no upgrade path, and fees, treasury, guardian and delay are immutable.
+  - There's no owner and no upgrade path. Fees, guardian and delay are immutable. The **treasury** changes only through the guardian timelock (below).
 
 ### `RushrPonsRouter.sol`
 Buys and sells tokens on their PONS bonding curve, with the Rushr platform fee, in one transaction. The Universal Router can't reach PONS curves, so this contract does.
 
 - The fee is taken in ETH: from the ETH actually spent on buys, from the output on sells. A buy that completes the curve (graduation) gets its unused ETH refunded in the same transaction.
 - **Only trusted calls:** the immutable PONS factory, the curve that factory reports for the token, the token and the treasury.
-- No owner and no upgrades. Fees (50/45 bps) and the treasury are immutable.
+- No owner and no upgrades. Fees (50/45 bps), guardian and delay are immutable. The **treasury** changes only through the guardian timelock (below).
 - It holds no funds between transactions, accepts ETH only during a trade, and resets its curve approval after each sell.
+
+### `TreasuryTimelock.sol` (base of both routers)
+The fee recipient can change, but never instantly:
+1. The guardian calls `queueTreasury(next)`, which emits `TreasuryQueued(next, eta)`.
+2. After `delay`, anyone calls `activateTreasury()`, which emits `TreasuryChanged(previous, next)`.
+3. Until then, the guardian can `cancelTreasury()`.
+
+This lets the treasury move from an EOA to a Safe without redeploying, with every change public for the whole delay.
 
 ## Robinhood Chain addresses used
 | | Address |
@@ -37,6 +45,7 @@ Buys and sells tokens on their PONS bonding curve, with the Rushr platform fee, 
 | Uniswap Universal Router v2.1.2 | `0x204faca1764b154221e35c0d20abb3c525710498` |
 | WETH | `0x0bd7d308f8e1639fab988df18a8011f41eacad73` |
 | PONS launch factory | `0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e` |
+| Treasury (constructor argument; founder's EOA, planned move to a Safe) | `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` |
 
 ## Build and test
 Requires [Foundry](https://book.getfoundry.sh/).

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
+import {TreasuryTimelock} from "./TreasuryTimelock.sol";
+
 /// @notice Minimal views of the PONS launch factory and per-token bonding curve on Robinhood Chain.
 /// Selectors were resolved from deployed bytecode and checked with eth_simulateV1 (see docs/trading.md).
 interface IPonsFactory {
@@ -28,12 +30,12 @@ interface IERC20Min {
 ///         (referral attribution and the referrer's share are accounted off-chain).
 /// @dev Non-custodial and stateless between transactions. No owner, no upgradeability, no arbitrary
 ///      calls: the only external targets are the immutable PONS factory, the curve it reports for the
-///      token, the token itself and the immutable treasury. NOT DEPLOYED; review before any deployment.
-contract RushrPonsRouter {
+///      token, the token itself and the treasury (changeable only via the guardian's timelock, see
+///      TreasuryTimelock). NOT DEPLOYED; review before any deployment.
+contract RushrPonsRouter is TreasuryTimelock {
     uint16 public constant MAX_FEE_BPS = 300;
 
     IPonsFactory public immutable factory;
-    address public immutable treasury;
     uint16 public immutable feeBps;
     uint16 public immutable referralFeeBps;
 
@@ -51,7 +53,6 @@ contract RushrPonsRouter {
         uint256 refund
     );
 
-    error ZeroAddress();
     error FeeTooHigh();
     error ZeroAmount();
     error DeadlinePassed();
@@ -75,11 +76,17 @@ contract RushrPonsRouter {
         _;
     }
 
-    constructor(IPonsFactory factory_, address treasury_, uint16 feeBps_, uint16 referralFeeBps_) {
-        if (address(factory_) == address(0) || treasury_ == address(0)) revert ZeroAddress();
+    constructor(
+        IPonsFactory factory_,
+        address treasury_,
+        uint16 feeBps_,
+        uint16 referralFeeBps_,
+        address guardian_,
+        uint256 delay_
+    ) TreasuryTimelock(treasury_, guardian_, delay_) {
+        if (address(factory_) == address(0)) revert ZeroAddress();
         if (feeBps_ > MAX_FEE_BPS || referralFeeBps_ > feeBps_) revert FeeTooHigh();
         factory = factory_;
-        treasury = treasury_;
         feeBps = feeBps_;
         referralFeeBps = referralFeeBps_;
     }

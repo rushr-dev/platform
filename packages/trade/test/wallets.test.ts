@@ -108,12 +108,17 @@ describe('Privy session signer (REST, Workers-compatible)', () => {
     await expect(new PrivySessionSigner({ ...base, fetch: ok }).buildRequest('../x', tx)).rejects.toThrow(/wallet id/);
   });
 
-  it('is off unless WALLETS_ENABLED=1 and Privy is configured; the KMS placeholder refuses', async () => {
+  it('is off unless WALLETS_ENABLED=1, Privy is configured AND RushrRouter is deployed+audited; the KMS placeholder refuses', async () => {
     const key = new PlaceholderKmsKey();
-    expect(createSessionSigner({}, key)).toBeNull();
-    expect(createSessionSigner({ WALLETS_ENABLED: '0', PRIVY_APP_ID: 'a', PRIVY_APP_SECRET: 's' }, key)).toBeNull();
-    expect(createSessionSigner({ WALLETS_ENABLED: '1' }, key)).toBeNull();
-    const s = createSessionSigner({ WALLETS_ENABLED: '1', PRIVY_APP_ID: 'a', PRIVY_APP_SECRET: 's' }, key);
+    const env = { WALLETS_ENABLED: '1', PRIVY_APP_ID: 'a', PRIVY_APP_SECRET: 's' };
+    const audited = resolveConfig({ rushrRouter: ROUTER, rushrRouterAudited: true });
+    expect(createSessionSigner({}, key, audited)).toBeNull();
+    expect(createSessionSigner({ ...env, WALLETS_ENABLED: '0' }, key, audited)).toBeNull();
+    expect(createSessionSigner({ WALLETS_ENABLED: '1' }, key, audited)).toBeNull();
+    // With the real treasury as default, the router gate alone keeps one-click off.
+    expect(createSessionSigner(env, key, resolveConfig())).toBeNull();
+    expect(createSessionSigner(env, key, resolveConfig({ rushrRouter: ROUTER }))).toBeNull();
+    const s = createSessionSigner(env, key, audited);
     expect(s).toBeInstanceOf(PrivySessionSigner);
     await expect(s!.signTransaction('w', { to: ROUTER, data: '0x', value: 0n, chainId: 4663 })).rejects.toThrow(/No KMS configured/);
   });

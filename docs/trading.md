@@ -1,6 +1,6 @@
 # Trading and the platform fee
 
-Status 2026-11-12: research done, founder decisions in (below), scaffold in `packages/trade`, `contracts/` and `/swap`. Nothing here has been deployed or signed. The treasury is still a placeholder.
+Status 2026-11-12: research done, founder decisions in (below), scaffold in `packages/trade`, `contracts/` and `/swap`. Nothing here has been deployed. The treasury is the founder's EOA (see the known risk below).
 
 ## Decisions (founder, 2026-11-12)
 
@@ -10,13 +10,22 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
 | **Which side** | Always the **quote side** (ETH, WETH or USDG): taken from the input on buys, from the output on sells. The treasury only receives ETH or USDG, and a token's own tax can't shrink or block the fee. |
 | **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and other hooked v4 pools) | **Primary path.** Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, `PAY_PORTION(ETH, treasury, bps)`, `SWEEP(ETH, user, minOut)` (the pattern Uniswap's interface fee used). |
 | **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then, curve routes are quoted but not buildable. |
-| **Treasury** | Placeholder config (`0x…fee1`) until the founder provides a multisig. `assertSignable` / `prepareSwap({ forSigning: true })` refuse to produce signable transactions until it's set. |
+| **Treasury** | The founder's own wallet, an **EOA**: `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` (founder decision 2026-11-12; EIP-55 checksum valid; no code and nonce 0 on 4663). It's `RUSHR_TREASURY`, the default `feeRecipient` in `packages/trade`. The routers can move it to a Safe later **only through the guardian's timelock** (queue, wait `delay`, activate, events; no owner, no instant change). **Known risk:** see below. |
 | **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee** (0.5% → **0.45%**, charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
 | **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's factories (verified in its bytecode). Phase 2. |
 | **Agents** | Agents trade through the same code: `packages/trade` is pure functions that return unsigned transactions (`prepareSwap`), usable from a server or agent runtime, not only from `/swap`. |
 | **UI** | The fee is a line in every quote ("Rushr fee 0.5% · 0.00005 ETH"; referred: "0.45%, 10% referral discount"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
 
 Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x204faca1…0498` (the default). The core registry's `0x8876…0904` is also a Universal Router with the same factories embedded, and it's config.
+
+### Known risk: EOA treasury
+- **Risk.** All fees collect in a wallet controlled by one private key. If that key is lost, phished or compromised, accumulated fees are lost, and fees keep flowing to the attacker until the routers' treasury is changed. Changing it takes at least the timelock `delay`; Universal Router paths change instantly in config.
+- **Mitigations.**
+  1. Keep the key on a **hardware wallet**, used only for the treasury and never connected to dapps.
+  2. Do **regular sweeps** to cold storage, e.g. daily, or whenever the balance passes a threshold.
+  3. **Migrate to a Safe before volume grows.** Deploy a Safe on Robinhood Chain. Each router's guardian queues it with `queueTreasury(safe)` and anyone runs `activateTreasury()` after the delay. Then update `RUSHR_TREASURY` in `packages/trade` for the Universal Router path.
+  4. Monitor treasury inflows against the ledger (`sum(fee_amount)` per day).
+- **Audit checklist:** covered in `contracts/REVIEW.md` (treasury timelock and EOA treasury).
 
 ## Referral ledger (off-chain)
 
@@ -149,7 +158,7 @@ Status 2026-11-12. Nothing is signed or broadcast anywhere: verification is unit
 | Module | What it does |
 | --- | --- |
 | `addresses.ts`, `chain.ts` | Trading contracts for 4663 from Uniswap's official list, the PONS factory, and a viem chain with multicall3 |
-| `config.ts` | `feeBps` (default **50**, capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (**placeholder** `0x…fee1`), `universalRouter`, `ponsRouter` (null until deployed). `assertSignable` refuses while the treasury is the placeholder |
+| `config.ts` | `feeBps` (default **50**, capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (default `RUSHR_TREASURY`, the founder's EOA), `universalRouter`, `ponsRouter` (null until deployed). `assertSignable` refuses a placeholder treasury. One-click trading is gated separately by `assertOneClickAllowed` (RushrRouter deployed **and** audited), and the web UI by `NEXT_PUBLIC_SWAP_ENABLED` |
 | `referral.ts` | Effective rate, referrer accrual and discount; `TradeRecord` draft and confirm for the off-chain ledger |
 | `agent.ts` | `prepareSwap(client, request, opts)` for servers and agents: best route → unsigned tx, approvals, command list, ledger record, optional simulation. `toJsonSafe` for tool and HTTP output. No browser globals, no keys |
 | `fees.ts` | Fee math: fee off the input on buys, off the gross output on sells (identical to `PAY_PORTION`), slippage minimums, tax-adjusted slippage |
@@ -184,7 +193,7 @@ PONS curve buy and sell with the fee in ETH.
 - **Rates:** immutable `feeBps` (50) and `referralFeeBps` (45), with `referralFeeBps ≤ feeBps ≤ 300`. The caller picks the rate with `referred`. That is no weaker than today: anyone can always call the curve directly and pay no Rushr fee, so the fee is collected by our frontends and agents, not enforced against the user.
 - **Graduation refunds:** a buy that completes the curve gets the unused ETH back from PONS. The router then charges the fee only on ETH actually spent (`fee / (spent + fee) = bps`) and refunds the rest to `msg.sender` in the same tx. Found by simulation: without this, refunds would have been stranded in the router.
 - **Sells:** pulls tokens with `transferFrom` and measures what arrived (fee-on-transfer safe). Approves the curve for exactly that amount, then resets the approval to 0. Returns unsold tokens. Fee comes off the ETH output; `minQuoteOut` is checked on the net.
-- **Safety:** no owner, no upgrades, no arbitrary calls (only the immutable factory, the curve it reports for the token, the token and the treasury). Reentrancy lock. ETH accepted only mid-trade. Deadline.
+- **Safety:** no owner, no upgrades, no arbitrary calls (only the immutable factory, the curve it reports for the token, the token and the treasury). The treasury changes only through the guardian timelock (`TreasuryTimelock`). Reentrancy lock. ETH accepted only mid-trade. Deadline.
 
 Tests (`cd contracts && forge test`): 20 unit and fuzz tests with mocks cover:
 - exact fee math at both rates

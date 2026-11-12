@@ -1,6 +1,7 @@
 import type { Address, Hex, PublicClient } from 'viem';
 import { buildSwap, type BuildOptions } from './build';
 import { assertSignable, resolveConfig, type TradeConfig } from './config';
+import { assertOneClickAllowed } from './signer';
 import { findBestRoute } from './quote';
 import { draftTradeRecord, type TradeRecord } from './referral';
 import { simulateSwap, type SwapSimulation } from './simulate';
@@ -21,8 +22,11 @@ export interface PrepareOptions extends BuildOptions {
   simulate?: boolean;
   /** ETH added to the trader's balance inside the simulation only (lets agents dry-run without funds). */
   simulateFundEth?: bigint;
-  /** Refuse unless the config is ready for real signing (treasury set). Default false. */
+  /** The user's own wallet will sign (with confirmation): refuse unless a real treasury is configured. */
   forSigning?: boolean;
+  /** A server-held session signer would sign this (one-click): refuse unless RushrRouter is deployed AND
+   *  audited (assertOneClickAllowed). Off in v0. */
+  oneClick?: boolean;
   /** Rushr API base for `/tokens/:a/pools` hints (default https://api.rushr.trade); false disables the lookup. */
   apiUrl?: string | false;
   fetch?: typeof fetch;
@@ -44,7 +48,8 @@ export interface PreparedSwap {
 
 export async function prepareSwap(client: PublicClient, req: SwapRequest, opts: PrepareOptions = {}): Promise<PreparedSwap> {
   const cfg = resolveConfig(opts.config);
-  if (opts.forSigning) assertSignable(cfg);
+  if (opts.forSigning || opts.oneClick) assertSignable(cfg);
+  if (opts.oneClick) assertOneClickAllowed(cfg);
   let discover = opts.discover;
   let note: string | null = null;
   if (!discover?.pools && !discover?.apiPools && opts.apiUrl !== false) {

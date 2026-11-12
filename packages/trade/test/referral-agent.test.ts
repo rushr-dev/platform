@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, decodeFunctionData, zeroAddress, type Address, type PublicClient } from 'viem';
-import { resolveConfig, assertSignable } from '../src/config';
+import { resolveConfig, assertSignable, PLACEHOLDER_FEE_RECIPIENT } from '../src/config';
 import { confirmTradeRecord, draftTradeRecord, effectiveFeeBps, referrerAccrual } from '../src/referral';
 import { quotePool } from '../src/quote';
 import { buildSwap } from '../src/build';
@@ -110,8 +110,14 @@ describe('prepareSwap (server / agent entry point)', () => {
     expect(json.record.referrer).toBe(REFERRER);
   });
 
-  it('refuses forSigning while the treasury is a placeholder', async () => {
-    await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { discover: { pools: [v2Pool] }, forSigning: true })).rejects.toMatchObject({ code: 'FEE_RECIPIENT_PLACEHOLDER' });
+  it('refuses forSigning with a placeholder treasury, and one-click until RushrRouter is deployed AND audited', async () => {
+    const pools = { pools: [v2Pool] };
+    await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { config: { feeRecipient: PLACEHOLDER_FEE_RECIPIENT }, discover: pools, forSigning: true })).rejects.toMatchObject({ code: 'FEE_RECIPIENT_PLACEHOLDER' });
     expect(() => assertSignable(cfg)).not.toThrow();
+    // The default config (real founder treasury) is fine for user-confirmed signing...
+    await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { discover: pools, forSigning: true })).resolves.toBeTruthy();
+    // ...but never for one-click: no RushrRouter yet, then not audited.
+    await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { discover: pools, oneClick: true })).rejects.toThrow(/RushrRouter deployed/);
+    await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { config: { rushrRouter: TREASURY }, discover: pools, oneClick: true })).rejects.toThrow(/audited/);
   });
 });

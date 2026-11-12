@@ -243,8 +243,14 @@ export interface WalletEnv {
  * Returns a session signer only when WALLETS_ENABLED=1 and Privy is configured; null otherwise (the app
  * then falls back to wallet-confirmed trades). The authorization key comes from the KMS adapter.
  */
-export function createSessionSigner(env: WalletEnv, authorizationKey: AuthorizationKey, opts: Partial<PrivySignerConfig> = {}): SessionSigner | null {
+export function createSessionSigner(env: WalletEnv, authorizationKey: AuthorizationKey, cfg: TradeConfig, opts: Partial<PrivySignerConfig> = {}): SessionSigner | null {
   if (env.WALLETS_ENABLED !== '1') return null;
+  // Server-held signing is one-click trading: never before RushrRouter is deployed AND audited.
+  try {
+    assertOneClickAllowed(cfg);
+  } catch {
+    return null;
+  }
   if (!env.PRIVY_APP_ID || !env.PRIVY_APP_SECRET) return null;
   return new PrivySessionSigner({ ...opts, appId: env.PRIVY_APP_ID, appSecret: env.PRIVY_APP_SECRET, authorizationKey });
 }
