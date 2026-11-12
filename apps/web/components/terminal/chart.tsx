@@ -13,6 +13,7 @@ import {
 } from 'lightweight-charts';
 import { API_URL, type Candle } from '@/lib/api';
 import { usd } from '@/lib/format';
+import type { Hydration } from '@/lib/feed/protocol';
 import type { Tx } from '@/lib/trades';
 
 /**
@@ -43,16 +44,25 @@ interface Bar {
 export function PriceChart({
   address,
   initial,
+  seconds = null,
   supply,
   trades,
+  priceUsd = null,
+  hydration,
 }: {
   address: string;
   /** 1m candles for the last 24h; null while they load. */
   initial: Candle[] | null;
+  /** Server-built 1s candles (feed v2, last ~30 min). 1s and 30s use them instead of the trade list. */
+  seconds?: Candle[] | null;
   /** Token supply in whole tokens; multiplies price into market cap. */
   supply: number;
   /** Newest first, live trades included. */
   trades: Tx[] | null;
+  /** Current price: seeds a live bar when there is no history, so the chart is never empty. */
+  priceUsd?: number | null;
+  /** Server-side backfill state (feed v2): shows "fetching from chain" while history streams in. */
+  hydration?: Hydration;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -134,11 +144,31 @@ export function PriceChart({
   // The base series for this interval. Trade-built series only rebuild on interval change; new
   // trades after that are applied incrementally below.
   const tradesReady = trades != null;
-  const base = useMemo<Candle[] | null>(() => {
-    if (FROM_TRADES.has(interval)) return trades ? fromTrades(trades, INTERVALS[interval]) : null;
+  // Like trades, server 1s candles only rebuild the series once (when they first arrive); live
+  // updates after that come through the trade list.
+  const secondsReady = !!seconds?.length;
+  const priceRef = useRef(priceUsd);
+  priceRef.current = priceUsd;
+  const rawBase = useMemo<Candle[] | null>(() => {
+    if (FROM_TRADES.has(interval)) {
+      if (secondsReady && seconds?.length) return interval === '1s' ? seconds : rebucket(seconds, INTERVALS[interval]);
+      return trades ? fromTrades(trades, INTERVALS[interval]) : null;
+    }
     if (interval === '1m') return initial;
     return fetched?.iv === interval ? fetched.data : null;
-  }, [interval, initial, fetched, tradesReady]);
+  }, [interval, initial, fetched, tradesReady, secondsReady]);
+  // No history yet (a brand-new or still-hydrating token): start from one bar at the current price
+  // and let live trades build the chart from there.
+  const seeded = rawBase != null && rawBase.length === 0 && priceUsd != null && priceUsd > 0;
+  const base = useMemo<Candle[] | null>(() => {
+    if (!rawBase || rawBase.length || !priceRef.current) return rawBase;
+    const step = INTERVALS[interval];
+    const t = Math.floor(Date.now() / 1000 / step) * step;
+    const p = priceRef.current;
+    return [{ time: t, open: p, high: p, low: p, close: p, volume: 0 }];
+  }, [rawBase, interval, seeded]);
+  // Fit the view once per interval; later redraws (history streaming in) keep the user's zoom.
+  const fitted = useRef<string | null>(null);
 
   // Draw the full series whenever the base data or the mode changes.
   useEffect(() => {
@@ -153,9 +183,13 @@ export function PriceChart({
     // null: trades not loaded yet (whatever arrives first is history); '': none so far.
     appliedTop.current = trades ? (trades[0]?.id ?? '') : null;
     const n = series.length;
-    // Show the most recent ~120 bars rather than squeezing the whole history in.
-    if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
-    else chart.current?.timeScale().fitContent();
+    const fitKey = `${interval}:${n > 1 ? 'data' : 'seed'}`;
+    if (fitted.current !== fitKey) {
+      fitted.current = fitKey;
+      // Show the most recent ~120 bars rather than squeezing the whole history in.
+      if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
+      else chart.current?.timeScale().fitContent();
+    }
     // trades intentionally excluded: they are applied incrementally below
   }, [base, scale]);
 
@@ -192,6 +226,7 @@ export function PriceChart({
   }, [trades, interval, scale, base, hovering]);
 
   const empty = base != null && base.length === 0 && !(trades?.length && FROM_TRADES.has(interval));
+  const hydrating = isHydrating(hydration);
   const loading = base == null;
   const ch = legend && legend.open ? ((legend.close - legend.open) / legend.open) * 100 : null;
   const up = (ch ?? 0) >= 0;
@@ -246,6 +281,15 @@ export function PriceChart({
           </div>
         )}
         {loading && <div className="absolute inset-x-6 bottom-10 top-10 animate-pulse rounded-xl bg-white/[0.025]" />}
+        {hydrating ? (
+          <HydratingPill hydration={hydration!} />
+        ) : (
+          seeded && (
+            <span className="pointer-events-none absolute bottom-9 left-1/2 z-10 -translate-x-1/2 rounded-full bg-surface-2/90 px-2.5 py-1 text-[11px] text-muted ring-1 ring-white/[0.06]">
+              No trades in this window yet · live from the current price
+            </span>
+          )
+        )}
         {empty && (
           <p className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-muted">
             {FROM_TRADES.has(interval) ? 'No recent trades to build this view from.' : 'No trades in this window yet.'}
@@ -254,6 +298,22 @@ export function PriceChart({
       </div>
     </div>
   );
+}
+
+/** Merge finer candles into coarser buckets (1s → 30s). */
+function rebucket(list: Candle[], step: number): Candle[] {
+  const out = new Map<number, Candle>();
+  for (const c of list) {
+    const b = Math.floor(c.time / step) * step;
+    const k = out.get(b);
+    if (k) {
+      k.high = Math.max(k.high, c.high);
+      k.low = Math.min(k.low, c.low);
+      k.close = c.close;
+      k.volume += c.volume;
+    } else out.set(b, { ...c, time: b });
+  }
+  return [...out.values()];
 }
 
 function fromTrades(trades: Tx[], step: number): Candle[] {
@@ -299,4 +359,41 @@ function usdPrecise(n: number) {
   if (n >= 1) return `$${n.toFixed(2)}`;
   if (n === 0) return '$0';
   return `$${n.toPrecision(4)}`;
+}
+
+const SOURCE_TEXT = { chain: 'from chain', index: 'from the Rushr index', mixed: 'from chain and index' } as const;
+
+const span = (secs: number) => {
+  const h = secs / 3600;
+  if (h >= 23.5) return `${Math.round(h / 24)}d`;
+  if (h >= 1) return `${Math.round(h)}h`;
+  return `${Math.max(1, Math.round(secs / 60))}m`;
+};
+
+/** "Fetching history from chain · last 6h loaded" / "Partial history from chain · last 24h". */
+export function hydrationLabel(h: Hydration): { title: string; detail: string | null } {
+  const from = SOURCE_TEXT[h.source ?? 'chain'];
+  const covered = h.covered && h.covered.to > h.covered.from ? `last ${span(h.covered.to - h.covered.from)}` : null;
+  if (h.state === 'partial') return { title: `Partial history ${from}`, detail: covered ? `${covered} so far` : null };
+  return { title: `Fetching history ${from}`, detail: covered ? `${covered} loaded` : null };
+}
+
+export const isHydrating = (h?: Hydration | null) => h?.state === 'hydrating' || h?.state === 'partial';
+
+/** "Fetching history from chain · last 30m loaded": the server is still backfilling this token. */
+export function HydratingPill({ hydration, className = '' }: { hydration: Hydration; className?: string }) {
+  const { title, detail } = hydrationLabel(hydration);
+  return (
+    <span
+      role="status"
+      className={`pointer-events-none absolute right-3 top-1 z-10 flex items-center gap-1.5 rounded-full bg-surface-2/90 px-2.5 py-1 text-[11px] text-ink/85 ring-1 ring-brand/25 ${className}`}
+    >
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand/60" />
+        <span className="relative inline-flex size-2 rounded-full bg-brand" />
+      </span>
+      {title}
+      {detail && <span className="font-mono text-muted">· {detail}</span>}
+    </span>
+  );
 }

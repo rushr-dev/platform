@@ -7,6 +7,9 @@ import { useNow } from '@/lib/now';
 import { makerTags, type MakerContext, type MakerTag, type Tx } from '@/lib/trades';
 import { TagChip, TagList, TAG_META } from './tags';
 
+/** Rows share tags when the maker, the whale-size flag and the server's tags match. */
+const tagKey = (t: Tx) => `${t.trader}:${(t.usd ?? 0) >= 2500 ? 1 : 0}:${t.tags?.join(',') ?? ''}`;
+
 const FILTER_TAGS: MakerTag[] = ['whale', 'dev', 'top10', 'sniper', 'bundler', 'insider', 'fresh'];
 const SHOW = 200;
 
@@ -42,12 +45,12 @@ export function TradesTable({
   const tagged = useMemo(() => {
     const m = new Map<string, MakerTag[]>();
     for (const t of trades ?? []) {
-      const key = `${t.trader}:${(t.usd ?? 0) >= 2500 ? 1 : 0}`;
-      if (!m.has(key)) m.set(key, makerTags(t.trader, ctx, t.usd));
+      const key = tagKey(t);
+      if (!m.has(key)) m.set(key, makerTags(t.trader, ctx, t.usd, t.tags));
     }
     return m;
   }, [trades, ctx]);
-  const tagsOf = useCallback((t: Tx) => tagged.get(`${t.trader}:${(t.usd ?? 0) >= 2500 ? 1 : 0}`) ?? [], [tagged]);
+  const tagsOf = useCallback((t: Tx) => tagged.get(tagKey(t)) ?? [], [tagged]);
 
   const filter = useCallback(
     (list: Tx[]) =>

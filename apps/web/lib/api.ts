@@ -120,7 +120,35 @@ export const getTrades = async (address: string, limit = 200, revalidate = 60) =
 
 export type Column = 'new' | 'almost' | 'migrated';
 
-export const getTokenDetail = (address: string) => get<TokenDetail>(`/tokens/${address}`, 0);
+/** A token the API is still fetching from chain (HTTP 202): follow `token:<a>` on the feed. */
+export interface PendingToken {
+  pending: true;
+  address: string;
+  state: 'hydrating' | 'busy' | string;
+}
+
+/**
+ * Token page detail. 200 → the detail; 202 → pending (the API started fetching it from chain);
+ * 404 or an error → null.
+ */
+export async function getTokenDetail(address: string): Promise<TokenDetail | PendingToken | null> {
+  try {
+    const res = await fetch(`${API_URL}/tokens/${address}`, { next: { revalidate: 0 }, signal: AbortSignal.timeout(6_000) });
+    if (res.status === 202) {
+      const body = (await res.json().catch(() => ({}))) as { state?: string };
+      return { pending: true, address, state: body.state ?? 'hydrating' };
+    }
+    if (!res.ok) {
+      await res.body?.cancel();
+      return null;
+    }
+    return (await res.json()) as TokenDetail;
+  } catch {
+    return null;
+  }
+}
+
+export const isPending = (t: TokenDetail | PendingToken | null): t is PendingToken => !!t && 'pending' in t;
 
 export const getCandles = async (address: string, interval = '1m', hours = 24) =>
   (await get<{ candles: Candle[] }>(`/tokens/${address}/candles?interval=${interval}&hours=${hours}`, 0))?.candles ?? [];

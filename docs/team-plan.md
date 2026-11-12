@@ -104,3 +104,12 @@ The terminal already works around each of these; landing them makes the numbers 
 5. **Top traders:** `/tokens/:a/traders?sort=pnl|bought|sold&limit=100` → `{ wallet, buys, sells, bought_usd, sold_usd, bought_tokens, sold_tokens, balance, first_time, last_time }` over the full history. Today it is computed from the last 500 trades.
 6. **Maker tags on trades:** `tags` per trade row and per live socket trade (sniper, bundler, insider, fresh, dev), so tags show for makers outside the top 100 holders. Today tags come from `/holders` (top 100 only, ~2.2s).
 7. **Token amount on live trades** is already sent (`tokenAmount`); please keep it. A `maker_tags` field on the socket payload (item 6) would let the trades table tag rows the moment they land.
+
+### Terminal → Data: realtime protocol v2 (2026-11-12)
+The protocol is Data's `docs/realtime.md` (data branch). The terminal client (`apps/web/lib/feed/`) implements it and was tested against a mock of that spec. Until a server says `hello` on `/ws?v=2`, the client runs on today's v1 feed. Open points sent to Data:
+1. The token snapshot `card` should be the full `GET /tokens/:a` detail (deployer, decimals, total_supply, main_pool, launch_indexed, description, signals, dev…), not only the summary. Hydrating tokens need decimals and total_supply early.
+2. Unnumbered (`seq: null`) `trades`/`candle` deltas during hydration, so the chart streams between hydration snapshots (the client already applies them).
+3. Confirm `state.progress {from, to}` is unix seconds of the covered range (shown as "last 6h loaded").
+4. `stats.priceChangePct` should be measured against the last price before the window, not the first trade in it.
+5. The client sends v1 `subscribe` for the legacy `trenches` topic before `hello` arrives: answer `bad_topic` and keep the socket.
+6. Plain-pool tokens: the `trenches:*` topics carry launchpad tokens only (like `GET /tokens?column=`). The "Plain pools" toggle still reads them over HTTP; a `plain` variant of the topics would let it go live too.
