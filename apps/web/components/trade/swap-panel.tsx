@@ -27,6 +27,7 @@ import {
 import { API_URL } from '@/lib/api';
 import { short } from '@/lib/format';
 import { requestAccount, useInjectedWallets, type InjectedWallet } from './wallet';
+import { TradeBox } from './trade-box';
 
 /**
  * Swap test bed. Quotes and simulations run in the browser against the public Robinhood Chain RPC
@@ -46,6 +47,9 @@ interface TokenInfo {
   main_pool?: `0x${string}` | null;
   created_block?: string;
   launchpad?: string | null;
+  risk?: 'low' | 'medium' | 'high' | 'unknown' | null;
+  verdict?: string | null;
+  created_at?: string | null;
 }
 
 const QUOTE_DECIMALS: Record<QuoteAsset, number> = { ETH: 18, USDG: 6 };
@@ -366,8 +370,22 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
         {error && <p className="mt-3 break-words text-xs text-risk-high">{error}</p>}
       </section>
 
-      {/* Right: breakdown, simulation */}
+      {/* Right: beta v0 trade box (embedded wallet), breakdown, simulation */}
       <section className="min-w-0 space-y-4">
+        {tokenAddress && token && (
+          <TradeBox
+            token={{
+              address: tokenAddress,
+              symbol: token.symbol,
+              decimals: token.decimals,
+              risk: token.risk ?? null,
+              verdict: token.verdict ?? null,
+              createdAt: token.created_at ?? null,
+              mainPool: token.main_pool ?? null,
+              createdBlock: token.created_block ?? null,
+            }}
+          />
+        )}
         <div className="rounded-2xl border border-line bg-surface p-4">
           <h2 className="mb-3 text-sm font-semibold">Fee breakdown</h2>
           {quote ? (

@@ -2,6 +2,9 @@ import type { Metadata } from 'next';
 import { SettingsForm } from '@/components/terminal/auth/settings-form';
 
 export const metadata: Metadata = { title: 'Settings' };
+// Rendered per request so the CSP nonce (middleware.ts) reaches Next's inline scripts: Privy is live on
+// this page, so it gets the same strict CSP as the trade pages.
+export const dynamic = 'force-dynamic';
 
 export default function SettingsPage() {
   return (
