@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
@@ -155,7 +155,8 @@ contract RushrRouterForkTest is Test {
     /// v4 pool with a launchpad hook: refused until the hook clears the timelock, then works.
     function test_fork_hookedPoolNeedsAllowlistedHook() public {
         if (noFork) return;
-        (address c0, address c1, uint24 fee, int24 ts, address hooks) = IPositionManager(POSM).poolKeys(bytes25(LIFT_POOL));
+        (address c0, address c1, uint24 fee, int24 ts, address hooks) =
+            IPositionManager(POSM).poolKeys(bytes25(LIFT_POOL));
         assertEq(hooks, LIFT_HOOK);
         address quote = c0 == LIFT_TOKEN ? c1 : c0;
         RushrRouter.Route memory r = _r(RushrRouter.Kind.V4, LIFT_TOKEN, quote, fee, ts, hooks);

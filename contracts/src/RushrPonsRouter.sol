@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
 /// @notice Minimal views of the PONS launch factory and per-token bonding curve on Robinhood Chain.
@@ -115,12 +115,14 @@ contract RushrPonsRouter {
     /// @notice Sell `tokensIn` of `token` (pulled from msg.sender, which must approve this router) on its
     ///         PONS curve; the fee is taken from the ETH output.
     /// @param minQuoteOut Minimum ETH `recipient` receives, after the fee.
-    function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline, bool referred)
-        external
-        nonReentrant
-        beforeDeadline(deadline)
-        returns (uint256 quoteOut)
-    {
+    function sell(
+        address token,
+        uint256 tokensIn,
+        uint256 minQuoteOut,
+        address recipient,
+        uint256 deadline,
+        bool referred
+    ) external nonReentrant beforeDeadline(deadline) returns (uint256 quoteOut) {
         if (tokensIn == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroAddress();
         IPonsCurve curve = _curveOf(token);

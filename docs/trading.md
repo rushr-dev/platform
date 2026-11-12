@@ -200,23 +200,7 @@ Plus 4 fork tests on a real PONS curve (`ROBINHOOD_RPC_URL=… forge test --matc
 - a 20 ETH buy that graduates the token: 3.79 ETH spent, the rest refunded, fee exactly 0.5% of what was paid
 
 #### Review checklist (before any deployment)
-An independent reviewer should confirm each item; deployment needs the founder's sign-off on all of them.
-1. **Target trust:** `getLaunchedToken` on the real PONS factory (`0x7ed5…ec7e`) can't be made to return an attacker-controlled curve for a token, and its return layout (token, curve as the first two words) is stable. Verify against PONS's source, or get the PONS team's confirmation.
-2. **Curve behaviour assumptions:**
-   - `buy` sends tokens to `recipient` and refunds only to `msg.sender`
-   - `sell` pulls exactly `tokensIn` (or less) via `transferFrom`
-   - `graduated()` is final
-   - no hidden callbacks to the caller
-
-   Re-check if PONS upgrades the curve implementation.
-3. **Fee math:** buy fee = `floor(value·bps/1e4)`, and after a refund `floor(spent·bps/(1e4−bps))`; sell fee = `floor(gross·bps/1e4)`. No path charges more than `MAX_FEE_BPS`; rounding favours the user.
-4. **ETH accounting:** `ethBefore = balance − msg.value` is correct even if ETH was force-sent (selfdestruct). Force-sent ETH can only be swept to the next buyer's refund, never block a trade. Decide whether that's acceptable or add an explicit rule.
-5. **Reentrancy:** the lock covers `buy`, `sell` and `receive`. Treasury and user ETH sends happen after state-relevant reads. A malicious token or recipient can't reenter to drain anything (the router holds nothing between txs).
-6. **Token weirdness:** fee-on-transfer, no-return-value ERC20s (handled by `_call`), tokens that revert on `approve(0)`, and blacklisting tokens.
-7. **Slippage and MEV:** `minTokensOut` is checked on what the recipient received, `minQuoteOut` on the net, and the deadline is enforced. Robinhood Chain has a sequencer, so confirm whether Timeboost or an express lane is enabled.
-8. **Immutables:** constructor arguments = the founder's treasury multisig, 50 and 45. Verify the deployed bytecode and arguments on Blockscout. There's no admin key to rotate, so a mistake means redeploying.
-9. **Compiler and settings:** solc 0.8.26, optimizer 10k runs, `evm_version = cancun` (Robinhood Chain, ArbOS 61, runs Cancun; the Universal Router needs transient storage).
-10. **Tests:** reviewer re-runs `forge test` and the fork suite at a fresh block, and adds their own cases.
+It lives with the code so it ships in the public contracts repo: [`contracts/REVIEW.md`](../contracts/REVIEW.md). It covers RushrRouter and RushrPonsRouter.
 
 ### Using it from a server or agent
 ```ts

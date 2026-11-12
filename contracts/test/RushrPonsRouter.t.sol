@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
@@ -173,7 +173,9 @@ contract RushrPonsRouterTest is Test {
         uint256 curveOut = _curveOut(0.995 ether);
         uint256 min = (curveOut * 9_700) / 10_000; // between what the curve sends and what alice gets
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(RushrPonsRouter.SlippageExceeded.selector, curveOut - (curveOut * 500) / 10_000, min));
+        vm.expectRevert(
+            abi.encodeWithSelector(RushrPonsRouter.SlippageExceeded.selector, curveOut - (curveOut * 500) / 10_000, min)
+        );
         router.buy{value: 1 ether}(address(token), min, alice, deadline, false);
     }
 
@@ -259,14 +261,17 @@ contract RushrPonsRouterTest is Test {
     }
 
     function test_reentrancyBlocked() public {
-        curve.setReenter(address(router), abi.encodeCall(RushrPonsRouter.buy, (address(token), 0, alice, deadline, false)));
+        curve.setReenter(
+            address(router), abi.encodeCall(RushrPonsRouter.buy, (address(token), 0, alice, deadline, false))
+        );
         vm.prank(alice);
         vm.expectRevert(RushrPonsRouter.Reentrancy.selector);
         router.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
     }
 
     function test_failingTreasuryRevertsTrade() public {
-        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), address(new RejectingTreasury()), FEE, REF_FEE);
+        RushrPonsRouter r =
+            new RushrPonsRouter(IPonsFactory(address(factory)), address(new RejectingTreasury()), FEE, REF_FEE);
         vm.prank(alice);
         vm.expectRevert(RushrPonsRouter.EthTransferFailed.selector);
         r.buy{value: 1 ether}(address(token), 0, alice, deadline, false);

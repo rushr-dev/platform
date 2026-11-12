@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
 /// @dev Uniswap Universal Router v2.1 (Robinhood Chain: 0x204f…0498 official, 0x8876…0904 legacy).
@@ -219,7 +219,10 @@ contract RushrRouter {
 
     /// @dev Swap output lands here (the Universal Router pays its msg.sender, this router), then goes to
     ///      the trader; returns what the trader actually received (transfer-tax safe).
-    function _buyAndDeliver(Route calldata route, uint256 amount, uint256 deadline) internal returns (uint256 tokensOut) {
+    function _buyAndDeliver(Route calldata route, uint256 amount, uint256 deadline)
+        internal
+        returns (uint256 tokensOut)
+    {
         uint256 held = IERC20R(route.token).balanceOf(address(this));
         (bytes memory commands, bytes[] memory inputs) = _buyPlan(route, amount);
         universalRouter.execute{value: amount}(commands, inputs, deadline);
@@ -255,10 +258,14 @@ contract RushrRouter {
         quoteOut = _sell(route, pool, tokensIn, minQuoteOut, deadline, referred);
     }
 
-    function _sell(Route calldata route, bytes32 pool, uint256 tokensIn, uint256 minQuoteOut, uint256 deadline, bool referred)
-        internal
-        returns (uint256 quoteOut)
-    {
+    function _sell(
+        Route calldata route,
+        bytes32 pool,
+        uint256 tokensIn,
+        uint256 minQuoteOut,
+        uint256 deadline,
+        bool referred
+    ) internal returns (uint256 quoteOut) {
         if (tokensIn == 0) revert ZeroAmount();
         // Pull from the trader, then hand the Universal Router exactly what it actually received
         // (fee-on-transfer safe); it pays the pool from its own balance.
@@ -316,10 +323,14 @@ contract RushrRouter {
             in_[0] = _v4Swap(r, true, amount, r.quote, r.token, false);
             return (c, in_);
         }
-        c = abi.encodePacked(WRAP_ETH, r.kind == Kind.V4 ? V4_SWAP : r.kind == Kind.V3 ? V3_SWAP_EXACT_IN : V2_SWAP_EXACT_IN);
+        c = abi.encodePacked(
+            WRAP_ETH, r.kind == Kind.V4 ? V4_SWAP : r.kind == Kind.V3 ? V3_SWAP_EXACT_IN : V2_SWAP_EXACT_IN
+        );
         in_ = new bytes[](2);
         in_[0] = abi.encode(UR_ADDRESS_THIS, amount);
-        in_[1] = r.kind == Kind.V4 ? _v4Swap(r, true, amount, weth, r.token, false) : _v23Swap(r, amount, weth, r.token, UR_MSG_SENDER);
+        in_[1] = r.kind == Kind.V4
+            ? _v4Swap(r, true, amount, weth, r.token, false)
+            : _v23Swap(r, amount, weth, r.token, UR_MSG_SENDER);
     }
 
     function _sellPlan(Route calldata r, uint256 amount) internal view returns (bytes memory c, bytes[] memory in_) {
@@ -330,9 +341,13 @@ contract RushrRouter {
             return (c, in_);
         }
         // Output WETH stays in the Universal Router, then UNWRAP_WETH pays ETH to this router.
-        c = abi.encodePacked(r.kind == Kind.V4 ? V4_SWAP : r.kind == Kind.V3 ? V3_SWAP_EXACT_IN : V2_SWAP_EXACT_IN, UNWRAP_WETH);
+        c = abi.encodePacked(
+            r.kind == Kind.V4 ? V4_SWAP : r.kind == Kind.V3 ? V3_SWAP_EXACT_IN : V2_SWAP_EXACT_IN, UNWRAP_WETH
+        );
         in_ = new bytes[](2);
-        in_[0] = r.kind == Kind.V4 ? _v4Swap(r, false, amount, r.token, weth, false) : _v23Swap(r, amount, r.token, weth, UR_ADDRESS_THIS);
+        in_[0] = r.kind == Kind.V4
+            ? _v4Swap(r, false, amount, r.token, weth, false)
+            : _v23Swap(r, amount, r.token, weth, UR_ADDRESS_THIS);
         in_[1] = abi.encode(UR_MSG_SENDER, uint256(0));
     }
 
@@ -356,11 +371,14 @@ contract RushrRouter {
     /// @dev V4_SWAP: SWAP_EXACT_IN_SINGLE (v2.1 params with maxHopSlippage), SETTLE the input from the
     ///      Universal Router's balance, then TAKE the output: to this router directly (buys: TAKE_ALL to
     ///      msgSender; native-ETH sells: TAKE to msgSender) or into the Universal Router for unwrapping.
-    function _v4Swap(Route calldata r, bool isBuy, uint256 amount, address currencyIn, address currencyOut, bool outToCaller)
-        internal
-        pure
-        returns (bytes memory)
-    {
+    function _v4Swap(
+        Route calldata r,
+        bool isBuy,
+        uint256 amount,
+        address currencyIn,
+        address currencyOut,
+        bool outToCaller
+    ) internal pure returns (bytes memory) {
         (address c0, address c1) = r.quote < r.token ? (r.quote, r.token) : (r.token, r.quote);
         bytes memory actions = abi.encodePacked(A_SWAP_EXACT_IN_SINGLE, A_SETTLE, isBuy ? A_TAKE_ALL : A_TAKE);
         bytes[] memory params = new bytes[](3);

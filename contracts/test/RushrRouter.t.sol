@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: AGPL-3.0-only
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
@@ -24,7 +24,11 @@ contract RushrRouterTest is Test {
         vm.deal(alice, 10 ether);
     }
 
-    function _route(RushrRouter.Kind kind, address quote, address hooks) internal pure returns (RushrRouter.Route memory) {
+    function _route(RushrRouter.Kind kind, address quote, address hooks)
+        internal
+        pure
+        returns (RushrRouter.Route memory)
+    {
         return RushrRouter.Route({kind: kind, token: TOKEN, quote: quote, fee: 3000, tickSpacing: 60, hooks: hooks});
     }
 
