@@ -9,10 +9,8 @@ import { pgAvailable, setup } from './harness';
 v1.route('/', trades);
 
 const pg = await pgAvailable();
-// Agents' body guard must let a top-level txHash through on POST /v1/trades (a tx hash has a private
-// key's shape); until it does, the HTTP tests skip. The handler verifies the hash on chain before storing.
-const { findKeyMaterial } = await import('@rushr/agents/guard');
-const txHashAllowed = findKeyMaterial({ txHash: `0x${'b1'.repeat(32)}` }) === null;
+// Agents' body guard lets exactly a top-level txHash through on POST /v1/trades (a tx hash has a
+// private key's shape); the handler verifies the hash on chain before storing anything.
 const ALICE = '0xa11ce00000000000000000000000000000000001';
 const BOB = '0xb0b0000000000000000000000000000000000002';
 const CAROL = '0xca40100000000000000000000000000000000003';
@@ -67,7 +65,7 @@ describe('trace and log helpers', () => {
   });
 });
 
-describe.skipIf(!pg || !txHashAllowed)('trade ledger', () => {
+describe.skipIf(!pg)('trade ledger', () => {
   let t: Awaited<ReturnType<typeof setup>>;
   const queued: unknown[] = [];
   let bob: string;
@@ -114,6 +112,8 @@ describe.skipIf(!pg || !txHashAllowed)('trade ledger', () => {
     expect((await t.call('POST', '/trades', { auth: carol, body: { txHash: BUY_TX, chainId: 4663 } })).json.error.code).toBe('not_your_tx');
     expect((await t.call('POST', '/trades', { auth: bob, body: { txHash: `0x${'ab'.repeat(32)}`, chainId: 4663 } })).json.error.code).toBe('tx_not_found');
     expect((await t.sql`select count(*)::int n from trades_ledger`)[0]!.n).toBe(1);
+    // A key-shaped value in any other field is still refused by the guard.
+    expect((await t.call('POST', '/trades', { auth: bob, body: { txHash: BUY_TX, chainId: 4663, privateKey: `0x${'cd'.repeat(32)}` } })).json.error.code).toBe('never_send_keys');
     expect((await t.call('POST', '/trades', { auth: bob, body: { txHash: '0x12', chainId: 4663 } })).json.error.code).toBe('bad_tx_hash');
     expect((await t.call('POST', '/trades', { auth: bob, body: { txHash: SELL_TX, chainId: 1 } })).json.error.code).toBe('bad_chain');
     expect((await t.call('POST', '/trades', { body: { txHash: SELL_TX, chainId: 4663 } })).status).toBe(401);
