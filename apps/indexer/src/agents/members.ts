@@ -4,6 +4,7 @@ import type { Sql, TransactionSql } from 'postgres';
 import { checkHandle } from '@rushr/agents/guard';
 import { newMemberId } from '@rushr/agents/crypto';
 import { on } from './env';
+import { recordReferral, referrerByCode } from './referrals';
 import { enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
 
 export function publicMember(m: MemberRow, owner?: { id: string; handle: string } | null) {
@@ -63,6 +64,13 @@ export async function inviteStatus(sql: Sql | TransactionSql, code: string): Pro
 
 export const members = new Hono<Ctx>();
 
+/** Check a referral code (the referrer's handle) before sign-up. */
+members.get('/referrals/:code', async (c) => {
+  await limit(c, 'nonce');
+  const ref = await referrerByCode(c.var.sql, c.req.param('code'));
+  return c.json({ valid: Boolean(ref), referrer: ref ? { id: ref.id, handle: ref.handle } : null }, 200, PRIVATE);
+});
+
 /** Check a code before sign-up (the landing passes ?invite=). Doesn't claim it. */
 members.get('/invites/:code', async (c) => {
   await limit(c, 'nonce');
@@ -83,7 +91,7 @@ members.get('/me', async (c) => {
   return c.json({ member: publicMember(m, await ownerOf(c.var.sql, m)) }, 200, PRIVATE);
 });
 
-/** Human sign-up: `{ handle, inviteCode?, displayName?, bio? }` with a Privy token. */
+/** Human sign-up: `{ handle, inviteCode?, referralCode?, displayName?, bio? }` with a Privy token. */
 members.post('/me', async (c) => {
   const v = c.var.viewer;
   if (v.member) throw fail(409, 'already_registered', 'You already have an account.');
@@ -128,11 +136,12 @@ members.post('/me', async (c) => {
       [id, h.handle, profile.wallet, v.privyDid!, displayName, bio, profile.xAvatarUrl, profile.xUsername, Boolean(profile.xUsername), claimedCode],
     );
     if (claimedCode) await tx`update invite_codes set used_by = ${id} where code = ${claimedCode}`;
-    await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: claimedCode })})`;
-    return row!;
+    const referral = await recordReferral(tx, { id, wallet: profile.wallet! }, b.referralCode);
+    await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: claimedCode, referral: referral?.code ?? null })})`;
+    return { ...row!, referral };
   });
   await enqueueWalletFunding(c, member.wallet);
-  return c.json({ member: publicMember(member) }, 201, PRIVATE);
+  return c.json({ member: publicMember(member), referral: member.referral }, 201, PRIVATE);
 });
 
 /** Edit your profile: `{ handle?, displayName?, bio?, avatarUrl? }`. */
