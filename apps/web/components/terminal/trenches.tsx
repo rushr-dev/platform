@@ -8,15 +8,17 @@ import {
   Crown,
   Funnel,
   Lightning,
+  MagnifyingGlass,
   Package,
   PauseCircle,
   Plant,
   RocketLaunch,
   Sparkle,
   Users,
+  X,
 } from '@phosphor-icons/react';
 import type { Column, TokenCard } from '@/lib/api';
-import { age, LAUNCHPAD_LABEL, pct, usd } from '@/lib/format';
+import { age, compact, LAUNCHPAD_LABEL, pct, quoteLabel, short, usd } from '@/lib/format';
 import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
 import type { Delta } from '@/lib/feed/protocol';
@@ -53,6 +55,17 @@ const SORT: Record<Column, (a: TokenCard, b: TokenCard) => number> = {
     (b.bonding_progress ?? -1) - (a.bonding_progress ?? -1) || (b.market_cap_usd ?? 0) - (a.market_cap_usd ?? 0),
   migrated: (a, b) => ts(b.migrated_at ?? b.created_at) - ts(a.migrated_at ?? a.created_at),
 };
+
+type SortKey = 'default' | 'newest' | 'mcap' | 'volume' | 'holders' | 'txns';
+const SORT_LABEL: Record<SortKey, string> = { default: 'Default', newest: 'Newest', mcap: 'Market cap', volume: 'Volume', holders: 'Holders', txns: 'Transactions' };
+const BY: Record<Exclude<SortKey, 'default'>, (a: TokenCard, b: TokenCard) => number> = {
+  newest: (a, b) => ts(b.created_at) - ts(a.created_at),
+  mcap: (a, b) => (b.market_cap_usd ?? b.initial_market_cap_usd ?? 0) - (a.market_cap_usd ?? a.initial_market_cap_usd ?? 0),
+  volume: (a, b) => (b.volume_24h_usd ?? 0) - (a.volume_24h_usd ?? 0),
+  holders: (a, b) => b.holders - a.holders,
+  txns: (a, b) => (b.buys_24h ?? 0) + (b.sells_24h ?? 0) - ((a.buys_24h ?? 0) + (a.sells_24h ?? 0)),
+};
+const SORTS_KEY = 'rushr.trenches.sort';
 
 const COLUMNS: { id: Column; title: string; icon: typeof Plant }[] = [
   { id: 'new', title: 'New pairs', icon: Sparkle },
@@ -143,8 +156,28 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   const [mobileCol, setMobileCol] = useState<Column>('new');
   const [showSpam, setShowSpam] = useState(false);
   const [showPlain, setShowPlain] = useState(false);
-  // One-tap buy amount: shared with the settings page.
-  const quick = useSettings().quickBuy;
+  // One-tap buy amounts (P1/P2): shared with the settings page.
+  const { quickBuy: quick, quickBuy2: quick2 } = useSettings();
+  const [sorts, setSorts] = useState<Record<Column, SortKey>>({ new: 'default', almost: 'default', migrated: 'default' });
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(SORTS_KEY) ?? 'null') as Partial<Record<Column, SortKey>> | null;
+      if (saved) setSorts((p) => ({ ...p, ...saved }));
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+  const setSort = useCallback((col: Column, k: SortKey) => {
+    setSorts((p) => {
+      const next = { ...p, [col]: k };
+      try {
+        localStorage.setItem(SORTS_KEY, JSON.stringify(next));
+      } catch {
+        // storage unavailable
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => setFilters(loadFilters()), []);
   const changeQuick = useCallback((v: string) => updateSettings({ quickBuy: v }), []);
@@ -187,9 +220,12 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
     } else {
       for (const t of tokens.values()) if (keep(t)) out[columnOf(t)].push(t);
     }
-    for (const c of COLUMNS) out[c.id].sort(SORT[c.id]);
+    for (const c of COLUMNS) {
+      const k = sorts[c.id];
+      out[c.id].sort(k === 'default' ? SORT[c.id] : (a, b) => BY[k](a, b) || SORT[c.id](a, b));
+    }
     return out;
-  }, [tokens, serverColumns, colNew.data, colAlmost.data, colMigrated.data, showSpam, showPlain]);
+  }, [tokens, serverColumns, colNew.data, colAlmost.data, colMigrated.data, showSpam, showPlain, sorts]);
   // Paused columns look tokens up by address across every source.
   const byAddress = useMemo(
     () => (serverColumns ? new Map([...tokens, ...colNew.data, ...colAlmost.data, ...colMigrated.data]) : tokens),
@@ -245,6 +281,9 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
               entering={entering.current}
               serverNow={serverNow}
               quick={quick}
+              quick2={quick2}
+              sort={sorts[c.id]}
+              onSort={(k) => setSort(c.id, k)}
               filters={f}
               onFilters={(next) => setColFilters(c.id, next)}
               onPause={(on) =>
@@ -345,6 +384,9 @@ function ColumnPanel({
   entering,
   serverNow,
   quick,
+  quick2,
+  sort,
+  onSort,
   filters,
   onFilters,
   onPause,
@@ -359,6 +401,9 @@ function ColumnPanel({
   entering: Set<string>;
   serverNow: number;
   quick: string;
+  quick2: string;
+  sort: SortKey;
+  onSort: (k: SortKey) => void;
   filters: Filters;
   onFilters: (f: Filters) => void;
   onPause: (on: boolean) => void;
@@ -394,6 +439,35 @@ function ColumnPanel({
           </button>
         </div>
       </header>
+      <div className="flex items-center gap-1.5 border-b border-white/[0.05] px-3 py-1.5">
+        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-white/[0.06] bg-bg px-2 py-1 focus-within:border-white/20">
+          <MagnifyingGlass size={12} className="shrink-0 text-muted" />
+          <input
+            value={filters.keyword}
+            onChange={(e) => onFilters({ ...filters, keyword: e.target.value.slice(0, 42) })}
+            placeholder="Keyword, symbol or 0x…"
+            aria-label={`Filter ${col.title} by keyword`}
+            className="w-full min-w-0 bg-transparent text-[11px] outline-none placeholder:text-muted/70"
+          />
+          {filters.keyword && (
+            <button type="button" onClick={() => onFilters({ ...filters, keyword: '' })} aria-label="Clear keyword" className="text-muted hover:text-ink">
+              <X size={11} />
+            </button>
+          )}
+        </label>
+        <select
+          value={sort}
+          onChange={(e) => onSort(e.target.value as SortKey)}
+          aria-label={`Sort ${col.title}`}
+          className={`rounded-lg border border-white/[0.06] bg-bg px-1.5 py-1 text-[11px] outline-none ${sort === 'default' ? 'text-muted' : 'text-ink'}`}
+        >
+          {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+            <option key={k} value={k}>
+              {k === 'default' ? 'Sort' : SORT_LABEL[k]}
+            </option>
+          ))}
+        </select>
+      </div>
       {showFilters && <FilterBar value={filters} onChange={onFilters} />}
       <ul
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-width:thin]"
@@ -409,6 +483,7 @@ function ColumnPanel({
             flashAt={flashed.get(t.address) ?? 0}
             enter={entering.has(t.address)}
             quick={quick}
+            quick2={quick2}
           />
         ))}
         {!tokens.length && (
@@ -442,15 +517,6 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
   );
   return (
     <div className="grid max-h-[55%] grid-cols-2 gap-2 overflow-y-auto border-b border-white/[0.05] bg-surface-2/50 p-3 lg:grid-cols-4">
-      <label className="col-span-2 flex flex-col gap-1 lg:col-span-4">
-        <span className="text-[10px] uppercase tracking-wider text-muted">Keyword</span>
-        <input
-          placeholder="Symbol, name or 0x…"
-          value={value.keyword}
-          onChange={(e) => onChange({ ...value, keyword: e.target.value.slice(0, 42) })}
-          className="w-full rounded-lg border border-white/[0.06] bg-bg px-2 py-1.5 text-xs outline-none focus:border-white/20"
-        />
-      </label>
       {num('minMcap', 'Min MC $', '0')}
       {num('maxMcap', 'Max MC $', 'any')}
       {num('minVolume', 'Min 24h vol $', '0')}
@@ -487,21 +553,10 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
 
 /* ------------------------------------------------------------------ row */
 
-/** Signal chip: turns red past the point where it usually means trouble. */
-function Metric({ icon: Icon, value, bad, title }: { icon: typeof Users; value: number | null; bad: number; title: string }) {
-  const hot = value != null && value >= bad;
-  return (
-    <span title={title} className={`flex items-center gap-0.5 ${hot ? 'text-risk-high' : value != null && value > 0 ? 'text-ink/80' : 'text-muted'}`}>
-      <Icon size={12} weight="bold" />
-      {pct(value, 0)}
-    </span>
-  );
-}
-
 /** Ticks on its own clock so a row doesn't re-render every second. Green for the first minute. */
 function Age({ created, serverNow }: { created: number; serverNow: number }) {
   const now = useNow(serverNow);
-  return <span className={`ml-auto shrink-0 font-mono text-xs ${now - created < 60_000 ? 'text-brand' : 'text-muted'}`}>{age(created, now)}</span>;
+  return <span className={`shrink-0 font-mono text-[11px] ${now - created < 3_600_000 ? 'text-brand' : 'text-muted'}`}>{age(created, now)}</span>;
 }
 
 /** New arrivals grow into place instead of shoving the column down in one frame. */
@@ -517,6 +572,26 @@ function slideIn(el: HTMLLIElement | null) {
   );
 }
 
+/** Market cap to show: live, else the launch market cap (never "–" when the API knows one). */
+const mcapOf = (t: TokenCard) => t.market_cap_usd ?? t.initial_market_cap_usd ?? null;
+const taxOf = (t: TokenCard) => t.tax_pct ?? (t.buy_tax_pct != null || t.sell_tax_pct != null ? Math.max(t.buy_tax_pct ?? 0, t.sell_tax_pct ?? 0) : null);
+
+/** Bordered stat pill (GMGN-style); turns red past the point where it usually means trouble. */
+function Pill({ icon: Icon, value, bad, title }: { icon: typeof Users; value: number | null; bad: number; title: string }) {
+  const hot = value != null && value >= bad;
+  return (
+    <span
+      title={title}
+      className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-px ${
+        hot ? 'border-risk-high/30 text-risk-high' : value != null && value > 0 ? 'border-white/[0.07] text-ink/80' : 'border-white/[0.05] text-muted'
+      }`}
+    >
+      <Icon size={11} weight="bold" />
+      {pct(value, 0)}
+    </span>
+  );
+}
+
 const Row = memo(function Row({
   t,
   col,
@@ -524,6 +599,7 @@ const Row = memo(function Row({
   flashAt,
   enter,
   quick,
+  quick2,
 }: {
   t: TokenCard;
   col: Column;
@@ -531,6 +607,7 @@ const Row = memo(function Row({
   flashAt: number;
   enter: boolean;
   quick: string;
+  quick2: string;
 }) {
   const created = ts(t.created_at);
   const bp = t.bonding_progress;
@@ -538,77 +615,128 @@ const Row = memo(function Row({
   useEffect(() => {
     if (enter) slideIn(ref.current);
   }, []); // mount only
+  const mcap = mcapOf(t);
+  const tax = taxOf(t);
+  // Known quotes by symbol; an unknown quote address stays hidden until the API sends quote_symbol.
+  const quoteText = t.quote_symbol ?? quoteLabel(t.quote);
+  const quote = quoteText.startsWith('0x') ? null : quoteText;
+  const buys = t.buys_24h ?? null;
+  const sells = t.sells_24h ?? null;
+  const txns = buys != null || sells != null ? (buys ?? 0) + (sells ?? 0) : null;
+  const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
   return (
     <li ref={ref} className="relative overflow-hidden border-b border-white/[0.04]">
       {/* Keyed by the update time, so the flash replays on each change and fades out on its own. */}
       {flashAt > 0 && <span key={flashAt} className="row-flash pointer-events-none absolute inset-0" />}
-      <div className="group relative flex gap-3 px-4 py-3 transition-colors hover:bg-white/[0.03]">
-        {/* Whole-row link sits underneath; social icons sit above it so they stay clickable. */}
+      <div className="group relative px-3 pb-2 pt-2.5 transition-colors hover:bg-white/[0.03]">
+        {/* Whole-card link sits underneath; links and buttons above it stay clickable. */}
         <Link href={`/token/${t.address}`} aria-label={`${t.symbol} token page`} className="absolute inset-0" />
-        <TokenAvatar t={t} size={44} badge />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-baseline gap-1.5">
-            <span className="truncate text-[15px] font-semibold">{t.symbol}</span>
-            <span className="truncate text-xs text-muted">{t.name}</span>
-            <SocialLinks t={t} size={12} className="relative z-10 shrink-0" />
-            <Age created={created} serverNow={serverNow} />
+        <div className="flex gap-2.5">
+          <div className="flex shrink-0 flex-col items-center gap-1">
+            <TokenAvatar t={t} size={56} badge shape="square" />
+            <span className="font-mono text-[9px] leading-none text-muted">{short(t.address, 2, 4)}</span>
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px]">
-            <span className="flex items-center gap-0.5 text-ink/80" title="Holders">
-              <Users size={12} weight="bold" />
-              {t.holders}
-            </span>
-            <Metric icon={Crown} value={t.top10_pct} bad={30} title="Top 10 holders" />
-            <Metric icon={ChefHat} value={t.dev_pct} bad={10} title="Dev holds" />
-            <Metric icon={Crosshair} value={t.snipers_pct} bad={20} title="Snipers bought" />
-            <Metric icon={Package} value={t.bundled_pct} bad={20} title="Launch bundle" />
-          </div>
-          <div className="mt-2 flex items-center gap-2">
-            <RiskTag risk={t.risk} />
-            {t.copycat && <span className="rounded-md bg-risk-high/15 px-1.5 py-0.5 text-[10px] font-semibold text-risk-high">copycat</span>}
-            {t.serial_launcher && <span className="rounded-md bg-risk-high/15 px-1.5 py-0.5 text-[10px] font-semibold text-risk-high">serial dev</span>}
-            {!!t.airdropped && t.airdropped > 10 && (
-              <span className="rounded-md bg-risk-high/15 px-1.5 py-0.5 text-[10px] font-semibold text-risk-high">{t.airdropped} fake holders</span>
-            )}
-            {col !== 'migrated' && bp != null && (
-              <span className="flex flex-1 items-center gap-1.5" title="Bonding curve progress">
-                <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                  <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.min(100, bp * 100)}%` }} />
+          <div className="min-w-0 flex-1 text-[11px]">
+            <div className="flex items-baseline gap-1.5">
+              <span className="truncate text-[15px] font-semibold leading-tight">{t.symbol}</span>
+              <span className="truncate text-xs text-muted">{t.name}</span>
+              <SocialLinks t={t} size={12} className="relative z-10 shrink-0" />
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-1">
+              {tax != null && tax > 0 && (
+                <span className={`rounded px-1 py-px text-[10px] font-semibold ${tax >= 10 ? 'bg-risk-high/15 text-risk-high' : 'bg-white/[0.07] text-ink/80'}`}>Tax {pct(tax, 1)}</span>
+              )}
+              {quote && (
+                <span className="rounded bg-white/[0.05] px-1 py-px font-mono text-[10px] text-muted" title="Quote asset">
+                  {quote}
                 </span>
-                <span className="font-mono text-[10px] text-muted">{Math.round(bp * 100)}%</span>
+              )}
+              <RiskTag risk={t.risk} />
+              {t.copycat && <span className="rounded bg-risk-high/15 px-1 py-px text-[10px] font-semibold text-risk-high">copycat</span>}
+              {t.serial_launcher && <span className="rounded bg-risk-high/15 px-1 py-px text-[10px] font-semibold text-risk-high">serial dev</span>}
+              {!!t.airdropped && t.airdropped > 10 && (
+                <span className="rounded bg-risk-high/15 px-1 py-px text-[10px] font-semibold text-risk-high">{t.airdropped} fake holders</span>
+              )}
+            </div>
+            <div className="mt-1 flex items-center gap-2.5 font-mono">
+              <Age created={created} serverNow={serverNow} />
+              <span className="flex items-center gap-0.5 text-ink/80" title="Holders">
+                <Users size={11} weight="bold" />
+                {t.holders < 1000 ? t.holders : compact(t.holders)}
               </span>
+              {col !== 'migrated' && bp != null && (
+                <span className="flex min-w-0 flex-1 items-center gap-1" title="Bonding curve progress">
+                  <span className="h-1 min-w-6 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+                    <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.min(100, bp * 100)}%` }} />
+                  </span>
+                  <span className="text-[10px] text-muted">{Math.round(bp * 100)}%</span>
+                </span>
+              )}
+            </div>
+            {t.creator_x && (
+              <a
+                href={`https://x.com/${t.creator_x}`}
+                target="_blank"
+                rel="noreferrer noopener"
+                onClick={(e) => e.stopPropagation()}
+                className="relative z-10 mt-0.5 block truncate text-[11px] text-muted hover:text-ink"
+                title="Creator on X"
+              >
+                @{t.creator_x}
+              </a>
+            )}
+          </div>
+          <div className="flex shrink-0 flex-col items-end gap-0.5 text-right font-mono text-[11px]">
+            <div title={t.market_cap_usd == null && mcap != null ? 'Market cap at launch' : 'Market cap'}>
+              <span className="text-muted">MC </span>
+              <span className={`text-[15px] font-semibold ${t.market_cap_usd == null && mcap != null ? 'text-ink/70' : ''}`}>{usd(mcap)}</span>
+            </div>
+            <div>
+              <span className="text-muted">V </span>
+              {usd(t.volume_24h_usd)}
+            </div>
+            {t.fees_24h_usd != null && (
+              <div title="Fees paid, 24h">
+                <span className="text-muted">F </span>
+                {usd(t.fees_24h_usd)}
+              </div>
+            )}
+            {txns != null && (
+              <div title={`${buys ?? 0} buys / ${sells ?? 0} sells, 24h`}>
+                <span className="text-muted">TX </span>
+                {compact(txns)}
+                <span className="mt-0.5 flex h-[3px] w-14 overflow-hidden rounded-full bg-risk-high/70">
+                  <span className="h-full bg-brand" style={{ width: `${txns ? ((buys ?? 0) / txns) * 100 : 50}%` }} />
+                </span>
+              </div>
             )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end justify-between">
-          <div className="text-right">
-            <div className="font-mono text-[15px] font-semibold">{usd(t.market_cap_usd)}</div>
-            <div className="font-mono text-[11px] text-muted">V {usd(t.volume_24h_usd)}</div>
-          </div>
-          {tradingAvailable() ? (
-            <span className="relative z-10">
-              {/* Quick buys spend ETH only; token decimals aren't on cards and every launchpad token is 18. */}
-              <QuickBuyButton
-                token={{
-                  address: t.address as `0x${string}`,
-                  symbol: t.symbol,
-                  decimals: 18,
-                  risk: t.risk,
-                  verdict: t.verdict,
-                  createdAt: t.created_at,
-                }}
-              />
-            </span>
-          ) : (
-            <button
-              type="button"
-              disabled
-              title={`Quick buy ${quick || '0'} ETH of $${t.symbol}. Trading opens soon.`}
-              className="relative z-10 flex cursor-not-allowed items-center gap-1 rounded-lg bg-brand/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-brand opacity-75"
-            >
-              <Lightning size={11} weight="fill" /> {quick || '0'}
-            </button>
-          )}
+        <div className="mt-2 flex items-center gap-1 font-mono text-[10px]">
+          <Pill icon={Crown} value={t.top10_pct} bad={30} title="Top 10 holders" />
+          <Pill icon={ChefHat} value={t.dev_pct} bad={10} title="Dev holds" />
+          <Pill icon={Crosshair} value={t.snipers_pct} bad={20} title="Snipers bought" />
+          <Pill icon={Package} value={t.bundled_pct} bad={20} title="Launch bundle" />
+          <span className="relative z-10 ml-auto flex items-center gap-1">
+            {tradingAvailable() ? (
+              <>
+                <QuickBuyButton token={tradeToken} amountEth={quick} variant="subtle" />
+                <QuickBuyButton token={tradeToken} amountEth={quick2} variant="subtle" />
+              </>
+            ) : (
+              [quick, quick2].map((q, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  disabled
+                  title={`Quick buy ${q || '0'} ETH of $${t.symbol}. Trading opens soon.`}
+                  className="flex cursor-not-allowed items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 font-mono text-[11px] font-semibold text-brand opacity-75"
+                >
+                  <Lightning size={10} weight="fill" /> {q || '0'}
+                </button>
+              ))
+            )}
+          </span>
         </div>
       </div>
     </li>

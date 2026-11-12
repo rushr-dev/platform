@@ -61,9 +61,10 @@ export function SettingsForm() {
         </div>
       </Section>
 
-      <Section title="Trenches quick buy" hint="What one tap on a trenches row buys.">
+      <Section title="Trenches quick buy" hint="The two one-tap Buy buttons on every trenches card (P1 and P2).">
         <div className="grid grid-cols-4 gap-2">
-          <Field value={draft.quickBuy} suffix="ETH" onChange={(x) => setDraft({ ...draft, quickBuy: x })} />
+          <Field value={draft.quickBuy} suffix="P1" onChange={(x) => setDraft({ ...draft, quickBuy: x })} />
+          <Field value={draft.quickBuy2} suffix="P2" onChange={(x) => setDraft({ ...draft, quickBuy2: x })} />
         </div>
       </Section>
 

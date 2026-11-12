@@ -12,12 +12,13 @@ import { useQuickTrade, type TradeToken } from './use-quick-trade';
  * otherwise shows why. High-risk tokens need "I understand" on the token page first.
  * Renders nothing unless trading is enabled.
  */
-export function QuickBuyButton({ token, amountEth }: { token: TradeToken; amountEth?: string }) {
+/** `subtle`: a tinted chip for dense lists (trenches cards, two per card); `solid` is the default. */
+export function QuickBuyButton({ token, amountEth, variant = 'solid' }: { token: TradeToken; amountEth?: string; variant?: 'solid' | 'subtle' }) {
   if (!tradingAvailable()) return null;
-  return <QuickBuyInner token={token} amountEth={amountEth} />;
+  return <QuickBuyInner token={token} amountEth={amountEth} variant={variant} />;
 }
 
-function QuickBuyInner({ token, amountEth }: { token: TradeToken; amountEth?: string }) {
+function QuickBuyInner({ token, amountEth, variant }: { token: TradeToken; amountEth?: string; variant: 'solid' | 'subtle' }) {
   const q = useQuickTrade(token);
   const [note, setNote] = useState<string | null>(null);
   const eth = amountEth ?? q.settings.quickBuy;
@@ -41,7 +42,7 @@ function QuickBuyInner({ token, amountEth }: { token: TradeToken; amountEth?: st
     await q.execute();
   };
 
-  const label = q.status.kind === 'success' ? 'Bought' : q.status.kind === 'failed' ? 'Retry' : busy ? '…' : `${eth} ETH`;
+  const label = q.status.kind === 'success' ? 'Bought' : q.status.kind === 'failed' ? 'Retry' : busy ? '…' : variant === 'subtle' ? eth : `${eth} ETH`;
   return (
     <span className="relative inline-flex">
       <button
@@ -51,7 +52,7 @@ function QuickBuyInner({ token, amountEth }: { token: TradeToken; amountEth?: st
         title={note ?? (q.status.kind === 'failed' ? q.status.message : `Quick buy ${eth} ETH of ${token.symbol}`)}
         aria-label={`Quick buy ${eth} ETH of ${token.symbol}`}
         className={`rounded-lg px-2 py-1 font-mono text-[11px] font-semibold transition disabled:opacity-50 ${
-          q.status.kind === 'success' ? 'bg-brand/20 text-brand' : q.status.kind === 'failed' || note ? 'bg-risk-high/20 text-risk-high' : 'bg-go text-bg hover:brightness-110'
+          q.status.kind === 'success' ? 'bg-brand/20 text-brand' : q.status.kind === 'failed' || note ? 'bg-risk-high/20 text-risk-high' : variant === 'subtle' ? 'bg-brand/15 text-brand hover:bg-brand/25' : 'bg-go text-bg hover:brightness-110'
         }`}
       >
         ⚡ {label}

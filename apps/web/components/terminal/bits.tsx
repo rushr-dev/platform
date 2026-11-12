@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phosphor-icons/react';
+import { CircleNotch, Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phosphor-icons/react';
 import type { RiskLevel, TokenCard } from '@/lib/api';
 import { LAUNCHPAD_LABEL } from '@/lib/format';
 import { GeneratedAvatar } from './avatar';
@@ -18,11 +18,15 @@ export function TokenAvatar({
   t,
   size = 40,
   badge = false,
+  shape = 'circle',
 }: {
   t: Pick<TokenCard, 'address' | 'symbol' | 'launchpad'> & { image_url?: string | null };
   size?: number;
   badge?: boolean;
+  /** Trenches cards use rounded squares (GMGN-style); everything else is round. */
+  shape?: 'circle' | 'square';
 }) {
+  const round = shape === 'square' ? 'rounded-[22%]' : 'rounded-full';
   // Load state is keyed by URL, so a new image_url starts fresh.
   const [img, setImg] = useState<{ url: string; status: 'ok' | 'failed' } | null>(null);
   const url = t.image_url || null;
@@ -30,7 +34,7 @@ export function TokenAvatar({
   const loaded = status === 'ok';
   return (
     <span className="relative block shrink-0" style={{ width: size, height: size }}>
-      <span className="absolute inset-0 overflow-hidden rounded-full">
+      <span className={`absolute inset-0 overflow-hidden ${round}`}>
         <span
           className={`absolute inset-0 transition-opacity duration-200 ${loaded ? 'opacity-0' : 'opacity-100'}`}
         >
@@ -52,7 +56,7 @@ export function TokenAvatar({
             onLoad={() => setImg({ url, status: 'ok' })}
             onError={() => setImg({ url, status: 'failed' })}
             // Opaque backing once loaded hides the avatar behind transparent PNGs.
-            className={`absolute inset-0 size-full rounded-full object-cover transition-opacity duration-200 ${loaded ? 'bg-surface-2 opacity-100' : 'opacity-0'}`}
+            className={`absolute inset-0 size-full ${round} object-cover transition-opacity duration-200 ${loaded ? 'bg-surface-2 opacity-100' : 'opacity-0'}`}
           />
         )}
       </span>
@@ -98,11 +102,18 @@ export function RiskDot({ risk }: { risk: RiskLevel | null }) {
 
 export function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?: string }) {
   const r = risk ?? 'unknown';
+  // Safety checks still running: a quiet spinner, not a word competing with real verdicts.
+  if (r === 'unknown')
+    return (
+      <span title="Running safety checks" aria-label="Running safety checks" className={`inline-flex items-center rounded-md bg-white/[0.04] px-1.5 py-0.5 ${className}`}>
+        <CircleNotch size={11} weight="bold" className="animate-spin text-muted" />
+      </span>
+    );
   return (
     <span
       className={`whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${RISK_BG[r]} ${className}`}
     >
-      {r === 'unknown' ? 'checking' : r === 'low' ? 'clean' : `${r} risk`}
+      {r === 'low' ? 'clean' : `${r} risk`}
     </span>
   );
 }

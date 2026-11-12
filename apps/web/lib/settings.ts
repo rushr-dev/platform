@@ -12,8 +12,10 @@ export interface TradeSettings {
   buyPresets: [string, string, string, string];
   /** Sell presets in % of the position. */
   sellPresets: [number, number, number];
-  /** The amount trenches' one-tap Buy uses, in ETH. */
+  /** The amount trenches' one-tap Buy uses, in ETH (P1). */
   quickBuy: string;
+  /** The second one-tap Buy on trenches cards (P2), in ETH. */
+  quickBuy2: string;
   /**
    * Slippage: 'auto' (5–15% from the token's age, volatility and price impact, plus its measured
    * tax) or a fixed percentage.
@@ -27,6 +29,7 @@ export const DEFAULT_SETTINGS: TradeSettings = {
   buyPresets: ['0.01', '0.05', '0.1', '0.5'],
   sellPresets: [25, 50, 100],
   quickBuy: '0.01',
+  quickBuy2: '0.05',
   slippagePct: 'auto',
   // Founder spec: 0.25 ETH per trade unless the user raises it.
   maxTradeEth: 0.25,
@@ -91,6 +94,7 @@ export function sanitize(s: TradeSettings): TradeSettings {
     buyPresets: [0, 1, 2, 3].map((i) => ethStr(s.buyPresets?.[i], DEFAULT_SETTINGS.buyPresets[i]!)) as TradeSettings['buyPresets'],
     sellPresets: [0, 1, 2].map((i) => num(s.sellPresets?.[i], 1, 100, DEFAULT_SETTINGS.sellPresets[i]!)) as TradeSettings['sellPresets'],
     quickBuy: ethStr(s.quickBuy, DEFAULT_SETTINGS.quickBuy),
+    quickBuy2: ethStr(s.quickBuy2, DEFAULT_SETTINGS.quickBuy2),
     slippagePct: slippageOf(s.slippagePct),
     maxTradeEth: num(s.maxTradeEth, LIMITS.maxTradeEth[0], LIMITS.maxTradeEth[1], DEFAULT_SETTINGS.maxTradeEth),
   };

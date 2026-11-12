@@ -113,3 +113,12 @@ The protocol is Data's `docs/realtime.md` (data branch). The terminal client (`a
 4. `stats.priceChangePct` should be measured against the last price before the window, not the first trade in it.
 5. The client sends v1 `subscribe` for the legacy `trenches` topic before `hello` arrives: answer `bad_topic` and keep the socket.
 6. Plain-pool tokens: the `trenches:*` topics carry launchpad tokens only (like `GET /tokens?column=`). The "Plain pools" toggle still reads them over HTTP; a `plain` variant of the topics would let it go live too.
+
+### Terminal → Data: trenches card fields (2026-11-12)
+The GMGN-style trenches cards read these optional fields on every token card (`/tokens?column=`, the `trenches:*` and `token:` socket payloads). Until they exist the cards hide them; please use these names, or tell Terminal yours:
+- `tax_pct` (number, percent; the larger of buy and sell), or `buy_tax_pct` and `sell_tax_pct`.
+- `quote_symbol` ("WETH", "USDG", "MSTR"…). Without it, cards show ETH/WETH/USDG and Robinhood stock quotes from the `quote` address and hide unknown quotes.
+- `buys_24h` and `sells_24h` (counts). The card shows TX = their sum with a buy/sell ratio bar, and the "Transactions" sort uses it.
+- `creator_x` (the creator's X handle, without @).
+- `fees_24h_usd` (shown as F).
+- `initial_market_cap_usd`: the market cap at launch, shown (dimmed) instead of "–" until the first trade gives a live one.
