@@ -28,7 +28,7 @@ describe.skipIf(!pg)('social', () => {
     await t.call('POST', '/follows/alice', { auth: carol.token });
     expect((await t.call('POST', '/follows/bob', { auth: bob.token })).json.error.code).toBe('cannot_follow_self');
     expect((await t.call('GET', '/members/alice')).json.member.followers).toBe(2);
-    expect((await t.call('GET', '/members/alice/followers')).json.items.map((i: any) => i.handle).sort()).toEqual(['bob', 'carol']);
+    expect((await t.call('GET', '/members/alice/followers')).json.items.map((i) => i.handle).sort()).toEqual(['bob', 'carol']);
     expect((await t.call('GET', `/me/following?ids=${alice.member.id},${dave.member.id}`, { auth: bob.token })).json.following).toEqual([alice.member.id]);
     await t.call('DELETE', '/follows/alice', { auth: carol.token });
     expect((await t.call('GET', '/members/alice')).json.member.followers).toBe(1);
@@ -77,10 +77,10 @@ describe.skipIf(!pg)('social', () => {
     expect(global.json.next).toBeTruthy();
     const page2 = await t.call('GET', `/feed?limit=50&before=${encodeURIComponent(global.json.next)}`);
     expect(page2.json.items.length).toBe(12 - 5);
-    expect(new Set([...global.json.items, ...page2.json.items].map((i: any) => i.id)).size).toBe(12);
+    expect(new Set([...global.json.items, ...page2.json.items].map((i) => i.id)).size).toBe(12);
     // bob follows alice: sees alice's and his own callouts, none of dave's.
     const mine = await t.call('GET', '/me/feed', { auth: bob.token });
-    expect(new Set(mine.json.items.map((i: any) => i.author.handle))).toEqual(new Set(['alice', 'bob']));
+    expect(new Set(mine.json.items.map((i) => i.author.handle))).toEqual(new Set(['alice', 'bob']));
     expect(mine.headers.get('cache-control')).toBe('private, no-store');
     expect((await t.call('GET', '/members/alice/callouts')).json.items).toHaveLength(1);
     expect((await t.call('GET', `/tokens/${TOKEN}/callouts?limit=3`)).json.items).toHaveLength(3);
@@ -92,14 +92,14 @@ describe.skipIf(!pg)('social', () => {
     expect((await t.call('POST', `/callouts/${first.id}/like`, { auth: bob.token })).json.likes).toBe(1);
     await t.call('POST', `/callouts/${first.id}/like`, { auth: carol.token });
     expect((await t.call('GET', `/me/likes?ids=${first.id}`, { auth: bob.token })).json.liked).toEqual([first.id]);
-    expect((await t.call('GET', '/me/feed', { auth: bob.token })).json.items.find((i: any) => i.id === first.id).likedByMe).toBe(true);
+    expect((await t.call('GET', '/me/feed', { auth: bob.token })).json.items.find((i) => i.id === first.id).likedByMe).toBe(true);
     expect((await t.call('DELETE', `/callouts/${first.id}/like`, { auth: carol.token })).json.likes).toBe(1);
 
     const k1 = await t.call('POST', `/callouts/${first.id}/comments`, { auth: bob.token, body: { body: 'what was your entry?' } });
     expect(k1.status).toBe(201);
     await t.call('POST', `/callouts/${first.id}/comments`, { auth: carol.token, body: { body: 'ser' } });
     const list = await t.call('GET', `/callouts/${first.id}/comments`);
-    expect(list.json.items.map((k: any) => k.author.handle)).toEqual(['bob', 'carol']);
+    expect(list.json.items.map((k) => k.author.handle)).toEqual(['bob', 'carol']);
     expect((await t.call('GET', `/callouts/${first.id}`)).json.callout.comments).toBe(2);
     // carol can't delete bob's comment; alice (thread owner) can.
     expect((await t.call('DELETE', `/comments/${k1.json.comment.id}`, { auth: carol.token })).status).toBe(404);
@@ -119,7 +119,7 @@ describe.skipIf(!pg)('social', () => {
     expect((await t.call('POST', '/reports', { auth: dave.token, body: { targetType: 'callout', targetId: target, reason: 'meh' } })).json.error.code).toBe('invalid_field');
 
     const reports = await t.admin('GET', '/reports');
-    expect(reports.json.reports.filter((x: any) => x.target_id === target)).toHaveLength(3);
+    expect(reports.json.reports.filter((x) => x.target_id === target)).toHaveLength(3);
     expect((await t.admin('POST', `/callouts/${target}/unhide`)).json.hidden).toBe(false);
     expect((await t.call('GET', `/callouts/${target}`)).status).toBe(200);
   });
@@ -127,7 +127,7 @@ describe.skipIf(!pg)('social', () => {
   it('suspends a member: their posts disappear and they can no longer act', async () => {
     expect((await t.admin('POST', `/members/${dave.member.id}/suspend`)).json.status).toBe('suspended');
     expect((await t.call('GET', '/members/dave')).status).toBe(404);
-    expect((await t.call('GET', '/feed?limit=50')).json.items.some((i: any) => i.author.handle === 'dave')).toBe(false);
+    expect((await t.call('GET', '/feed?limit=50')).json.items.some((i) => i.author.handle === 'dave')).toBe(false);
     expect((await t.call('GET', '/me', { auth: dave.token })).json.error.code).toBe('suspended');
     await t.admin('POST', `/members/${dave.member.id}/unsuspend`);
     expect((await t.call('GET', '/members/dave')).status).toBe(200);

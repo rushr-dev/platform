@@ -134,18 +134,26 @@ interface Safety {
   stale: boolean;
 }
 
+/** The parts of @rushr/core's TokenSignals the safety view reads (stored as jsonb, so all optional). */
+interface SignalData {
+  copycat?: boolean;
+  spam?: boolean;
+  dev?: { serialLauncher?: boolean; rugs?: number };
+  reasons?: { level: string; text: string }[];
+}
+
 export async function safetyOf(sql: Sql, token: string): Promise<Safety> {
-  const [row] = await sql<{ risk_level: Safety['riskLevel']; verdict: string; data: any; updated_at: Date }[]>`
+  const [row] = await sql<{ risk_level: Safety['riskLevel']; verdict: string; data: SignalData | null; updated_at: Date }[]>`
     select risk_level, verdict, data, updated_at from signals where token = ${token}`;
   const [blockedRow] = await sql<{ value: unknown }[]>`select value from indexer_state where key = 'agents:blocked_tokens'`;
   const blockedList = Array.isArray(blockedRow?.value) ? (blockedRow!.value as string[]).map((s) => s.toLowerCase()) : [];
-  const data = row?.data ?? {};
+  const data: SignalData = row?.data ?? {};
   const flags: string[] = [];
   if (data.copycat) flags.push('copycat');
   if (data.spam) flags.push('spam');
   if (data.dev?.serialLauncher) flags.push('serial_launcher');
   if ((data.dev?.rugs ?? 0) > 0) flags.push('dev_rugged_before');
-  for (const r of (data.reasons ?? []) as { level: string; text: string }[]) if (r.level === 'high') flags.push(`high: ${r.text}`);
+  for (const r of data.reasons ?? []) if (r.level === 'high') flags.push(`high: ${r.text}`);
   return {
     token,
     riskLevel: row?.risk_level ?? 'unknown',

@@ -4,6 +4,7 @@ import { vi } from 'vitest';
 import { freshDb, pgAvailable } from '../../../packages/agents/test/pg';
 import { setPrivyKeys } from '../src/agents/privy';
 import { v1, adminV1 } from '../src/agents/app';
+import type { ApiJson } from './api';
 
 export { pgAvailable };
 export const APP_ID = 'test-app';
@@ -66,7 +67,7 @@ export async function setup(name: string, envOverrides: Record<string, string> =
     if (opts.auth) headers.authorization = `Bearer ${opts.auth}`;
     const res = await v1.request(path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) }, env);
     const text = await res.text();
-    return { status: res.status, headers: res.headers, json: (text ? JSON.parse(text) : null) as any };
+    return { status: res.status, headers: res.headers, json: (text ? JSON.parse(text) : null) as ApiJson };
   }
 
   /** Sign a human up (no invite needed unless the env requires it). Returns { token, member }. */
@@ -74,13 +75,13 @@ export async function setup(name: string, envOverrides: Record<string, string> =
     const tok = await human(`did:privy:${handle}`, wallet);
     const r = await call('POST', '/me', { auth: tok, body: { handle } });
     if (r.status !== 201) throw new Error(`signup ${handle}: ${JSON.stringify(r.json)}`);
-    return { token: tok, member: r.json.member as { id: string; handle: string; wallet: string } };
+    return { token: tok, member: r.json.member };
   }
 
   async function admin(method: string, path: string, body?: unknown) {
     const res = await adminV1.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, env);
     const text = await res.text();
-    return { status: res.status, json: (text ? JSON.parse(text) : null) as any };
+    return { status: res.status, json: (text ? JSON.parse(text) : null) as ApiJson };
   }
 
   return {

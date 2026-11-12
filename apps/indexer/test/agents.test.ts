@@ -3,9 +3,13 @@ import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { pgAvailable, setup } from './harness';
 
 // No RPC in tests: the trade package is replaced with a recorder.
-const calls: any[] = [];
+interface PrepareCall {
+  req: { side: 'buy' | 'sell'; amountIn: bigint; trader: string; source: { kind: string } };
+  opts: { forSigning?: boolean };
+}
+const calls: PrepareCall[] = [];
 vi.mock('@rushr/trade/agent', () => ({
-  prepareSwap: async (_client: unknown, req: any, opts: any) => {
+  prepareSwap: async (_client: unknown, req: PrepareCall['req'], opts: PrepareCall['opts']) => {
     calls.push({ req, opts });
     return {
       quote: { amountIn: req.amountIn, amountOut: 123n, minAmountOut: 120n, warnings: [] },

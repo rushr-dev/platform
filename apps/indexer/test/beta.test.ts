@@ -36,7 +36,7 @@ describe.skipIf(!pg)('beta: invites and feedback', () => {
 
     const list = await t.admin('GET', '/invites?batch=kols-1');
     expect(list.json).toMatchObject({ total: 3, used: 2 });
-    expect(list.json.invites.find((i: any) => i.code === a).used_by).toBe('alice');
+    expect(list.json.invites.find((i) => i.code === a).used_by).toBe('alice');
   });
 
   it('records first-touch referrals by the referrer handle, once', async () => {
@@ -70,6 +70,6 @@ describe.skipIf(!pg)('beta: invites and feedback', () => {
     expect((await t.call('POST', '/feedback', { body: { message: 'love it' } })).status).toBe(201);
     expect((await t.call('POST', '/feedback', { body: { message: '' } })).json.error.code).toBe('invalid_field');
     const fb = await t.admin('GET', '/feedback');
-    expect(fb.json.feedback.map((f: any) => [f.message, f.handle, f.page])).toEqual([['love it', null, null], ['the chart is slow', 'alice', '/token/0xabc']]);
+    expect(fb.json.feedback.map((f) => [f.message, f.handle, f.page])).toEqual([['love it', null, null], ['the chart is slow', 'alice', '/token/0xabc']]);
   });
 });
