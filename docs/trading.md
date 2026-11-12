@@ -2,6 +2,94 @@
 
 Status 2026-11-12: research done, founder decisions in (below), scaffold in `packages/trade`, `contracts/` and `/swap`. Nothing here has been deployed. The treasury is the founder's EOA (see the known risk below).
 
+## Beta trading v0 (2026-11-12)
+
+**What it is:** quick buy and sell with **no confirmation popup**:
+- **Signing:** client-side, in the user's own **Privy embedded wallet**, with `sendTransaction(tx, { uiOptions: { showWalletUIs: false } })`. Rushr's servers hold **no signing key for humans**.
+- **Route:** through **Uniswap's audited Universal Router**, with our fee in the same tx: `TRANSFER` on buys, `PAY_PORTION` + `SWEEP` on sells, recipient = the user.
+- **Contracts:** no RushrRouter or RushrPonsRouter. Those stay for agents and offline one-click, after the audit.
+- **Fee and treasury:** 0.5% (0.45% referred), paid to the treasury `0x447a…5E40`.
+
+### Pieces
+| Where | What |
+| --- | --- |
+| `packages/trade/src/quick.ts` | `quickBuy` / `quickSell` / `prepareQuickTrade` build the exact wallet calls. Sells add `approve(Permit2)`, then `Permit2.approve(Universal Router, 30 days)`, then the swap. Guardrails are applied and the calls are simulated before sending (`eth_simulateV1` from the user's address), with gas taken from the simulation |
+| **One Privy setup** (Terminal's) | `components/terminal/auth/privy-host.tsx` loads Privy lazily (email, X and wallet login; an embedded wallet for every user on chain 4663; wallet UIs off) and fills `lib/auth`. The trade UI uses only `useAuth()`, `auth.login()` and `auth.sendTransaction()`, so it imports no Privy and adds nothing to page bundles. Settings come from Terminal's `lib/settings` / `/settings`: buy and sell presets, quick-buy amount, max slippage, per-trade cap |
+| `apps/web/components/trade/trade-box.tsx` | `TradeBox` for the token page: buy/sell, presets, % sells, quote (receive, min, fee, route), warnings and blockers, the "I understand" toggle, a link to `/settings`, and tx status with an explorer link |
+| `apps/web/components/trade/quick-buy-button.tsx` | `QuickBuyButton` for trenches rows: one click (the `/settings` quick-buy amount), then quote, guards and a silent send |
+| `apps/web/components/trade/use-quick-trade.ts` | The hook: quote, honeypot/tax probe, guards, then `auth.sendTransaction` for each call in order and wait for each receipt |
+| `apps/web/components/trade/index.ts` | Exports `TradeBox`, `QuickBuyButton`, `isSwapEnabled`, `tradingAvailable` and `TradeToken` for Terminal to place. Everything renders nothing unless `NEXT_PUBLIC_SWAP_ENABLED=1` and a Privy app id are set |
+| `apps/web/components/trade/csp.ts` + `apps/web/middleware.ts` | Strict CSP with a per-request nonce on `/trenches`, `/token/*`, `/settings`, `/me` and `/swap`. Privy is live on all of them, so all get the same CSP, and `/settings` is rendered per request so the nonce reaches its scripts |
+| `packages/trade/scripts/quick-sim.ts` | End-to-end simulation of the wallet calls on live state |
+
+### Guardrails (client)
+- **Per-trade cap:** on the ETH side (buy input, expected sell output), from Terminal's `/settings`. Note: Terminal's default is 0.5 ETH, while the founder's spec said 0.25 ETH; the default lives in `lib/settings.ts` (Terminal).
+- **Slippage:** automatic. 5% base; +3% for tokens under 1 h old, +5% under 10 min; +3%/+5% for 5-min moves above 20%/50%; plus extra for impact above 2%. Capped at 15%, then the measured token tax is added on top, **and never above the user's "Max slippage" setting**.
+- **Quote freshness:** quotes expire after 10 s and are refreshed automatically before sending.
+- **Safety:**
+  - High-risk tokens need an "I understand" toggle once per token (remembered per browser).
+  - The buy→sell honeypot probe blocks tokens that can't be sold back.
+  - Tax above 5% shows a warning, and medium risk shows its verdict.
+- **Routing safety:**
+  - **PONS tokens still on their curve are "tradable after graduation", even when other pools exist.** A curve token was found live with a stray **89%-fee** v4 pool.
+  - Pools with a venue fee above 10% are never routed; above 3% shows a warning.
+  - Price impact above 30% is a hard block.
+- **Balances:** ETH for amount plus gas (estimate ×1.5); token balance for sells.
+- **Status:** signing, then pending with an explorer link, then success or failure with an explorer link. Cancellations and revert reasons are shown in plain words.
+
+### Security for silent client-side signing
+- **CSP** on the terminal and trade pages:
+  - scripts: our own (`'self'`, plus the nonce for Next's inline bootstrap; no `'unsafe-inline'`), Cloudflare Turnstile (Privy) and the Cloudflare Web Analytics beacon, which Cloudflare injects at the edge without our nonce (hence no `'strict-dynamic'`)
+  - frames only from Privy, WalletConnect verify and Turnstile
+  - connections only to our API and live socket (v1/v2), the public chain RPC, DexScreener, Privy, WalletConnect and Cloudflare Web Analytics
+  - images same-origin (icons and X avatars via `/api/img`)
+  - `frame-ancestors 'none'`, `object-src 'none'`
+
+  Checked on a production build with no CSP violations on `/trenches`, `/token/<PONS>`, `/settings`, `/swap` or the landing page (which has no CSP). The live feed shows "live", Privy's embedded-wallet iframe loads, the sign-in modal opens, and a socket to a non-allowlisted host is blocked.
+- **No third-party scripts** on trade pages. Our bundles only.
+- **Privy allowed origins:** the founder's dashboard is limited to `https://rushr.trade` and `https://app.rushr.trade` (seen in Privy's `frame-ancestors`). Add localhost only for development (see the to-dos).
+- **Keys:** the per-trade cap and the user's own key are the limits. An XSS on our origin could still trade within the cap, which is why the CSP is strict. Users can export their key at any time from Privy.
+
+### Verified
+- `quick-sim.ts` on live state (public RPC, nothing signed):
+  - **PONS:** quick buy, then quick sell with approvals, in one simulated block. Tokens received equal the quote to the wei, the treasury gets exactly 0.00005 ETH, and the sell pays ETH to the user.
+  - **lift.fun token:** buy passes. Selling after a buy was proven earlier by the probe.
+  - **PONS curve token:** blocked with "tradable after graduation".
+- 72 unit tests.
+- Production build with the flag on, on Terminal's single Privy setup:
+  - the trade box quotes for signed-out visitors (0.01 ETH ≈ 136 PONS, fee 0.00005 ETH) with Terminal's presets and cap
+  - "Sign in to trade" opens the Rushr sign-in modal
+  - no CSP violations
+
+  With the flag off, `/swap` is a 404 and no trade UI renders.
+
+### Founder to-dos in the Privy dashboard (app `cmwdhafq101190hjt99ym9pah`)
+1. **Allowed origins:**
+   - production: `https://rushr.trade` and `https://www.rushr.trade` (keep `https://app.rushr.trade` if used)
+   - development only: `http://localhost:3010` (Terminal) and `http://localhost:3012` (Swap)
+
+   Remove localhost before launch, or use a separate dev app client.
+2. **Login methods:**
+   - **Email**
+   - **X / Twitter**: Privy's default credentials work for testing; for launch, add your own X OAuth app credentials so the consent screen says "Rushr"
+   - **External wallets**: MetaMask and WalletConnect for users who bring a wallet
+3. **Embedded wallets (Ethereum):**
+   - enable, with **"Create on login: users without wallets"** (the code also sets this)
+   - keep **key export enabled**, since users must be able to export
+   - leave the wallet-UI default; the trade code hides the UI per transaction
+4. **Chains / RPC:** nothing to set. Robinhood Chain 4663 is configured in code as a custom chain with the public RPC. **No gas sponsorship** (users pay gas in ETH).
+5. **Optional, recommended before volume:** MFA (passkey or TOTP) required for key export; a custom auth domain with HttpOnly cookies.
+6. **Deploy env** (build time):
+   - `NEXT_PUBLIC_PRIVY_APP_ID=cmwdhafq101190hjt99ym9pah`
+   - `NEXT_PUBLIC_SWAP_ENABLED=1` (only when ready to open trading)
+
+   The app secret stays server-only (`.dev.vars.privy`, Worker secret) and isn't needed for v0.
+7. **First real trade (founder only):**
+   - log in on a build with the flag on and fund the embedded wallet with a little ETH on Robinhood Chain
+   - buy 0.001–0.005 ETH of a liquid token (e.g. PONS) from the token page
+   - check the explorer link; the treasury receives 0.5%
+   - sell 100%: the first sell sends two approval transactions, then the swap
+
 ## Decisions (founder, 2026-11-12)
 
 | Question | Decision |
