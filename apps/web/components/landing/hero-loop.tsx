@@ -5,13 +5,12 @@ import { useEffect, useState } from 'react';
 /**
  * The "living sketch": a short, muted loop of the forum scene behind the hero.
  *
- * Slot: drop the clip in as public/art/hero-loop.webm and public/art/hero-loop.mp4
- * (16:9 like public/art/hero-*.webp, first frame matching it, under ~2 MB each), then
- * set HERO_LOOP_READY to true. Until then, and whenever it can't play, the still
- * underneath stays the hero (and the LCP image).
+ * The clip is public/art/hero-loop.mp4: H.264, 1280x720, 16 s, ~1.9 MB, faststart, made from
+ * the hero still and played forward then back, so its last frame meets its first and `loop` has
+ * no jump. H.264 MP4 plays in every current browser, so there is no WebM. Whenever it can't play,
+ * the still underneath stays the hero (and the LCP image). Set HERO_LOOP_READY to false to turn it off.
  */
-export const HERO_LOOP_READY = false;
-const WEBM = '/art/hero-loop.webm';
+export const HERO_LOOP_READY = true;
 const MP4 = '/art/hero-loop.mp4';
 
 /** Only where motion is welcome and cheap: wide screens, no reduced motion, no Save-Data. */
@@ -48,8 +47,7 @@ export function HeroLoop({ poster, className = '' }: { poster: string; className
       onPlaying={() => setPlaying(true)}
       className={`absolute inset-0 size-full transition-opacity duration-1000 ${playing ? 'opacity-100' : 'opacity-0'} ${className}`}
     >
-      <source src={WEBM} type="video/webm" />
-      {/* Neither source plays (missing file, unsupported codec): drop the video and keep the still. */}
+      {/* The clip can't play (missing file, unsupported codec): drop the video and keep the still. */}
       <source src={MP4} type="video/mp4" onError={() => setOn(false)} />
     </video>
   );
