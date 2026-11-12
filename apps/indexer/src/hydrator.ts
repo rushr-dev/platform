@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import postgres, { type Sql } from 'postgres';
 import type { Address, Hex } from 'viem';
-import { NATIVE_ETH, PAIR_SWAP_TOPICS, QUOTES, ROBINHOOD_CHAIN, STOCK_QUOTES, TOPICS, UNISWAP, decodeLogs, type PoolInfo, type RawLog } from '@rushr/core';
+import { NATIVE_ETH, PAIR_SWAP_TOPICS, acceptsPrice, QUOTES, ROBINHOOD_CHAIN, STOCK_QUOTES, TOPICS, UNISWAP, decodeLogs, type PoolInfo, type RawLog } from '@rushr/core';
 import { dbUrl, holderHistory, poller as pollerOf, type Env } from './env';
 import { Pipeline } from './pipeline';
 import { Rpc } from './rpc';
@@ -228,6 +228,7 @@ export class TokenHydrator extends DurableObject<Env> {
       getPool: (id) => pools.get(id), isTracked: (t) => t === token, curveQuote: (c) => curveQuotes.get(c), focusToken: token as Address,
     });
     const usdPer = (q: string) => (q === QUOTES.USDG ? 1 : q === QUOTES.WETH || q === NATIVE_ETH ? ethUsd : null);
+    let reference: number | null = null;
     const trades = r.swaps
       .filter((x) => x.token === token)
       .map((x) => {
@@ -235,9 +236,13 @@ export class TokenHydrator extends DurableObject<Env> {
         const qd = x.quote === QUOTES.USDG ? 6 : 18;
         const usd = per == null ? null : (Number(x.quoteAmount) / 10 ** qd) * per;
         const tokens = Number(x.tokenAmount) / 10 ** meta.decimals;
+        // Same outlier guard as the indexer: dust never prices the token.
+        let priceUsd = usd != null && tokens > 0 ? usd / tokens : null;
+        if (priceUsd != null && !acceptsPrice({ usd: usd!, price: priceUsd, quoteRaw: x.quoteAmount, reference })) priceUsd = null;
+        if (priceUsd != null) reference = priceUsd;
         return {
           tx: x.tx, logIndex: x.logIndex, time: x.time, trader: x.trader, side: x.side, tokenAmount: x.tokenAmount.toString(),
-          quoteAmount: x.quoteAmount.toString(), quote: x.quote, pool: x.pool, priceUsd: usd != null && tokens > 0 ? usd / tokens : null, usd, tags: [] as string[],
+          quoteAmount: x.quoteAmount.toString(), quote: x.quote, pool: x.pool, priceUsd, usd, tags: [] as string[],
         };
       });
     const candles = (size: number) => {

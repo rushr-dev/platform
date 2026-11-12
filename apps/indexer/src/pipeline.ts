@@ -7,6 +7,7 @@ import {
   QUOTES,
   TOPICS,
   STOCK_QUOTES,
+  acceptsPrice,
   decodeLogs,
   launchpadForHook,
   subscribedTopics,
@@ -127,6 +128,8 @@ export class Pipeline {
   private quotes = new Map<string, ExtraQuote>();
   private pools = new Map<string, PoolInfo>();
   private tokens = new Map<string, TokenMeta>();
+  /** Last accepted price per token: the reference for the outlier guard. */
+  private refPrice = new Map<string, number>();
   private ethUsd: number | null = null;
   private loaded = false;
   /**
@@ -159,9 +162,12 @@ export class Pipeline {
         block: BigInt(p.created_block), time: Math.floor(p.created_at.getTime() / 1000),
       });
     }
-    const toks = await this.sql<{ address: string; decimals: number; total_supply: string }[]>`
-      select address, decimals, total_supply from tokens`;
-    for (const t of toks) this.tokens.set(t.address, { decimals: t.decimals, totalSupply: BigInt(t.total_supply) });
+    const toks = await this.sql<{ address: string; decimals: number; total_supply: string; price_usd: string | null }[]>`
+      select address, decimals, total_supply, price_usd from tokens`;
+    for (const t of toks) {
+      this.tokens.set(t.address, { decimals: t.decimals, totalSupply: BigInt(t.total_supply) });
+      if (t.price_usd) this.refPrice.set(t.address, Number(t.price_usd));
+    }
     const [eth] = await this.sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`;
     this.ethUsd = eth?.value.usd ?? null;
     const extra = [...new Set(pools.map((p) => p.quote).filter((q) => !ETH_LIKE.has(q) && q !== QUOTES.USDG))];
@@ -283,6 +289,8 @@ export class Pipeline {
 
     const newSwaps = new Set<string>();
     const newTransfers = new Set<string>();
+    // Each swap is priced once (the outlier guard is stateful).
+    const pricedBy = new Map<string, { priceUsd: string | null; usd: string | null }>();
     await this.sql.begin(async (tx) => {
       if (fresh.length) {
         const rows = fresh.map((l, i) => ({
@@ -320,6 +328,7 @@ export class Pipeline {
 
       lap('tx:tokens+pools');
       const priced = r.swaps.map((s) => ({ s, ...this.price(s) }));
+      for (const p of priced) pricedBy.set(`${p.s.tx}:${p.s.logIndex}`, { priceUsd: p.priceUsd, usd: p.usd });
       for (const k of await this.insertSwaps(tx, priced)) newSwaps.add(k);
       lap('tx:swaps');
       if (r.transfers.length && !this.opts.skipTransfers) {
@@ -356,7 +365,7 @@ export class Pipeline {
       trades: r.swaps
         .filter((s) => newSwaps.has(`${s.tx}:${s.logIndex}`))
         .map((s) => {
-          const p = this.price(s);
+          const p = pricedBy.get(`${s.tx}:${s.logIndex}`) ?? { priceUsd: null, usd: null };
           return {
             token: s.token, tx: s.tx, logIndex: s.logIndex, time: s.time, trader: s.trader, side: s.side, pool: s.pool, quote: s.quote,
             tokenAmount: s.tokenAmount.toString(), quoteAmount: s.quoteAmount.toString(),
@@ -696,7 +705,12 @@ export class Pipeline {
     const quote = Number(s.quoteAmount) / 10 ** quoteDecimals;
     const tokens = Number(s.tokenAmount) / 10 ** meta.decimals;
     const usd = quote * usdPerQuote;
-    return { priceUsd: String(usd / tokens), usd: String(usd) };
+    const price = usd / tokens;
+    // Dust and small outliers keep their USD value but never price the token (see acceptsPrice).
+    const reference = this.refPrice.get(s.token) ?? null;
+    if (!acceptsPrice({ usd, price, quoteRaw: s.quoteAmount, reference })) return { priceUsd: null, usd: String(usd) };
+    this.refPrice.set(s.token, price);
+    return { priceUsd: String(price), usd: String(usd) };
   }
 
   private async applyBalances(tx: TransactionSql, transfers: DecodedTransfer[]) {
