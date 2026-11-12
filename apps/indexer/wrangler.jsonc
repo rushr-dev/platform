@@ -18,12 +18,17 @@
     "bindings": [
       { "name": "CHAIN_POLLER", "class_name": "ChainPoller" },
       { "name": "LIVE_FEED", "class_name": "LiveFeed" },
-      { "name": "BACKFILLER", "class_name": "Backfiller" }
+      { "name": "BACKFILLER", "class_name": "Backfiller" },
+      { "name": "GATEWAY", "class_name": "Gateway" },
+      { "name": "HYDRATOR", "class_name": "TokenHydrator" },
+      { "name": "RPC_BUDGET", "class_name": "RpcBudget" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ChainPoller", "LiveFeed"] },
-    { "tag": "v2", "new_sqlite_classes": ["Backfiller"] }
+    { "tag": "v2", "new_sqlite_classes": ["Backfiller"] },
+    { "tag": "v3", "new_sqlite_classes": ["Gateway"] },
+    { "tag": "v4", "new_sqlite_classes": ["TokenHydrator", "RpcBudget"] }
   ],
   "queues": {
     "producers": [
@@ -42,7 +47,10 @@
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "CHAIN_ID": "4663",
-    "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2"
+    "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2",
+    // Stream v3/v2 swaps of the busiest tracked pools (address-filtered, max 500) over the socket.
+    // Approved 2026-11-12 at ~+4.3 GB/month; measured bytes are in /health live.socketBytes.
+    "LIVE_PAIRS": "1"
   }
   // Secrets (set with `wrangler secret put`, locally in .dev.vars): RPC_URL, DATABASE_URL, ADMIN_TOKEN
 }

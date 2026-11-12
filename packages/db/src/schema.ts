@@ -41,6 +41,8 @@ export const tokens = pgTable(
     description: text('description'),
     /** When launchpad metadata (icon, socials) was last resolved; null = not tried yet. */
     metadataAt: timestamp('metadata_at', { withTimezone: true }),
+    /** When the icon was first found (metadata_at moves on every retry): launch → icon latency. */
+    imageAt: timestamp('image_at', { withTimezone: true }),
     // Rolling market stats, updated by the indexer.
     priceEth: numeric('price_eth'),
     marketCapUsd: numeric('market_cap_usd'),
@@ -66,7 +68,14 @@ export const pools = pgTable(
     token: text('token').notNull(),
     quote: text('quote').notNull(), // 0x0 (native ETH), WETH, USDG or a stock token
     tokenIsCurrency0: boolean('token_is_currency0').notNull().default(false),
-    dex: text('dex').notNull(), // 'uniswap-v4' | 'pons-curve'
+    dex: text('dex').notNull(), // 'uniswap-v4' | 'pons-curve' | 'v3' | 'v2' (v3/v2 include every fork)
+    venue: text('venue'), // v3/v2 only: DEX name (uniswap, ramses, aero, up, topaz, ...), 'other' if unknown
+    // Pool key parts, so swaps can be routed (v4: currency0/1 from token/quote + these + hooks). Null for curves and v2.
+    fee: integer('fee'),
+    tickSpacing: integer('tick_spacing'),
+    /** Last measured TVL (v3/v2: the pool's token balances), and when. Null for v4 until per-pool TVL lands. */
+    liquidityUsd: numeric('liquidity_usd'),
+    liquidityAt: timestamp('liquidity_at', { withTimezone: true }),
     launchpad: text('launchpad'),
     hooks: text('hooks'),
     createdBlock: bigint('created_block', { mode: 'bigint' }).notNull(),
@@ -128,6 +137,21 @@ export const balances = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.token, t.wallet] }), index('balances_wallet_idx').on(t.wallet)],
+);
+
+/**
+ * Staging for a full-history holder backfill: balances aggregated from Transfers before the
+ * token's first indexed transfer, merged into `balances` in one transaction when the job ends.
+ */
+export const holderBackfill = pgTable(
+  'holder_backfill',
+  {
+    token: text('token').notNull(),
+    wallet: text('wallet').notNull(),
+    amount: amount('amount').notNull(),
+    firstReceivedAt: timestamp('first_received_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.token, t.wallet] })],
 );
 
 export const wallets = pgTable(

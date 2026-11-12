@@ -11,8 +11,8 @@ export class Rpc {
   private id = 0;
   constructor(private url: string) {}
 
-  async call<T>(method: string, params: unknown[]): Promise<T> {
-    const res = await this.post({ jsonrpc: '2.0', id: ++this.id, method, params });
+  async call<T>(method: string, params: unknown[], timeoutMs = 30_000): Promise<T> {
+    const res = await this.post({ jsonrpc: '2.0', id: ++this.id, method, params }, timeoutMs);
     const body = (await res.json()) as RpcResponse<T>;
     if (body.error) throw new Error(`${method}: ${body.error.message}`);
     return body.result as T;
@@ -103,10 +103,73 @@ export class Rpc {
     return ids.map((id, i) => {
       const r = raw[i];
       if (!r || r === '0x') return { id, key: null };
-      const [currency0, currency1, , , hooks] = decodeFunctionResult({ abi, functionName: 'poolKeys', data: r });
+      const [currency0, currency1, fee, tickSpacing, hooks] = decodeFunctionResult({ abi, functionName: 'poolKeys', data: r });
       if (currency0 === NATIVE_ETH && currency1 === NATIVE_ETH) return { id, key: null };
-      return { id, key: { currency0: currency0.toLowerCase() as Address, currency1: currency1.toLowerCase() as Address, hooks: hooks.toLowerCase() as Address } };
+      return {
+        id,
+        key: { currency0: currency0.toLowerCase() as Address, currency1: currency1.toLowerCase() as Address, hooks: hooks.toLowerCase() as Address, fee, tickSpacing },
+      };
     });
+  }
+
+  /**
+   * token0/token1/factory of addresses that emitted v3/v2 Swap events (any fork). Null when the
+   * contract doesn't answer token0()/token1() (not a standard pair).
+   */
+  async pairKeys(addrs: string[]) {
+    const SEL = { token0: '0x0dfe1681', token1: '0xd21220a7', factory: '0xc45a0155', fee: '0xddca3f43', tickSpacing: '0xd0c93a7c' } as const;
+    const N = Object.keys(SEL).length;
+    const calls = addrs.flatMap((a) => Object.values(SEL).map((data) => ({ method: 'eth_call', params: [{ to: a, data }, 'latest'] })));
+    const res: (Hex | null)[] = [];
+    for (let i = 0; i < calls.length; i += 100) res.push(...(await this.batch<Hex>(calls.slice(i, i + 100))));
+    const addr = (r: Hex | null | undefined) => (r && r.length >= 66 ? (`0x${r.slice(26, 66)}`.toLowerCase() as Address) : null);
+    // uint24 fee / int24 tickSpacing (v2 pairs have neither).
+    const int = (r: Hex | null | undefined, signed: boolean) => {
+      if (!r || r.length < 66) return null;
+      const v = BigInt(`0x${r.slice(-6)}`);
+      return Number(signed && v >= 0x800000n ? v - 0x1000000n : v);
+    };
+    return addrs.map((id, i) => {
+      const [t0, t1, f] = [addr(res[i * N]), addr(res[i * N + 1]), addr(res[i * N + 2])];
+      const key = t0 && t1 && t0 !== t1 ? { currency0: t0, currency1: t1, factory: f, fee: int(res[i * N + 3], false), tickSpacing: int(res[i * N + 4], true) } : null;
+      return { id, key };
+    });
+  }
+
+  /** ERC-20 balances of many (token, holder) pairs in one batch; null where the call failed. */
+  async balances(pairs: { token: string; holder: string }[]): Promise<(bigint | null)[]> {
+    const calls = pairs.map((p) => ({
+      method: 'eth_call',
+      params: [{ to: p.token, data: `0x70a08231${p.holder.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'],
+    }));
+    const out: (bigint | null)[] = [];
+    for (let i = 0; i < calls.length; i += 100) {
+      for (const r of await this.batch<Hex>(calls.slice(i, i + 100))) out.push(r && r.length >= 66 ? BigInt(r.slice(0, 66)) : null);
+    }
+    return out;
+  }
+
+  /** v4 pool keys from their Initialize events (works for hook pools PositionManager never saw). */
+  async v4Initialized(ids: string[]): Promise<Map<string, { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }>> {
+    const out = new Map<string, { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address }>();
+    const INIT = '0xdd466e674ea557f56295e2d0218a125ea4b4f0f6f3307b95f85e6110838d6438' as Hex;
+    const head = await this.blockNumber();
+    for (let i = 0; i < ids.length; i += 100) {
+      // Few logs per call, so the whole chain fits one request (Alchemy: any range up to 10K logs).
+      const logs = await this.filteredLogs(0n, head, { address: UNISWAP.v4.poolManager, topics: [INIT, ids.slice(i, i + 100) as Hex[]] });
+      for (const l of logs) {
+        const w = (k: number) => l.data.slice(2 + k * 64, 2 + (k + 1) * 64);
+        const ts = BigInt(`0x${w(1)}`);
+        out.set(l.topics[1]!.toLowerCase(), {
+          currency0: `0x${l.topics[2]!.slice(26)}`.toLowerCase() as Address,
+          currency1: `0x${l.topics[3]!.slice(26)}`.toLowerCase() as Address,
+          fee: Number(BigInt(`0x${w(0)}`)),
+          tickSpacing: Number(ts >= 1n << 255n ? ts - (1n << 256n) : ts),
+          hooks: `0x${w(2).slice(24)}`.toLowerCase() as Address,
+        });
+      }
+    }
+    return out;
   }
 
   /** A token's creation: its first Transfer (mint) tx, block and time, plus who sent that tx and to what contract. */
@@ -234,9 +297,14 @@ export class Rpc {
   ): Promise<RawLog[]> {
     if (budget && (budget.left < 0 || Date.now() > budget.deadline)) throw new HistoryTooLarge();
     try {
+      // With a budget, a single call may not outlive it (a hung call would hold one of the 6 connections).
+      const timeout = budget ? Math.max(1_000, Math.min(30_000, budget.deadline - Date.now())) : 30_000;
       const logs = await this.call<RawLog[]>('eth_getLogs', [
         { fromBlock: `0x${from.toString(16)}`, toBlock: `0x${to.toString(16)}`, ...filter },
-      ]);
+      ], timeout).catch((err) => {
+        if (budget && err instanceof Error && err.name === 'TimeoutError') throw new HistoryTooLarge();
+        throw err;
+      });
       if (budget && (budget.left -= logs.length) < 0) throw new HistoryTooLarge();
       return logs;
     } catch (err) {
@@ -282,13 +350,13 @@ export class Rpc {
     return out;
   }
 
-  private async post(body: unknown): Promise<Response> {
+  private async post(body: unknown, timeoutMs = 30_000): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       const res = await fetch(this.url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.ok) return res;
       // Read the body either way: an unread one keeps its connection open (Workers allow 6).
