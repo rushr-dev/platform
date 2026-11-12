@@ -148,7 +148,8 @@ async function saveSignals(sql: Sql, snapshot: TokenSnapshot, signals: TokenSign
       best_peak_mcap_usd = excluded.best_peak_mcap_usd, updated_at = now()`;
 }
 
-async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
+/** First funder and whether it's a contract, for wallets not checked yet (also used for member sign-ups). */
+export async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
   if (!wallets.length) return;
   const known = new Set(
     (await sql<{ address: string }[]>`
@@ -156,11 +157,17 @@ async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
   );
   const missing = wallets.filter((w) => !known.has(w)) as Address[];
   if (!missing.length) return;
-  const found = await rpc.firstFunders(missing);
-  const rows = missing.map((w) => {
+  const [found, codes] = await Promise.all([
+    rpc.firstFunders(missing),
+    rpc.batch<string>(missing.map((w) => ({ method: 'eth_getCode', params: [w, 'latest'] }))),
+  ]);
+  const rows = missing.map((w, i) => {
     const f = found.get(w);
+    const code = codes[i];
     return {
       address: w,
+      // Smart accounts (ERC-4337) are contracts too; callers decide what to exclude.
+      is_contract: code == null ? null : code !== '0x',
       first_funder: f?.funder ?? null,
       funded_at: f?.at ? new Date(f.at * 1000) : null,
       first_seen: f?.at ? new Date(f.at * 1000) : null,
@@ -170,5 +177,5 @@ async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
   await sql`
     insert into wallets ${sql(rows)}
     on conflict (address) do update set first_funder = excluded.first_funder, funded_at = excluded.funded_at,
-      first_seen = excluded.first_seen, funding_checked_at = excluded.funding_checked_at`;
+      first_seen = excluded.first_seen, funding_checked_at = excluded.funding_checked_at, is_contract = excluded.is_contract`;
 }

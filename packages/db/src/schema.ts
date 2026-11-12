@@ -100,12 +100,66 @@ export const swaps = pgTable(
     quoteAmount: amount('quote_amount').notNull(),
     priceUsd: numeric('price_usd'),
     usd: numeric('usd'),
+    /** Sells only: PnL realized by this sell at the trader's average cost then (null when unpriced). */
+    realizedUsd: numeric('realized_usd'),
   },
   (t) => [
     primaryKey({ columns: [t.tx, t.logIndex] }),
     index('swaps_token_time_idx').on(t.token, t.time),
-    index('swaps_trader_idx').on(t.trader),
+    // Per-wallet history and windows (profiles, PnL, the Agents leaderboard).
+    index('swaps_trader_time_idx').on(t.trader, t.time),
   ],
+);
+
+/**
+ * A wallet's position in a token, from its trades on every indexed venue (average-cost basis).
+ * Tokens sold beyond what the wallet bought (airdrops, transfers in) count at zero cost and are
+ * tracked in unbacked_sold_tokens. Unrealized PnL = held_tokens x current price - cost_basis_usd.
+ */
+export const positions = pgTable(
+  'positions',
+  {
+    wallet: text('wallet').notNull(),
+    token: text('token').notNull(),
+    boughtTokens: amount('bought_tokens').notNull().default('0'),
+    boughtUsd: numeric('bought_usd').notNull().default('0'),
+    soldTokens: amount('sold_tokens').notNull().default('0'),
+    soldUsd: numeric('sold_usd').notNull().default('0'),
+    buys: integer('buys').notNull().default(0),
+    sells: integer('sells').notNull().default(0),
+    /** Tokens bought and not yet sold (raw units). */
+    heldTokens: amount('held_tokens').notNull().default('0'),
+    /** Average cost of held_tokens. */
+    costBasisUsd: numeric('cost_basis_usd').notNull().default('0'),
+    realizedUsd: numeric('realized_usd').notNull().default('0'),
+    /** Sold without a matching buy (zero cost basis): airdrops, transfers in, tokens bought before indexing. */
+    unbackedSoldTokens: amount('unbacked_sold_tokens').notNull().default('0'),
+    firstTradeAt: timestamp('first_trade_at', { withTimezone: true }).notNull(),
+    lastTradeAt: timestamp('last_trade_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.wallet, t.token] }), index('positions_token_idx').on(t.token)],
+);
+
+/** Per-wallet PnL summary for profiles, refreshed about every minute from positions and swaps. */
+export const walletPnl = pgTable(
+  'wallet_pnl',
+  {
+    wallet: text('wallet').primaryKey(),
+    realizedUsd: numeric('realized_usd').notNull(),
+    unrealizedUsd: numeric('unrealized_usd').notNull(),
+    realized24hUsd: numeric('realized_24h_usd').notNull(),
+    realized7dUsd: numeric('realized_7d_usd').notNull(),
+    realized30dUsd: numeric('realized_30d_usd').notNull(),
+    volumeUsd: numeric('volume_usd').notNull(),
+    trades: integer('trades').notNull(),
+    tokensTraded: integer('tokens_traded').notNull(),
+    /** Share of closed positions (nothing held) with realized PnL > 0; null when none closed. */
+    winRate: numeric('win_rate'),
+    bestTradeUsd: numeric('best_trade_usd'),
+    lastTradeAt: timestamp('last_trade_at', { withTimezone: true }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('wallet_pnl_realized_idx').on(t.realizedUsd)],
 );
 
 export const transfers = pgTable(

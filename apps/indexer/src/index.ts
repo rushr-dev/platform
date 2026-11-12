@@ -1,9 +1,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
-import { dbUrl, holderHistory, poolHistory, poller as pollerOf, type Env, type EnrichMessage } from './env';
+import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
+import { refreshWalletPnl } from './data';
 import { Rpc } from './rpc';
-import { recomputeSignals } from './signals';
+import { ensureFunding, recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
 import { GATEWAY_COUNT, gateway } from './gateway';
@@ -137,6 +138,19 @@ app.post('/admin/pools/backfill', async (c) => {
   }
 });
 
+// Wallet positions: rebuild from all swaps (once, after migration 0006), then live keeps them current.
+app.post('/admin/positions/rebuild', async (c) => c.json(await positionsJob(c.env).rebuildPositions()));
+app.get('/admin/positions', async (c) => c.json(await positionsJob(c.env).positionsStatus()));
+app.post('/admin/wallet-pnl/refresh', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const r = await refreshWalletPnl(sql);
+    return c.json({ wallets: r.count });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 // Full-history holder backfill. POST ?tokens=a,b,c, or ?top=N for the N tracked tokens with the most 24h volume.
 app.get('/admin/holders', async (c) => c.json(await holderHistory(c.env).holderStatus()));
 app.post('/admin/holders/backfill', async (c) => {
@@ -218,6 +232,18 @@ export default {
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
     await pollerOf(env).start();
+    // Every 5 minutes: wallet PnL summaries (once positions exist).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 2) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const [ready] = await sql`select 1 from indexer_state where key = 'positions_from'`;
+        if (ready) await refreshWalletPnl(sql);
+      } catch (err) {
+        console.error('wallet pnl refresh failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
     // Every 15 minutes: holder backfill for tokens that matter (>= 50 holders or >= $10K 24h volume)
     // whose Transfer history we don't have from the start (discovered mid-life, history too big then).
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 5) {
@@ -285,9 +311,20 @@ export default {
           }),
         );
       }
+      // Wallet funding (e.g. members signing up, sent by the Agents API): first funder + is_contract.
+      const funding = batch.messages.filter((m) => m.body.kind === 'wallet-funding');
+      if (funding.length) {
+        try {
+          await ensureFunding(sql, rpc, funding.map((m) => (m.body as { wallet: string }).wallet.toLowerCase()));
+          for (const m of funding) m.ack();
+        } catch (err) {
+          console.error('wallet funding failed', err);
+          for (const m of funding) m.retry({ delaySeconds: 30 });
+        }
+      }
       for (const msg of batch.messages) {
         const body = msg.body;
-        if (body.kind === 'token-metadata') continue;
+        if (body.kind === 'token-metadata' || body.kind === 'wallet-funding') continue;
         if (body.kind !== 'token-signals' || done.has(body.token)) {
           msg.ack();
           continue;

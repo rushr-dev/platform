@@ -151,6 +151,73 @@ export class Backfiller extends DurableObject<Env> {
     return true;
   }
 
+  /**
+   * Positions rebuild (instance "positions"): replays every swap up to the marker block in chain order
+   * through the same average-cost logic; the live pipeline applies swaps after the marker.
+   */
+  async rebuildPositions(): Promise<{ from: string }> {
+    const { sql } = this.init();
+    let [row] = await sql<{ value: { block: string } }[]>`select value from indexer_state where key = 'positions_from'`;
+    if (!row) {
+      const [cur] = await sql<{ value: { block: string } }[]>`select value from indexer_state where key = 'cursor'`;
+      const block = cur?.value.block ?? '0';
+      // A fresh build: empty positions first, then set the marker (live starts applying above it).
+      await sql.begin(async (tx) => {
+        await tx`truncate positions`;
+        await tx`update swaps set realized_usd = null where realized_usd is not null`;
+        await tx`insert into indexer_state (key, value) values ('positions_from', ${tx.json({ block })})`;
+        await tx`insert into indexer_state (key, value) values ('positions_cursor', ${tx.json({ block: '-1', logIndex: -1 })})
+                 on conflict (key) do update set value = excluded.value`;
+      });
+      row = { value: { block } };
+    }
+    await this.ctx.storage.put('positionsRunning', true);
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 500);
+    return { from: row.value.block };
+  }
+
+  async positionsStatus() {
+    const { sql } = this.init();
+    const rows = await sql<{ key: string; value: unknown }[]>`select key, value from indexer_state where key in ('positions_from', 'positions_cursor')`;
+    return { ...Object.fromEntries(rows.map((r) => [r.key, r.value])), running: (await this.ctx.storage.get('positionsRunning')) ?? false };
+  }
+
+  /** One page of the positions replay. Returns false when done. */
+  private async positionsStep(): Promise<boolean> {
+    const { sql, rpc } = this.init();
+    const [row] = await sql<{ value: { block: string } }[]>`select value from indexer_state where key = 'positions_from'`;
+    if (!row) return false;
+    const [c] = await sql<{ value: { block: string; logIndex: number } }[]>`select value from indexer_state where key = 'positions_cursor'`;
+    const cur = c?.value ?? { block: '-1', logIndex: -1 };
+    const page = await sql<{ tx: string; log_index: number; block: string; time: Date; token: string; trader: string; side: 'buy' | 'sell'; token_amount: string; usd: string | null; pool: string; quote: string; quote_amount: string }[]>`
+      select tx, log_index, block::text, time, token, trader, side, token_amount::text, usd::text, pool, quote, quote_amount::text from swaps
+      where (block, log_index) > (${cur.block}::bigint, ${cur.logIndex}) and block <= ${row.value.block}::bigint
+      order by block, log_index limit 5000`;
+    if (!page.length) {
+      await this.ctx.storage.put('positionsRunning', false);
+      console.log('positions rebuild done');
+      return false;
+    }
+    const pipeline = new Pipeline(sql, rpc, { historical: true });
+    const priced = page.map((r) => ({
+      s: {
+        tx: r.tx as Hex, logIndex: r.log_index, block: BigInt(r.block), time: Math.floor(r.time.getTime() / 1000), pool: r.pool,
+        token: r.token as Address, quote: r.quote as Address, trader: r.trader as Address, side: r.side,
+        tokenAmount: BigInt(r.token_amount), quoteAmount: BigInt(r.quote_amount),
+      },
+      usd: r.usd,
+    }));
+    const last = page.at(-1)!;
+    // The cursor moves in the same transaction as the positions: a retried page is never applied twice.
+    await sql.begin(async (tx) => {
+      const [now] = await tx<{ value: { block: string; logIndex: number } }[]>`select value from indexer_state where key = 'positions_cursor' for update`;
+      if (now && (now.value.block !== cur.block || now.value.logIndex !== cur.logIndex)) return;
+      await pipeline.applyPositions(tx, priced, true);
+      await tx`update indexer_state set value = ${tx.json({ block: last.block, logIndex: last.log_index })}, updated_at = now() where key = 'positions_cursor'`;
+    });
+    return true;
+  }
+
   async poolStatus() {
     return {
       job: (await this.ctx.storage.get<PoolJob>('poolJob')) ?? null,
@@ -350,6 +417,19 @@ export class Backfiller extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
+    // Positions rebuild (only the "positions" instance).
+    if (await this.ctx.storage.get('positionsRunning')) {
+      const started = Date.now();
+      try {
+        while (Date.now() - started < BUDGET_MS && (await this.positionsStep()));
+      } catch (err) {
+        console.error('positions rebuild error', err);
+        await this.ctx.storage.setAlarm(Date.now() + 10_000);
+        return;
+      }
+      if (await this.ctx.storage.get('positionsRunning')) await this.ctx.storage.setAlarm(Date.now() + 10);
+      return;
+    }
     // Holder queue (only the "holders" instance gets these).
     if (((await this.ctx.storage.get<string[]>('holdersPending')) ?? []).length) {
       const started = Date.now();
