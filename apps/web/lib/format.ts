@@ -91,3 +91,14 @@ export function dateUtc(iso: string | number): string {
   return `${MONTHS[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()}`;
 }
 export const dateTimeUtc = (iso: string | number) => `${new Date(iso).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+
+/** Quote tokens (mirrors QUOTES / STOCK_QUOTES in @rushr/core, kept here to keep viem out of the client bundle). */
+const QUOTE_LABEL: Record<string, string> = {
+  '0x0000000000000000000000000000000000000000': 'ETH',
+  '0x0bd7d308f8e1639fab988df18a8011f41eacad73': 'WETH',
+  '0x5fc5360d0400a0fd4f2af552add042d716f1d168': 'USDG',
+  '0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea': 'SPCX',
+  '0x5e81213613b6b86eab4c6c50d718d34359459786': 'TTWO',
+  '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec': 'NVDA',
+};
+export const quoteLabel = (q: string | null | undefined) => (q ? (QUOTE_LABEL[q.toLowerCase()] ?? short(q, 2, 2)) : 'ETH');

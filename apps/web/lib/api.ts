@@ -35,6 +35,8 @@ export interface TokenCard {
   price_usd?: number | null;
   ath_market_cap_usd?: number | null;
   migrated_at?: string | null;
+  /** Sum of the pools the API has measured (v3/v2 today); absent before the pools API deploy. */
+  liquidity_usd?: number | null;
   /** Block time (unix seconds) of the trade that triggered a live update. */
   block_time?: number | null;
 }
