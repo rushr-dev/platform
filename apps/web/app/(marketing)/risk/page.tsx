@@ -29,8 +29,8 @@ export default function Risk() {
 
       <Part title="Quick trades happen immediately">
         <p>
-          Quick buy and sell send the trade as soon as you click, without a confirmation screen. Check the token, the amount
-          and your slippage before you click. On-chain transactions can&apos;t be reversed, and prices can move between your
+          Quick buy and sell send the trade as soon as you click, without a confirmation screen, using the default amount and
+          the limit you set. Check the token, your default amount and your slippage before you click. On-chain transactions can&apos;t be reversed, and prices can move between your
           click and the trade landing in a block. You may receive fewer tokens than expected, or the transaction may fail and
           still cost gas.
         </p>
@@ -40,13 +40,14 @@ export default function Risk() {
         <p>
           Your Rushr wallet is a non-custodial embedded wallet provided by Privy. Rushr never holds your funds or your private
           key and can&apos;t move, freeze or recover them. If you lose access to your login, or someone else gets it, your
-          funds can be lost. You can export your key; keep it private and safe.
+          funds can be lost. You can export your wallet&apos;s private key through Privy; keep it private and safe.
         </p>
       </Part>
 
       <Part title="Fees">
         <p>
-          Rushr charges a <strong>0.5% fee</strong> on each trade, taken in the same transaction. You also pay the network
+          Rushr charges a <strong>0.5% fee</strong> on every buy and sell (0.45% if you joined through a referral), taken in
+          the same transaction. You also pay the network
           gas fee and any fee or tax built into the token itself. Fees are charged whether the trade makes or loses money.
         </p>
       </Part>
