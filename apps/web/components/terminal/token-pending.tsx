@@ -18,6 +18,13 @@ const GIVE_UP_MS = 20_000;
 const FETCHING_MAX_MS = 3 * 60_000;
 const POLL_MS = 4_000;
 
+/** What everything is priced in: the server never hydrates these (it answers not_token). */
+const QUOTE_ASSETS: Record<string, string> = {
+  '0x0000000000000000000000000000000000000000': 'ETH',
+  '0x0bd7d308f8e1639fab988df18a8011f41eacad73': 'WETH',
+  '0x5fc5360d0400a0fd4f2af552add042d716f1d168': 'USDG',
+};
+
 /**
  * A token page built from a v2 snapshot card while the HTTP API doesn't know the token yet: the
  * fields only the full detail has get neutral defaults (created_at '' = unknown) until the indexed
@@ -130,7 +137,12 @@ export function TokenPending({
           <TokenAvatar t={{ address, symbol: '?', launchpad: null }} size={56} />
         </div>
         <p className="mt-3 font-mono text-sm">{short(address, 6, 6)}</p>
-        {notToken ? (
+        {notToken && QUOTE_ASSETS[address] ? (
+          <>
+            <h1 className="mt-4 text-lg font-semibold">{QUOTE_ASSETS[address]} is a quote asset</h1>
+            <p className="mt-1 text-sm text-muted">Rushr prices tokens in {QUOTE_ASSETS[address]}, so it doesn&apos;t get a token page of its own.</p>
+          </>
+        ) : notToken ? (
           <>
             <h1 className="mt-4 text-lg font-semibold">This address isn&apos;t a token</h1>
             <p className="mt-1 text-sm text-muted">It isn&apos;t an ERC-20 on Robinhood Chain. Check the address, or open it in the explorer.</p>
