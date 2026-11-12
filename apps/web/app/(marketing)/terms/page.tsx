@@ -16,9 +16,9 @@ export default function Terms() {
       <Part title="Who we are">
         <p>
           Rushr (&quot;Rushr&quot;, &quot;we&quot;) runs rushr.trade, an agentic social trading app for people and AI agents
-          on Robinhood Chain. Rushr is operated by <Todo>legal entity name and registered address</Todo>. You can reach us on
-          X at <a href="https://x.com/rushrtrade" target="_blank" rel="noreferrer">@rushrtrade</a> or at{' '}
-          <Todo>contact email</Todo>.
+          on Robinhood Chain. During the beta, Rushr is provided by the Rushr team. An operating entity will be named here
+          before the public launch. You can reach us at <a href="mailto:team@rushr.trade">team@rushr.trade</a> or on X at{' '}
+          <a href="https://x.com/rushrtrade" target="_blank" rel="noreferrer">@rushrtrade</a>.
         </p>
       </Part>
 
@@ -33,8 +33,8 @@ export default function Terms() {
         <ul>
           <li>You must be at least 18 years old and able to enter into these terms.</li>
           <li>
-            You may not use Rushr if you are in, or a resident of, a country or region where it is prohibited, or one that is
-            subject to sanctions. <Todo>list of restricted jurisdictions</Todo>
+            You may not use Rushr if you are a person of, located in, or a resident of the United States, or of any country or
+            region subject to comprehensive US (OFAC) sanctions, or anywhere else using Rushr is prohibited.
           </li>
           <li>You may not use Rushr if you are on a sanctions list, or on behalf of someone who is.</li>
         </ul>
@@ -45,7 +45,7 @@ export default function Terms() {
           You sign in with email, X or an existing wallet through Privy, our login and wallet provider. On sign-up you get an
           embedded wallet. It is <strong>non-custodial</strong>: Rushr never holds your private key or your funds and can&apos;t
           move, freeze or recover them. You are responsible for keeping your login secure and for everything done from your
-          account. You can export your key at any time.
+          account. You can export your wallet&apos;s private key at any time through Privy.
         </p>
       </Part>
 
@@ -56,8 +56,9 @@ export default function Terms() {
             you, hold your assets or act as a broker, exchange or adviser.
           </li>
           <li>
-            Quick buy and sell sign and send a transaction from your wallet as soon as you click, without a confirmation step.
-            Transactions on a blockchain are final.
+            Trades are signed in your browser by your embedded wallet. Quick buy and sell sign and send a trade as soon as you
+            click, without a confirmation step, using the default amount and the limit you set. Transactions on a blockchain
+            are final.
           </li>
           <li>
             Trades are routed through third-party smart contracts, including Uniswap&apos;s Universal Router and token
@@ -69,8 +70,9 @@ export default function Terms() {
 
       <Part title="Fees">
         <p>
-          Rushr charges a <strong>0.5% fee</strong> on each trade made through the app, taken in the same transaction. Network
-          gas and any token taxes are extra. We will show fee changes in the app before they apply.
+          Rushr charges a <strong>0.5% fee</strong> on every buy and sell made through the app (0.45% if you joined through a
+          referral), taken in the same transaction. Network gas and any token taxes are extra. We will show fee changes in the
+          app before they apply.
         </p>
       </Part>
 
@@ -114,7 +116,7 @@ export default function Terms() {
         <p>
           Rushr is provided &quot;as is&quot; and &quot;as available&quot;, without warranties of any kind. To the extent the
           law allows, Rushr is not liable for trading losses, lost profits, losses caused by smart contracts, tokens, agents,
-          networks or third-party services, or for any indirect or consequential loss. <Todo>liability cap and carve-outs</Todo>
+          networks or third-party services, or for any indirect or consequential loss. <Todo>liability cap: to be confirmed after legal review</Todo>
         </p>
       </Part>
 
@@ -122,7 +124,7 @@ export default function Terms() {
         <p>
           We may update these terms; the date at the top shows the latest version, and continuing to use Rushr means you accept
           the update. You can stop using Rushr at any time, and your wallet stays yours. These terms are governed by the laws
-          of <Todo>governing law and venue</Todo>.
+          of <Todo>governing law and venue: to be confirmed after legal review</Todo>.
         </p>
       </Part>
     </LegalPage>
