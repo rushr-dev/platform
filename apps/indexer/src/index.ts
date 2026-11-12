@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
-import { dbUrl, type Env, type EnrichMessage } from './env';
+import { dbUrl, poller as pollerOf, type Env, type EnrichMessage } from './env';
 import { Rpc } from './rpc';
 import { recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
@@ -20,7 +20,7 @@ app.get('/health', async (c) => {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_blockNumber', params: [] }),
   }).then((r) => r.json<{ result?: string }>());
-  const poller = c.env.CHAIN_POLLER.get(c.env.CHAIN_POLLER.idFromName('main'));
+  const poller = pollerOf(c.env);
   let status: Awaited<ReturnType<typeof poller.status>>;
   try {
     status = await poller.status();
@@ -62,9 +62,15 @@ app.use('/admin/*', async (c, next) => {
   return next();
 });
 
+// The retired US-placed poller: stop it so only the Asia-Pacific one indexes.
+app.post('/admin/poller-legacy/stop', async (c) => {
+  await c.env.CHAIN_POLLER.get(c.env.CHAIN_POLLER.idFromName('main')).stop();
+  return c.json({ stopped: true });
+});
+
 // Dev controls for the poller.
 app.post('/admin/poller/:action', async (c) => {
-  const poller = c.env.CHAIN_POLLER.get(c.env.CHAIN_POLLER.idFromName('main'));
+  const poller = pollerOf(c.env);
   if (c.req.param('action') === 'start') await poller.start();
   else if (c.req.param('action') === 'stop') await poller.stop();
   else if (c.req.param('action') === 'backfill-launches') return c.json({ tokens: await poller.backfillLaunches() });
@@ -121,6 +127,20 @@ app.post('/admin/metadata/all', async (c) => {
   }
 });
 
+// Public reads: serve from the edge cache for as long as each route's s-maxage allows (1-30s),
+// so a burst of page loads costs one database round instead of one each.
+app.use('*', async (c, next) => {
+  if (c.req.method !== 'GET' || c.req.path === '/ws' || c.req.path === '/health') return next();
+  const cache = caches.default;
+  const key = new Request(c.req.url);
+  const hit = await cache.match(key);
+  if (hit) return new Response(hit.body, hit);
+  await next();
+  if (c.res.status === 200 && /s-maxage=\d+/.test(c.res.headers.get('cache-control') ?? '')) {
+    c.executionCtx.waitUntil(cache.put(key, c.res.clone()));
+  }
+});
+
 app.route('/', api);
 
 app.get('/ws', (c) => {
@@ -132,8 +152,7 @@ export default {
   fetch: app.fetch,
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
-    const poller = env.CHAIN_POLLER.get(env.CHAIN_POLLER.idFromName('main'));
-    await poller.start();
+    await pollerOf(env).start();
     // Every 15 minutes: retry metadata for active tokens that still have no icon, and any never tried.
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });

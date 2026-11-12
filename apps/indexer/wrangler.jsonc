@@ -5,6 +5,8 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // Run next to the database (Neon, aws-ap-southeast-1): every request makes several round trips to it.
+  "placement": { "mode": "targeted", "region": "aws:ap-southeast-1" },
   // Catch-up steps over busy ranges (big airdrops) need more than the default 30s of CPU.
   "limits": { "cpu_ms": 300000 },
   "dev": { "port": 8788 },

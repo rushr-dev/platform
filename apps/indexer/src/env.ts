@@ -25,6 +25,13 @@ export type EnrichMessage =
   | { kind: 'token-signals'; token: string }
   | { kind: 'token-metadata'; token: string; /** Only check DexScreener (no RPC): used for periodic retries. */ dexOnly?: boolean };
 
+/**
+ * The poller, pinned to Asia-Pacific next to the database (Neon, Singapore). Durable Objects live
+ * where they were first created and never move, so this is a new instance; 'main' (created in the
+ * US) is the retired one, stopped via /admin/poller-legacy/stop.
+ */
+export const poller = (env: Env) => env.CHAIN_POLLER.get(env.CHAIN_POLLER.idFromName('main-apac'), { locationHint: 'apac' });
+
 export function dbUrl(env: Env): string {
   const url = env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL;
   if (!url) throw new Error('No database configured: set HYPERDRIVE binding or DATABASE_URL');
