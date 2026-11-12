@@ -11,13 +11,12 @@ import { discoverPools } from '../src/pools';
 import { quotePool } from '../src/quote';
 import { resolveConfig } from '../src/config';
 import { TRADE_ADDRESSES } from '../src/addresses';
-import { v4StateViewAbi } from '../src/abis';
 const c = createPublicClient({ chain: robinhoodChain, transport: http(), batch: { multicall: true } }) as PublicClient;
 const liqAbi = [{ type: 'function', name: 'getLiquidity', stateMutability: 'view', inputs: [{ name: 'poolId', type: 'bytes32' }], outputs: [{ type: 'uint128' }] }] as const;
 const trader = '0x00000000000000000000000000000000b0b0b0b0' as Address;
 for (const token of process.argv.slice(2) as Address[]) {
   try {
-    const h = (await (await fetch(`https://api.rushr.trade/tokens/${token}`)).json()) as any;
+    const h = (await (await fetch(`https://api.rushr.trade/tokens/${token}`)).json()) as { symbol: string; launchpad: string; quote?: string; main_pool?: Address; created_block?: string | number };
     const rows = await fetchApiPools(token);
     const pools = await discoverPools(c, token, { mainPool: h.main_pool, createdBlock: h.created_block ? BigInt(h.created_block) : undefined, apiPools: rows, quoteAsset: 'ETH', trader });
     const lines: string[] = [];
@@ -27,10 +26,10 @@ for (const token of process.argv.slice(2) as Address[]) {
       const hooks = p.venue === 'uniswap-v4' ? ' hooks=' + p.key.hooks.slice(0, 8) + ' c0=' + p.key.currency0.slice(0, 6) + ' ts=' + p.key.tickSpacing : '';
       let r = '';
       try { const q = await quotePool(c, p, { side: (process.env.SIDE ?? 'buy') as 'buy', token, quoteAsset: 'ETH', amountIn: process.env.SIDE === 'sell' ? 10n ** 21n : 10n ** 15n, trader, slippageBps: 500 }, resolveConfig()); r = 'OK ' + q.amountOut; }
-      catch (e: any) { r = 'ERR ' + String(e.message).replace(/https?:\/\/\S+/g, '').slice(0, 110); }
+      catch (e) { r = 'ERR ' + String((e as Error).message).replace(/https?:\/\/\S+/g, '').slice(0, 110); }
       lines.push(`   ${p.venue}${hooks}${liq} -> ${r}`);
     }
     console.log(`${h.symbol} ${token} lp=${h.launchpad} quote=${(h.quote ?? '').slice(0, 6)} apiRows=${rows?.length ?? 'null'} pools=${pools.length}`);
     lines.forEach((l) => console.log(l));
-  } catch (e: any) { console.log(token, 'FATAL', String(e.message).replace(/https?:\/\/\S+/g, '').slice(0, 150)); }
+  } catch (e) { console.log(token, 'FATAL', String((e as Error).message).replace(/https?:\/\/\S+/g, '').slice(0, 150)); }
 }
