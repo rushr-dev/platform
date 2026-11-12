@@ -22,6 +22,27 @@ What the indexer must watch, confirmed on-chain through the Alchemy RPC. Registr
 - **Uniswap v4** PoolManager `0x8366a39cc670b4001a1121b8f6a443a643e40951` is where memecoins live: **1,357 pool inits in 12 h** (vs 279 v2 pairs, 66 v3 pools). PositionManager `0x58da…4fa7`, Universal Router `0x8876…0904`, Quoter `0x8dc1…8f94`.
 - Uniswap v3 factories: `0x1f7d…2efa`, `0xe7fe…dad7`. v2 factories (UNI-V2): `0x8bce…937f`, `0x0d1e…4afd`.
 
+## Other DEXes (recon 2026-11-12, from PONS pools)
+Older tokens trade mostly outside Uniswap v4. PONS on DexScreener (24h $8.0M): Ramses $3.1M, Uniswap v4 $2.0M, Aero $1.4M, Uniswap v3 $0.75M, up $0.44M, Metric $0.24M, then Topaz, Nami, Uniswap v2, giga, robinswap.
+
+| Venue | Factory | Swap event |
+| --- | --- | --- |
+| Uniswap v3 | `0x1f7d…2efa` | v3 `Swap` `0xc42079f9…` |
+| Ramses (CL) | `0xe0c4…54a8` | v3 `Swap` |
+| Aero (CL, Slipstream-style, dynamic fee) | `0xc63d…e136` | v3 `Swap` |
+| up | `0x1ac9…b7f3` | v3 `Swap` |
+| Topaz | `0xaa58…8ffb` | v3 `Swap` |
+| Nami | `0xdedb…bda2` | v3 `Swap` |
+| robinswap | `0xea56…3748` | v3 `Swap` |
+| giga | `0xece6…e20b` | PancakeSwap v3 `Swap` `0x19b47279…` (two extra protocol-fee words) |
+| Uniswap v2 | `0x8bce…937f` | v2 `Swap` `0xd78ad95f…` |
+| Metric | (no token0/token1) | custom `0xcad09799…`, **not decoded yet** |
+
+- v3 amounts are the **pool's** deltas (positive = paid into the pool): the swapper buys when the token amount is negative.
+- The indexer doesn't watch factories: any address emitting one of these Swap events is resolved once with `token0()/token1()/factory()` and tracked if one side is a tracked token and the other a quote. Unlisted factories get venue `other`.
+- Chain-wide volume (measured over 9 min): v3 Swap 276 logs/min (~240 KB/min of JSON), v2 9/min, v4 Swap 306/min, Transfer 2,160/min. About 224 v3 pools were active.
+- PONS's own Transfer history is ~14M logs (block 8,963,150 onward). Alchemy caps any-range `eth_getLogs` at 10K logs per response (or 5,000 blocks with no cap).
+
 ## Launchpads (launches per 12 h)
 | Launchpad | Launches | How to detect | How trades appear |
 | --- | --- | --- | --- |
