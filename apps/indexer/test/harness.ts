@@ -12,7 +12,25 @@ export const APP_ID = 'test-app';
 const b64url = (b: Uint8Array | string) =>
   Buffer.from(typeof b === 'string' ? new TextEncoder().encode(b) : b).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-export async function setup(name: string, envOverrides: Record<string, string> = {}) {
+/** In-memory stand-in for the R2 bucket binding (put, get, delete). */
+export function memoryR2() {
+  const objects = new Map<string, { bytes: Uint8Array; contentType?: string }>();
+  return {
+    objects,
+    async put(key: string, value: Uint8Array, opts?: { httpMetadata?: { contentType?: string } }) {
+      objects.set(key, { bytes: value, contentType: opts?.httpMetadata?.contentType });
+    },
+    async get(key: string) {
+      const o = objects.get(key);
+      return o ? { body: o.bytes, httpMetadata: { contentType: o.contentType } } : null;
+    },
+    async delete(keys: string | string[]) {
+      for (const k of Array.isArray(keys) ? keys : [keys]) objects.delete(k);
+    },
+  };
+}
+
+export async function setup(name: string, envOverrides: Record<string, unknown> = {}) {
   const { url, sql, drop } = await freshDb(name);
   const pair = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])) as CryptoKeyPair;
   const jwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
@@ -62,10 +80,12 @@ export async function setup(name: string, envOverrides: Record<string, string> =
   }
 
   async function call(method: string, path: string, opts: { auth?: string; body?: unknown; headers?: Record<string, string> } = {}) {
+    // Raw bytes (uploads) go as-is; everything else as JSON.
     // A fresh client IP per call unless the test pins one, so per-IP limits only bite where tested.
     const headers: Record<string, string> = { 'content-type': 'application/json', 'cf-connecting-ip': `10.0.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`, ...opts.headers };
     if (opts.auth) headers.authorization = `Bearer ${opts.auth}`;
-    const res = await v1.request(path, { method, headers, body: opts.body === undefined ? undefined : JSON.stringify(opts.body) }, env);
+    const raw = opts.body instanceof Uint8Array ? opts.body : opts.body === undefined ? undefined : JSON.stringify(opts.body);
+    const res = await v1.request(path, { method, headers, body: raw }, env);
     const text = await res.text();
     return { status: res.status, headers: res.headers, json: (text ? JSON.parse(text) : null) as ApiJson };
   }

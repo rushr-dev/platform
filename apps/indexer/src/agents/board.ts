@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { Sql } from 'postgres';
 import { DAY_RANK_CONFIG, DEFAULT_RANK_CONFIG, rank, type Board, type Leaderboard } from '@rushr/agents/leaderboard';
 import { leaderboardInputs, WINDOW_MS, type Window } from '@rushr/agents/sql';
-import { fail, flag, publicCache, type C, type Ctx } from './http';
+import { fail, flag, PRIVATE, publicCache, requireMember, type C, type Ctx } from './http';
 import { memberByRef } from './members';
 
 interface Season {
@@ -87,6 +87,8 @@ async function present(sql: Sql, lb: Leaderboard, limit: number) {
 export const leaderboard = new Hono<Ctx>();
 leaderboard.use('/leaderboard', flag('LEADERBOARD_ENABLED', 'The leaderboard'));
 leaderboard.use('/members/:ref/rank', flag('LEADERBOARD_ENABLED', 'The leaderboard'));
+leaderboard.use('/suggestions', flag('LEADERBOARD_ENABLED', 'The leaderboard'));
+leaderboard.use('/me/suggestions', flag('LEADERBOARD_ENABLED', 'The leaderboard'));
 
 /**
  * `?window=24h|7d|30d|season&season=s0&kind=all|human|agent&limit=100`. Humans are ranked by their own
@@ -166,3 +168,49 @@ export async function freezeSeason(sql: Sql, id: string) {
   });
   return { season: id, rows: total };
 }
+
+// ---- "Follow top traders" ----
+
+/** Board for suggestions: the running season if there is one, otherwise the last 30 days. Memoised per isolate for 60s. */
+let suggestionMemo: { at: number; window: Resolved; rows: Awaited<ReturnType<typeof present>> } | null = null;
+
+async function suggestionPool(sql: Sql) {
+  if (suggestionMemo && Date.now() - suggestionMemo.at < 60_000) return suggestionMemo;
+  const now = new Date();
+  const season = await currentSeason(sql);
+  const r: Resolved = season && season.ends_at > now
+    ? { window: 'season', from: season.starts_at, to: now, season }
+    : { window: '30d', from: new Date(now.getTime() - WINDOW_MS['30d']), to: now, season: null };
+  const rows = await present(sql, await computeBoard(sql, r, 'all'), 200);
+  suggestionMemo = { at: Date.now(), window: r, rows };
+  return suggestionMemo;
+}
+
+/** Test hook. */
+export const resetSuggestionMemo = () => (suggestionMemo = null);
+
+async function suggestions(c: C, exclude: Set<string>) {
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 10) || 10, 1), 50);
+  const sql = c.var.sql;
+  const pool = await suggestionPool(sql);
+  const picked = pool.rows.filter((r) => !exclude.has(r.member.id) && r.score !== null && r.score > 0).slice(0, limit);
+  const counts = picked.length
+    ? await sql<{ id: string; followers: number }[]>`select id, followers from members where id in ${sql(picked.map((p) => p.member.id))}`
+    : [];
+  const followers = new Map(counts.map((r) => [r.id, r.followers]));
+  return {
+    window: pool.window.window,
+    season: pool.window.season ? seasonOut(pool.window.season) : null,
+    items: picked.map((r) => ({ rank: r.rank, member: r.member, score: r.score, pnl: r.pnl, inclAgents: r.inclAgents, followers: followers.get(r.member.id) ?? 0 })),
+  };
+}
+
+/** Top members by leaderboard score (humans and agents mixed), positive scores only. Public. */
+leaderboard.get('/suggestions', async (c) => c.json(await suggestions(c, new Set()), 200, publicCache(60)));
+
+/** Same, without me and the members I already follow. */
+leaderboard.get('/me/suggestions', async (c) => {
+  const me = requireMember(c);
+  const rows = await c.var.sql<{ followee_id: string }[]>`select followee_id from follows where follower_id = ${me.id}`;
+  return c.json(await suggestions(c, new Set([me.id, ...rows.map((r) => r.followee_id)])), 200, PRIVATE);
+});

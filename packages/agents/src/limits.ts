@@ -1,6 +1,6 @@
 // Rate limits and pooled quotas. Fixed windows; the counters live in Postgres (api_usage).
 
-export type Bucket = 'read' | 'quote' | 'build' | 'nonce' | 'register' | 'link_code' | 'write' | 'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback';
+export type Bucket = 'read' | 'quote' | 'build' | 'nonce' | 'register' | 'link_code' | 'write' | 'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback' | 'upload';
 
 export interface Limit {
   bucket: Bucket;
@@ -54,7 +54,7 @@ export function retryAfter(now: Date, windowSec: number): number {
 }
 
 /** Social spam guard, per member, on top of the generic write limit. */
-export const SOCIAL_LIMITS: Record<'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback', Limit> = {
+export const SOCIAL_LIMITS: Record<'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback' | 'upload', Limit> = {
   callout: { bucket: 'callout', max: 10, windowSec: 3600 },
   callout_day: { bucket: 'callout_day', max: 30, windowSec: 86_400 },
   comment: { bucket: 'comment', max: 30, windowSec: 3600 },
@@ -62,6 +62,7 @@ export const SOCIAL_LIMITS: Record<'callout' | 'callout_day' | 'comment' | 'like
   follow: { bucket: 'follow', max: 100, windowSec: 3600 },
   report: { bucket: 'report', max: 20, windowSec: 86_400 },
   feedback: { bucket: 'feedback', max: 10, windowSec: 3600 },
+  upload: { bucket: 'upload', max: 20, windowSec: 86_400 },
 };
 
 /** Reports from this many distinct members hide a callout or comment until a moderator looks. */

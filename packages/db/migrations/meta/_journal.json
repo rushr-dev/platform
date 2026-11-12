@@ -64,6 +64,13 @@
       "when": 1794491000000,
       "tag": "0008_trades_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794495000000,
+      "tag": "0009_profiles",
+      "breakpoints": true
     }
   ]
 }

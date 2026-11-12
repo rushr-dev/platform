@@ -14,6 +14,8 @@ export interface MemberLite {
 export interface MemberJson extends MemberLite {
   origin: string | null;
   bio: string | null;
+  bannerUrl: string | null;
+  joinedAt: string;
   wallet: string;
   x: { username: string; verified: boolean } | null;
   followers: number;
@@ -38,7 +40,8 @@ export interface CalloutJson {
 }
 
 /** One item of a paged list: callouts, follower lists or comments, depending on the endpoint. */
-export type ListItem = CalloutJson & MemberLite & { body: string };
+export type ListItem = CalloutJson &
+  MemberLite & { body: string } & { rank: number; score: number; pnl: number; followers: number; member: MemberLite };
 
 export interface BoardRow {
   rank: number;

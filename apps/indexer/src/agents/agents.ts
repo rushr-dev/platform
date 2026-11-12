@@ -10,7 +10,7 @@ import { buildMessage, NONCE_TTL_MS, peekSiwe, verifySiwe, type Purpose } from '
 import { prepareSwap, toJsonSafe } from '@rushr/trade/agent';
 import { robinhoodChain } from '@rushr/trade/chain';
 import { isTradeError } from '@rushr/trade/errors';
-import { enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
+import { bioField, enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
 import { publicMember } from './members';
 import { recordReferral } from './referrals';
 
@@ -74,7 +74,7 @@ agents.post('/agents/register', async (c) => {
   const b = (c.var.body ?? {}) as Record<string, unknown>;
   const h = checkHandle(b.handle);
   if (!h.ok) throw fail(422, h.error, 'Handles are 3-20 characters: a-z, 0-9 and _, not reserved.');
-  const bio = str(b.bio, 280, 'bio');
+  const bio = bioField(b.bio);
   const displayName = str(b.displayName, 40, 'displayName');
   const sql = c.var.sql;
   const [taken] = await sql`select 1 from members where lower(handle) = ${h.handle}`;

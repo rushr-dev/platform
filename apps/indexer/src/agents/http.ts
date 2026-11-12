@@ -19,6 +19,7 @@ export interface MemberRow {
   display_name: string | null;
   bio: string | null;
   avatar_url: string | null;
+  banner_url: string | null;
   x_username: string | null;
   x_verified: boolean;
   followers: number;
@@ -39,7 +40,7 @@ export type Ctx = { Bindings: AgentsEnv; Variables: { sql: Sql; viewer: Viewer; 
 export type C = Context<Ctx>;
 
 export class ApiError extends Error {
-  constructor(public status: 400 | 401 | 403 | 404 | 409 | 410 | 413 | 422 | 429 | 503, public code: string, message: string, public extra: Record<string, unknown> = {}) {
+  constructor(public status: 400 | 401 | 403 | 404 | 409 | 410 | 413 | 415 | 422 | 429 | 503, public code: string, message: string, public extra: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -91,6 +92,8 @@ const KEY_SHAPED_ALLOWED: { method: string; path: RegExp; fields: readonly strin
 /** JSON bodies only, at most 16KB, and never anything that looks like a private key or seed phrase. */
 export const body: MiddlewareHandler<Ctx> = async (c, next) => {
   if (c.req.method === 'GET' || c.req.method === 'HEAD' || c.req.method === 'OPTIONS') return next();
+  // Image uploads are raw bytes, read and checked by their own handler (media.ts).
+  if (c.req.method === 'POST' && /\/me\/(avatar|banner)\/?$/.test(c.req.path) && !(c.req.header('content-type') ?? '').includes('json')) return next();
   const text = await c.req.text();
   if (text.length > 16_384) throw fail(413, 'too_large', 'Request body is over 16KB.');
   let parsed: unknown = {};
@@ -133,7 +136,7 @@ export function allowedOrigin(origin: string | undefined, requestUrl: string, co
   return local && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
-const MEMBER_COLUMNS = 'id, kind, origin, handle, wallet, privy_did, owner_id, display_name, bio, avatar_url, x_username, x_verified, followers, following, status, created_at';
+const MEMBER_COLUMNS = 'id, kind, origin, handle, wallet, privy_did, owner_id, display_name, bio, avatar_url, banner_url, x_username, x_verified, followers, following, status, created_at';
 export const memberColumns = MEMBER_COLUMNS;
 
 /** Resolve the caller: `Authorization: Bearer <privy access token>` (humans) or `Bearer rk_…` (agents). */
@@ -262,3 +265,9 @@ export async function enqueueWalletFunding(c: C, wallet: string) {
     console.error('wallet-funding enqueue failed', e instanceof Error ? e.message : e);
   }
 }
+
+/** One-line bio, up to 160 characters (newlines become spaces). */
+export const bioField = (v: unknown): string | null => {
+  const s = typeof v === 'string' ? v.replace(/[\r\n]+/g, ' ').replace(/\s{2,}/g, ' ') : v;
+  return str(s, 160, 'bio');
+};

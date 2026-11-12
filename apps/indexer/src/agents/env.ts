@@ -17,6 +17,9 @@ export interface AgentsEnv extends Env {
   PRIVY_APP_SECRET?: string;
   /** Salt for hashing client IPs in rate limits (wrangler secret). */
   IP_SALT?: string;
+  /** Avatar and banner uploads, stored in the MEDIA R2 bucket. Without either, profiles take image URLs only. */
+  MEDIA_UPLOADS_ENABLED?: string;
+  MEDIA?: R2Bucket;
   /** Allowed browser origins for authenticated calls, comma separated. Default https://rushr.trade. */
   WEB_ORIGINS?: string;
 }
