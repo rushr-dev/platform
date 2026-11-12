@@ -76,9 +76,9 @@ const WS_BASE = `${API_URL.replace(/^http/, 'ws')}/ws`;
 const BUSY_RETRY_MS = 60_000;
 
 /**
- * Feed v2 is behind a flag until the server ships. Per browser, `?feed=v2` / `?feed=v1` on any
- * terminal URL picks a side (remembered); otherwise the build flag NEXT_PUBLIC_FEED_V2=1 decides.
- * Off, the client connects to the v1 feed exactly as before.
+ * Feed v2 is on (the production gateway speaks it). Per browser, `?feed=v1` / `?feed=v2` on any
+ * terminal URL picks a side (remembered); NEXT_PUBLIC_FEED_V2=0 at build time is the kill switch.
+ * Against a server without v2 the client falls back to v1 after the hello timeout.
  */
 function wantV2(): boolean {
   try {
@@ -87,9 +87,9 @@ function wantV2(): boolean {
     const saved = localStorage.getItem('rushr.feed');
     if (saved === 'v2' || saved === 'v1') return saved === 'v2';
   } catch {
-    // storage unavailable: fall through to the build flag
+    // storage unavailable: fall through to the build default
   }
-  return process.env.NEXT_PUBLIC_FEED_V2 === '1';
+  return process.env.NEXT_PUBLIC_FEED_V2 !== '0';
 }
 
 const DEFAULT_PING_MS = 25_000;

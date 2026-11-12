@@ -13,7 +13,8 @@ import type { Delta } from './protocol';
 
 async function getJson<T>(path: string, signal: AbortSignal): Promise<T> {
   const r = await fetch(`${API_URL}${path}`, { signal });
-  if (!r.ok) {
+  // 202: the API is still fetching this token from chain; there is no snapshot to read yet.
+  if (!r.ok || r.status === 202) {
     await r.body?.cancel();
     throw new Error(`${path}: ${r.status}`);
   }

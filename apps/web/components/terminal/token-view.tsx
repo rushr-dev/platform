@@ -88,6 +88,7 @@ export function TokenView({
               holders={holdersQ.data?.holders ?? null}
               total={holdersQ.data?.total ?? t.holders}
               error={holdersQ.error}
+              pending={holdersQ.pending}
               ctx={ctx}
               priceUsd={priceNow}
               decimals={t.decimals}
