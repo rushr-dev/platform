@@ -13,6 +13,7 @@ export * from './api-pools';
 export * from './rushr-router';
 export * from './policy';
 export * from './signer';
+export * from './quick';
 export * from './pools';
 export * from './quote';
 export * from './simulate';
