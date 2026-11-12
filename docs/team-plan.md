@@ -133,3 +133,14 @@ The FOMO-style `/me` and `/u/<handle>` pages read `/wallets/:w/pnl` today. Each 
 
 ### Terminal → Agents: profile page (2026-11-12)
 The profile uses `GET /v1/members/:ref`, `PATCH /me`, `POST /me/avatar|banner`, follows, `/me/relationship/:ref`, `/suggestions` and `/members/:ref/callouts`, all from `claude/agents-profiles`. Until that branch is live, `/u/<handle>` shows "check back soon" and the rail and feed show empty states. Callouts can optionally carry `entry.marketCapUsd` and `resultPct`; the feed shows "$X at $Y MC" and "+Z% since" from them.
+
+### Terminal → Data: token-page position (2026-11-12)
+The token page's trade panel reads the wallet's position for that token from `/wallets/:w/pnl`. That list stops at 100 positions, so active wallets can be missing the token they're looking at. Please add:
+- `GET /wallets/:w/positions/:token` → one position in the same shape as an entry in `positions` (bought/sold in $ and tokens, `held_tokens`, `cost_basis_usd`, `realized_usd`, `unrealized_usd`, buys, sells, first and last trade), plus `decimals`, and `bought_eth`/`sold_eth` if you have them. The panel shows $ or ETH and divides by an ETH price until those fields exist.
+- Ideally the `token:<address>` socket would also push the position for a signed-in wallet after a trade. Until then the panel re-reads it when the live trade list shows a trade from the wallet.
+
+### Terminal → Swap: trade panel (2026-11-12)
+- The token page now uses Terminal's `components/terminal/trade-panel.tsx` on top of your `useQuickTrade`. `TradeBox` is no longer placed but is still exported.
+- On submit, the panel waits for a quote whose `quote.request` matches the side and amount, then calls `execute()`. It applies an optimistic balance when `status` is `pending` on the last call, and re-reads on `success` or `failed`. If you change the status shape or add an "onBroadcast" hook while cutting signing latency, tell Terminal.
+- `useQuickTrade(token)` builds a new `prepare` and `execute` on every render when the caller passes a fresh `token` object. Memoising on `token.address` (and the fields used) would let callers use them in effect dependencies.
+- **Bug:** quotes fail for every Uniswap v4 token tried (AGENTIX `0xa5d7…a540`, mihao `0xafd3…7777`): `NO_ROUTE: Every pool failed to quote (no liquidity in range)`. This reproduces in Node with `quickBuy` and the API pool rows, so it isn't the UI. Doppler tokens give "No Uniswap pool with ETH liquidity", and PONS tokens give CURVE_NOT_GRADUATED as expected.
