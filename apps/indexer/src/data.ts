@@ -1,5 +1,9 @@
 import type { Sql } from 'postgres';
+import { V4_PLATFORMS } from '@rushr/core';
 import { Rpc } from './rpc';
+
+const PLATFORM_HOOKS = Object.keys(V4_PLATFORMS);
+const PLATFORM_IDS = PLATFORM_HOOKS.map((h) => V4_PLATFORMS[h as keyof typeof V4_PLATFORMS]!.id);
 
 /**
  * Reads shared by the HTTP API and the realtime gateways (snapshots). Shapes follow docs/realtime.md.
@@ -29,7 +33,9 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
       -- Tax is measured from real trades (signals); null until a token has 2 buys / 2 sells. Fees: not tracked yet.
       coalesce((s.data->>'buyTaxBps')::int, t.tax_bps) as buy_tax_bps, coalesce((s.data->>'sellTaxBps')::int, t.tax_bps) as sell_tax_bps,
       coalesce((s.data->>'noSells')::bool, false) as no_sells, coalesce((s.data->'dev'->>'farm')::bool, false) as farm,
-      null::float8 as fees_paid_usd
+      null::float8 as fees_paid_usd,
+      -- Launch platform behind a hooked v4 pool (Fobo, Clanker, ...), else the launchpad itself.
+      coalesce((select (${PLATFORM_IDS}::text[])[array_position(${PLATFORM_HOOKS}::text[], p.hooks)] from pools p where p.id = t.main_pool), t.launchpad) as platform
     from tokens t left join signals s on s.token = t.address
     where t.address = any(${where.addresses ?? []})`;
 }

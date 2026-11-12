@@ -213,6 +213,17 @@ export const MINOR_V4_LAUNCHERS: Record<Address, Address> = {
   '0x745d717620052a97a22deee2e5eba59583f3e0cc': '0x16cf6788b762ee8969744586ed16fc5705140dd7',
 };
 
+/**
+ * Launch platforms that go straight to a v4 pool with their own hook (no curve), identified from the
+ * pool's hook (factory names from verified contracts on Blockscout). They stay launchpad 'uniswap-v4' for
+ * columns and filters; this only labels them (cards' `platform`).
+ */
+export const V4_PLATFORMS: Record<Address, { id: string; name: string }> = {
+  '0x0af57f62982d03066ef917acad87f771c06528ec': { id: 'fobo', name: 'Fobo' }, // FoboHook, FoboFactory 0xd7e538e9…
+  '0x48b8f6ad3a1b4aa477314c9a23035b8f84dde8cc': { id: 'clanker', name: 'Clanker' }, // Clanker 0xd3f2cc17…
+  '0x15e5e7206c661a1e881f5cd33a94eaf2328fa8cc': { id: 'uniswap-launch-factory', name: 'UniswapLaunchFactoryV3' }, // single deployer
+};
+
 /** Contracts that move tokens on behalf of users; never treat them as the trader or a holder cluster. */
 export const INFRA_ADDRESSES: Address[] = [
   UNISWAP.v4.poolManager,
