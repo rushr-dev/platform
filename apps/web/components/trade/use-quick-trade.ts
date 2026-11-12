@@ -58,6 +58,35 @@ export type TradeStatus =
   | { kind: 'success'; hash: Hex; url: string }
   | { kind: 'failed'; message: string; hash?: Hex; url?: string };
 
+/**
+ * Trade ledger (Data's POST /v1/trades, Privy access token). Sent as soon as the wallet returns the swap
+ * hash; the server derives trader, side, amounts and the treasury fee from the chain, and the referrer
+ * from the member's signup attribution, so only the hash goes up. 404 tx_not_found right after
+ * broadcast is retried once. Idempotent per hash. Errors are ignored: it never blocks or fails a trade.
+ */
+export async function recordTrade(txHash: Hex): Promise<void> {
+  try {
+    const token = await auth.getAccessToken();
+    if (!token) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(`${API_URL}/v1/trades`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' } }),
+        keepalive: true,
+      });
+      const body = res.status === 404 ? await res.text().catch(() => '') : (await res.body?.cancel().catch(() => undefined), '');
+      if (res.status === 404 && /tx_not_found/.test(body) && attempt === 0) {
+        await new Promise((r) => setTimeout(r, 1_500));
+        continue;
+      }
+      return;
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
 function friendly(e: unknown): string {
   const m = String((e as { shortMessage?: string; message?: string })?.shortMessage ?? (e as Error)?.message ?? e);
   if (/user rejected|denied|cancel/i.test(m)) return 'Cancelled.';
@@ -168,6 +197,8 @@ export function useQuickTrade(token: TradeToken) {
         setStatus({ kind: 'sending', step: i + 1, total, label: c.label });
         const hash = await auth.sendTransaction({ to: c.to, data: c.data, value: c.value, gas: c.gas });
         lastHash = hash;
+        // Ledger: record the swap as soon as it's broadcast (approval txs aren't trades).
+        if (c.label === 'swap') void recordTrade(hash);
         setStatus({ kind: 'pending', hash, step: i + 1, total });
         const receipt = await chainClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
         if (receipt.status !== 'success') throw new Error(`${c.label} reverted on-chain`);
