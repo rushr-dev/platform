@@ -31,8 +31,8 @@ export async function loadSnapshot(
   rpc: Rpc | null,
 ): Promise<{ snapshot: TokenSnapshot; devFunder: string | null } | null> {
   const [t] = await sql<
-    { address: string; symbol: string; total_supply: string; deployer: string; created_at: Date; created_block: string; main_pool: string | null; launch_indexed: boolean; launchpad: string | null }[]
-  >`select address, symbol, total_supply, deployer, created_at, created_block, main_pool, launch_indexed, launchpad from tokens where address = ${token}`;
+    { address: string; symbol: string; total_supply: string; deployer: string; created_at: Date; created_block: string; main_pool: string | null; launch_indexed: boolean; launchpad: string | null; holders: number }[]
+  >`select address, symbol, total_supply, deployer, created_at, created_block, main_pool, launch_indexed, launchpad, holders from tokens where address = ${token}`;
   if (!t) return null;
   const createdAt = Math.floor(t.created_at.getTime() / 1000);
   const excluded = [...EXCLUDED, ...(t.main_pool && t.main_pool.length === 42 ? [t.main_pool] : [])];
@@ -92,12 +92,14 @@ export async function loadSnapshot(
            or (${devFunder}::text is not null and deployer in (select address from wallets where first_funder = ${devFunder})))
     order by created_at desc limit 500`;
 
-  const [{ count: sameSymbolEarlier } = { count: 0 }] = await sql<{ count: number }[]>`
-    select count(*)::int as count from tokens o
+  // The strongest other token with this ticker, by organic holders (holders minus airdropped).
+  // Spam excluded. Launch order is ignored: tickers are often squatted before the real launch.
+  const [{ organic: twinOrganicHolders } = { organic: 0 }] = await sql<{ organic: number }[]>`
+    select greatest(0, o.holders - coalesce((s.data->>'airdroppedHolders')::int, 0))::int as organic
+    from tokens o left join signals s on s.token = o.address
     where lower(o.symbol) = lower(${t.symbol}) and o.address <> ${token}
-      and o.created_at < ${t.created_at} and o.created_at > ${t.created_at}::timestamptz - interval '7 days'
-      -- An airdrop-farm clone launched first doesn't make the real token a copycat.
-      and not exists (select 1 from signals s where s.token = o.address and (s.data->>'spam')::bool)`;
+      and not coalesce((s.data->>'spam')::bool, false)
+    order by organic desc limit 1`;
 
   const snapshot: TokenSnapshot = {
     address: t.address,
@@ -121,7 +123,7 @@ export async function loadSnapshot(
       marketCapUsd: d.market_cap_usd ? Number(d.market_cap_usd) : null,
       migrated: d.status === 'migrated',
     })),
-    sameSymbolEarlier,
+    twinOrganicHolders,
     launchpad: t.launchpad,
     now: Math.floor(Date.now() / 1000),
   };

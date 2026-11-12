@@ -22,6 +22,8 @@ const ZERO = NATIVE_ETH;
 const QUOTE_SET = new Set<string>([NATIVE_ETH, QUOTES.WETH, QUOTES.USDG, ...Object.values(STOCK_QUOTES)]);
 /** Only start tracking tokens discovered mid-life if they were created within this window. */
 const DISCOVER_MAX_AGE_S = 7 * 24 * 3600;
+/** A token whose first transfer is this much older than its first pool predates that pool. */
+const ORIGIN_GAP_S = 10 * 60;
 /** Cap on the Transfer history fetched when a live token is discovered mid-life. */
 const HISTORY_BUDGET = { maxLogs: 20_000, maxMs: 15_000 };
 /** First ~66s after launch (0.11s blocks): enough for bundle (first blocks) and sniper (first 5s) signals. */
@@ -133,6 +135,26 @@ export class Pipeline {
     this.loaded = true;
   }
 
+  /**
+   * For plain v4 "launches" (pool init for a token we don't know): the token's first transfer, when it is
+   * clearly older than the pool. Launchpad launches create the token in the same tx, so they're skipped.
+   */
+  private async realOrigins(launches: { token: Address; launchpad: PoolInfo['launchpad']; block: bigint; time: number }[]) {
+    const out = new Map<Address, { block: bigint; time: number; tx: Hex }>();
+    const plain = launches.filter((l) => !l.launchpad || l.launchpad === 'uniswap-v4');
+    for (let i = 0; i < plain.length; i += 4) {
+      await Promise.all(
+        plain.slice(i, i + 4).map(async (l) => {
+          const origin = await this.rpc.tokenOrigin(l.token).catch(() => null);
+          if (origin && origin.time && l.time - origin.time > ORIGIN_GAP_S) {
+            out.set(l.token, { block: origin.block, time: origin.time, tx: origin.tx });
+          }
+        }),
+      );
+    }
+    return out;
+  }
+
   /** Tokens with no trades recorded in their first minute (discovered mid-life): backfill their launch window. */
   async backfillMissingLaunches(): Promise<string[]> {
     await this.load();
@@ -203,7 +225,10 @@ export class Pipeline {
     // Enrich new tokens before writing: metadata + who launched them.
     const fresh = r.launches.filter((l) => !this.tokens.has(l.token));
     const meta = await this.rpc.tokenMetadata(fresh.map((l) => l.token));
-    const needCreator = fresh.filter((l) => !l.creator).map((l) => l.tx);
+    // A plain v4 pool for an unknown token isn't always a launch: old tokens get new pools too. Use the
+    // token's first transfer as its real birth, or it looks newer than its own clones (copycat check).
+    const origins = await this.realOrigins(fresh);
+    const needCreator = fresh.filter((l) => !l.creator).map((l) => origins.get(l.token)?.tx ?? l.tx);
     const launchers = await this.rpc.launchers([...new Set(needCreator)]);
 
     const newSwaps = new Set<string>();
@@ -216,12 +241,13 @@ export class Pipeline {
           symbol: meta[i]!.symbol.slice(0, 64),
           decimals: meta[i]!.decimals,
           total_supply: meta[i]!.totalSupply.toString(),
-          deployer: l.creator ?? launchers.get(l.tx) ?? ZERO,
+          deployer: l.creator ?? launchers.get(origins.get(l.token)?.tx ?? l.tx) ?? ZERO,
           launchpad: l.launchpad,
-          created_block: l.block.toString(),
-          created_at: new Date(l.time * 1000),
+          created_block: (origins.get(l.token)?.block ?? l.block).toString(),
+          created_at: new Date((origins.get(l.token)?.time ?? l.time) * 1000),
           quote: l.quote,
           main_pool: l.pool,
+          launch_indexed: !origins.has(l.token),
         }));
         await tx`insert into tokens ${tx(rows)} on conflict (address) do nothing`;
       }

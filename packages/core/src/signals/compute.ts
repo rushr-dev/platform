@@ -51,8 +51,12 @@ export interface TokenSnapshot {
   airdropped: string[];
   /** Tokens launched by the deployer or wallets sharing its funder (excluding this token). */
   devTokens: DevToken[];
-  /** Earlier tokens (last 7 days) with the same symbol, by other contracts (spam clones excluded). */
-  sameSymbolEarlier: number;
+  /**
+   * Organic holders (holders minus airdropped) of the strongest other token with the same ticker
+   * (spam excluded), or 0 if there is none. Launch order doesn't matter: scammers often squat a
+   * ticker before the real launch, so the "original" is whichever one has the real community.
+   */
+  twinOrganicHolders: number;
   /** Launchpad id, or 'uniswap-v4' for a plain pool (no launchpad). */
   launchpad: string | null;
   now: number;
@@ -84,7 +88,8 @@ export interface TokenSignals {
     bestAthMarketCapUsd: number | null;
   };
   copycat: boolean;
-  sameSymbolEarlier: number;
+  /** Organic holders of the stronger same-ticker token this one copies (0 when not a copycat). */
+  twinOrganicHolders: number;
   /**
    * Airdrop-farm spam: a plain pool (no launchpad) whose holder count was padded by mass airdrops.
    * The copycat factories on Robinhood Chain deploy dozens of these per hit token. Hidden by default.
@@ -104,7 +109,17 @@ export const THRESHOLDS = {
   rugDrawdown: 0.9,
   /** Plain-pool tokens with at least this many airdropped holders are treated as spam clones. */
   spamAirdroppedHolders: 20,
+  /** Copycat: a same-ticker token with at least this many organic holders... */
+  copycatTwinMinHolders: 50,
+  /** ...and at least this many times this token's organic holders. */
+  copycatTwinRatio: 3,
 };
+
+/** Another token with this ticker has a far bigger organic community: this one rides its name. */
+function isCopycat(s: TokenSnapshot) {
+  const own = Math.max(0, s.holderCount - s.airdropped.length);
+  return s.twinOrganicHolders >= Math.max(THRESHOLDS.copycatTwinMinHolders, own * THRESHOLDS.copycatTwinRatio);
+}
 
 const isPlainPool = (launchpad: string | null) => !launchpad || launchpad === 'uniswap-v4';
 
@@ -214,8 +229,8 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     freshWalletsPct: s.holders.length ? round1((fresh.length / s.holders.length) * 100) : 0,
     airdroppedHolders: s.airdropped.length,
     dev,
-    copycat: s.sameSymbolEarlier > 0,
-    sameSymbolEarlier: s.sameSymbolEarlier,
+    copycat: isCopycat(s),
+    twinOrganicHolders: isCopycat(s) ? s.twinOrganicHolders : 0,
     spam: isPlainPool(s.launchpad) && s.airdropped.length >= THRESHOLDS.spamAirdroppedHolders,
   };
   return { ...signals, ...judge(signals, s) };
@@ -228,7 +243,7 @@ function judge(
   const reasons: Reason[] = [];
   const add = (level: Reason['level'], text: string) => reasons.push({ level, text });
 
-  if (x.copycat) add('high', `copycat: ${x.sameSymbolEarlier} earlier $${s.symbol} token${x.sameSymbolEarlier > 1 ? 's' : ''} this week`);
+  if (x.copycat) add('high', `copycat: another $${s.symbol} has ${x.twinOrganicHolders} real holders`);
   if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
   if (x.dev.rugs >= 2) add('high', `dev's past tokens: ${x.dev.rugs} of ${x.dev.launches} rugged`);
   else if (x.dev.rugs === 1) add('medium', `dev has 1 rugged token`);

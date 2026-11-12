@@ -11,7 +11,7 @@ function base(over: Partial<TokenSnapshot> = {}): TokenSnapshot {
   return {
     address: 'tok', symbol: 'GOOD', totalSupply: SUPPLY, deployer: 'dev', createdAt: T0, createdBlock: 1000n,
     holders, holderCount: 100, earlyBuys: [], launchIndexed: true, wallets: { dev: { firstFunder: 'cex', firstSeen: T0 - 90 * 86400 } },
-    airdropped: [], devTokens: [], sameSymbolEarlier: 0, launchpad: 'pons', now: T0 + 3600, ...over,
+    airdropped: [], devTokens: [], twinOrganicHolders: 0, launchpad: 'pons', now: T0 + 3600, ...over,
   };
 }
 
@@ -38,7 +38,8 @@ describe('computeSignals', () => {
     const s = computeSignals(
       base({
         symbol: 'ZOLVA',
-        sameSymbolEarlier: 8,
+        twinOrganicHolders: 1027,
+        holderCount: 215,
         airdropped: Array.from({ length: 209 }, (_, i) => `a${i}`),
         devTokens,
       }),
@@ -48,8 +49,27 @@ describe('computeSignals', () => {
     expect(s.dev.serialLauncher).toBe(true);
     expect(s.dev.rugs).toBe(12);
     expect(s.risk).toBe('high');
-    expect(s.verdict).toContain('copycat: 8 earlier $ZOLVA tokens');
+    expect(s.verdict).toContain('copycat: another $ZOLVA has 1027 real holders');
     expect(s.verdict).toContain('dev launched 12 tokens this week');
+  });
+
+  it('never flags the token with the real community as a copycat, even if a squatter launched first', () => {
+    // Real PONS: 6,891 holders. An older squatter with the same ticker has 40 organic holders.
+    const real = computeSignals(base({ symbol: 'PONS', holderCount: 6891, twinOrganicHolders: 40 }));
+    expect(real.copycat).toBe(false);
+    // The squatter, compared against the real one, is the copycat.
+    const squatter = computeSignals(base({ symbol: 'PONS', holderCount: 40, twinOrganicHolders: 6891 }));
+    expect(squatter.copycat).toBe(true);
+  });
+
+  it('does not count airdropped wallets as a real community', () => {
+    // 300 holders but 290 of them airdropped: 10 organic vs a twin with 120 organic holders.
+    const s = computeSignals(
+      base({ symbol: 'CASHCAT', holderCount: 300, twinOrganicHolders: 120, airdropped: Array.from({ length: 290 }, (_, i) => `a${i}`) }),
+    );
+    expect(s.copycat).toBe(true);
+    // Comparable communities: neither is called a copycat.
+    expect(computeSignals(base({ symbol: 'AI', holderCount: 400, twinOrganicHolders: 500 })).copycat).toBe(false);
   });
 
   it('marks a plain-pool clone with a padded holder count as spam', () => {
