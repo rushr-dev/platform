@@ -6,10 +6,12 @@ import { Rpc } from './rpc';
 import { recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
+import { GATEWAY_COUNT, gateway } from './gateway';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
 export { Backfiller } from './backfill';
+export { Gateway } from './gateway';
 
 /** Follow-up delays for launch metadata that wasn't loadable on the first try. */
 const METADATA_RETRY_S = [10, 60, 300, 1800];
@@ -189,6 +191,17 @@ app.use('*', async (c, next) => {
 app.route('/', api);
 
 app.get('/ws', (c) => {
+  // v2 (docs/realtime.md): snapshot + sequenced deltas, spread over the gateways. v1: the original feed.
+  if (c.req.query('v') === '2') {
+    // Auth hook: an API key in Sec-WebSocket-Protocol ("rushr.v2, key.<key>") will be validated here and
+    // passed on as the principal. Not enforced yet: everyone is anonymous with public topics.
+    const principal = { kind: 'anon', id: null, scopes: [] as string[] };
+    const k = Math.floor(Math.random() * GATEWAY_COUNT);
+    const headers = new Headers(c.req.raw.headers);
+    headers.set('x-gateway-index', String(k));
+    headers.set('x-principal', JSON.stringify(principal));
+    return gateway(c.env, k).fetch(new Request(c.req.raw, { headers }));
+  }
   const feed = c.env.LIVE_FEED.get(c.env.LIVE_FEED.idFromName('global'));
   return feed.fetch(c.req.raw);
 });
@@ -271,6 +284,7 @@ export default {
       if (refreshed.size) {
         const cards = await tokenSummaries(sql, { addresses: [...refreshed] });
         const feed = env.LIVE_FEED.get(env.LIVE_FEED.idFromName('global'));
+        await pollerOf(env).publishCards(cards).catch((err) => console.error('v2 card publish failed', err));
         await feed.publish(cards.flatMap((card) => [
           { topic: 'trenches', type: 'token' as const, data: card },
           { topic: `token:${card.address}`, type: 'token' as const, data: card },

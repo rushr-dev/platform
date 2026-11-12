@@ -75,6 +75,8 @@ export interface LiveTrade {
   time: number;
   trader: string;
   side: 'buy' | 'sell';
+  pool: string;
+  quote: string;
   tokenAmount: string;
   quoteAmount: string;
   priceUsd: number | null;
@@ -349,7 +351,7 @@ export class Pipeline {
         .map((s) => {
           const p = this.price(s);
           return {
-            token: s.token, tx: s.tx, logIndex: s.logIndex, time: s.time, trader: s.trader, side: s.side,
+            token: s.token, tx: s.tx, logIndex: s.logIndex, time: s.time, trader: s.trader, side: s.side, pool: s.pool, quote: s.quote,
             tokenAmount: s.tokenAmount.toString(), quoteAmount: s.quoteAmount.toString(),
             priceUsd: p.priceUsd ? Number(p.priceUsd) : null, usd: p.usd ? Number(p.usd) : null,
           };

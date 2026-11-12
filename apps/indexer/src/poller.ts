@@ -4,6 +4,8 @@ import { PAIR_SWAP_TOPICS, ROBINHOOD_CHAIN, tradeTopics, type RawLog } from '@ru
 import { dbUrl, poolHistory, type Env } from './env';
 import { Pipeline, type BatchStats, type RangeStats } from './pipeline';
 import { tokenSummaries } from './api';
+import { columnOf, tokenStats, type Column } from './data';
+import { GATEWAY_COUNT, gateway, type DeltaEvent } from './gateway';
 import type { FeedEvent } from './feed';
 import { Rpc } from './rpc';
 
@@ -85,6 +87,16 @@ export class ChainPoller extends DurableObject<Env> {
   private pairPending?: { reqId: number; key: string; pools: number };
   private nextReqId = 100;
   private pairsDirty = true;
+  /** Realtime v2 (docs/realtime.md): sequence epoch, per-topic seq, and which gateway watches what. */
+  private epoch = `p-${Date.now()}`;
+  private seqs = new Map<string, number>();
+  private registry = new Map<number, Set<string>>();
+  private gatewaysGreeted = false;
+  /** Last trenches column published per token (to emit `move`). */
+  private columns = new Map<string, Column | null>();
+  private statsAt = 0;
+  private lastCards = new Map<string, string>();
+  private lastStats = new Map<string, string>();
   /** Socket bytes received per subscription, for checking the Alchemy bandwidth estimate. */
   private meter = { since: Date.now(), main: 0, pair: 0, other: 0, prev: null as null | { minutes: number; mainPerMin: number; pairPerMin: number } };
 
@@ -148,6 +160,131 @@ export class ChainPoller extends DurableObject<Env> {
     return tokens.length;
   }
 
+  /** A gateway's full watched-topic set (debounced on its side). Returns the sequence epoch. */
+  async registerTopics(index: number, topics: string[]): Promise<{ epoch: string }> {
+    if (topics.length) this.registry.set(index, new Set(topics));
+    else this.registry.delete(index);
+    return { epoch: this.epoch };
+  }
+
+  /** Current seq per topic (a gateway asks before building a snapshot). */
+  async seqOf(topics: string[]): Promise<Record<string, number>> {
+    return Object.fromEntries(topics.map((t) => [t, this.seqs.get(t) ?? 0]));
+  }
+
+  /** Gateways keep their registrations in sync with our in-memory registry: greet them after a restart. */
+  private async greetGateways() {
+    if (this.gatewaysGreeted) return;
+    this.gatewaysGreeted = true;
+    await Promise.all(
+      [...Array(GATEWAY_COUNT).keys()].map((k) => gateway(this.env, k).hello(this.epoch).catch((err: unknown) => console.error('gateway hello failed', k, err))),
+    );
+  }
+
+  /** Send v2 events to the gateways watching their topics, numbering them per topic. */
+  private async sendV2(events: Omit<DeltaEvent, 'seq'>[]) {
+    if (!events.length || !this.registry.size) return;
+    const watchedBy = new Map<number, DeltaEvent[]>();
+    for (const e of events) {
+      const gws = [...this.registry].filter(([, set]) => set.has(e.topic)).map(([k]) => k);
+      if (!gws.length) continue;
+      const seq = (this.seqs.get(e.topic) ?? 0) + 1;
+      this.seqs.set(e.topic, seq);
+      for (const k of gws) watchedBy.set(k, [...(watchedBy.get(k) ?? []), { ...e, seq }]);
+    }
+    await Promise.all(
+      [...watchedBy].map(([k, evs]) => gateway(this.env, k).publish(this.epoch, evs).catch((err: unknown) => console.error('gateway publish failed', k, err))),
+    );
+  }
+
+  /** v2 `trades` and `candle` (1s/1m increments) per token, from a batch's new trades. */
+  private tradeDeltas(byToken: Map<string, BatchStats['trades']>): Omit<DeltaEvent, 'seq'>[] {
+    const out: Omit<DeltaEvent, 'seq'>[] = [];
+    for (const [token, trades] of byToken) {
+      const ordered = [...trades].sort((a, b) => a.time - b.time || a.logIndex - b.logIndex);
+      out.push({
+        topic: `token:${token}`, type: 'trades', source: 'index',
+        data: ordered.map((t) => ({
+          tx: t.tx, logIndex: t.logIndex, time: t.time, trader: t.trader, side: t.side, tokenAmount: t.tokenAmount,
+          quoteAmount: t.quoteAmount, quote: t.quote, pool: t.pool, priceUsd: t.priceUsd, usd: t.usd, tags: [],
+        })),
+      });
+      const ticks = new Map<string, { interval: '1s' | '1m'; time: number; open: number; high: number; low: number; close: number; volume: number; trades: number }>();
+      for (const t of ordered) {
+        if (t.priceUsd == null) continue;
+        for (const [interval, size] of [['1s', 1], ['1m', 60]] as const) {
+          const time = Math.floor(t.time / size) * size;
+          const k = `${interval}:${time}`;
+          const c = ticks.get(k);
+          if (!c) ticks.set(k, { interval, time, open: t.priceUsd, high: t.priceUsd, low: t.priceUsd, close: t.priceUsd, volume: t.usd ?? 0, trades: 1 });
+          else Object.assign(c, { high: Math.max(c.high, t.priceUsd), low: Math.min(c.low, t.priceUsd), close: t.priceUsd, volume: c.volume + (t.usd ?? 0), trades: c.trades + 1 });
+        }
+      }
+      if (ticks.size) out.push({ topic: `token:${token}`, type: 'candle', source: 'index', data: [...ticks.values()] });
+    }
+    return out;
+  }
+
+  /** v2 card updates: `token` on the token topic; `launch`/`token`/`move` on the trenches columns. */
+  private cardDeltas(cards: Record<string, unknown>[], fresh: Set<string>): Omit<DeltaEvent, 'seq'>[] {
+    const out: Omit<DeltaEvent, 'seq'>[] = [];
+    for (const card of cards) {
+      const address = card.address as string;
+      // Skip cards that didn't change since the last one sent (live and confirming paths both report).
+      const key = JSON.stringify(card);
+      if (!fresh.has(address) && this.lastCards.get(address) === key) continue;
+      this.lastCards.set(address, key);
+      out.push({ topic: `token:${address}`, type: 'token', source: 'index', data: card });
+      const col = columnOf(card);
+      const prev = this.columns.has(address) ? this.columns.get(address)! : undefined;
+      this.columns.set(address, col);
+      if (fresh.has(address) && col === 'new') out.push({ topic: 'trenches:new', type: 'launch', source: 'index', data: card });
+      else if (prev !== undefined && prev !== col) {
+        // Moved: tell both columns (a token can also leave or enter the default view, e.g. flagged as spam).
+        const data = { address, from: prev, to: col, card };
+        if (prev) out.push({ topic: `trenches:${prev}`, type: 'move', source: 'index', data });
+        if (col) out.push({ topic: `trenches:${col}`, type: 'move', source: 'index', data });
+      } else if (col) out.push({ topic: `trenches:${col}`, type: 'token', source: 'index', data: card });
+    }
+    if (this.columns.size > 50_000) this.columns.clear();
+    if (this.lastCards.size > 20_000) this.lastCards.clear();
+    return out;
+  }
+
+  /** Card changes from outside the poller (signals, metadata): numbered here, the single writer. */
+  async publishCards(cards: Record<string, unknown>[]): Promise<void> {
+    await this.sendV2(this.cardDeltas(cards, new Set()));
+  }
+
+  private watchedTokens(): string[] {
+    const out = new Set<string>();
+    for (const set of this.registry.values()) for (const t of set) if (t.startsWith('token:')) out.add(t.slice(6));
+    return [...out];
+  }
+
+  /** Every ~5s: window stats for watched tokens, sent when they changed. One query for all of them. */
+  private async tickStats() {
+    if (Date.now() - this.statsAt < 5_000 || !this.sql) return;
+    this.statsAt = Date.now();
+    const tokens = this.watchedTokens();
+    if (!tokens.length) return;
+    try {
+      const stats = await tokenStats(this.sql, tokens);
+      const events: Omit<DeltaEvent, 'seq'>[] = [];
+      for (const [token, st] of stats) {
+        const { asOf, ...windows } = st;
+        const key = JSON.stringify(windows);
+        if (this.lastStats.get(token) === key) continue;
+        this.lastStats.set(token, key);
+        events.push({ topic: `token:${token}`, type: 'stats', source: 'index', data: { ...windows, asOf } });
+      }
+      if (this.lastStats.size > 5_000) this.lastStats.clear();
+      await this.sendV2(events);
+    } catch (err) {
+      console.error('stats tick failed', err);
+    }
+  }
+
   async status() {
     const pipeline = this.init();
     const cursor = await pipeline.cursor();
@@ -178,6 +315,7 @@ export class ChainPoller extends DurableObject<Env> {
     const pipeline = this.init();
     await this.openSocket();
     await this.stage('socket');
+    await this.greetGateways();
     const rpc = new Rpc(this.env.RPC_URL);
     const started = Date.now();
     let caughtUp = false;
@@ -230,6 +368,7 @@ export class ChainPoller extends DurableObject<Env> {
       await this.ctx.storage.setAlarm(Date.now() + 5_000);
       return;
     }
+    if (caughtUp) await this.tickStats();
     await this.ctx.storage.setAlarm(Date.now() + (caughtUp ? POLL_MS : 10));
   }
 
@@ -336,11 +475,14 @@ export class ChainPoller extends DurableObject<Env> {
       for (const t of stats.trades) byToken.set(t.token, [...(byToken.get(t.token) ?? []), t]);
       const tradeEvents: FeedEvent[] = [...byToken].map(([token, trades]) => ({ topic: `token:${token}`, type: 'trades', data: trades, source }));
       if (tradeEvents.length) await feed.publish(tradeEvents);
+      // v2: trades and candle ticks first too.
+      await this.sendV2(this.tradeDeltas(byToken));
 
       const events: FeedEvent[] = [];
       const changed = [...new Set([...stats.newTokens, ...byToken.keys()])];
+      let cards: Record<string, unknown>[] = [];
       if (changed.length && this.sql) {
-        const cards = await tokenSummaries(this.sql, { addresses: changed });
+        cards = await tokenSummaries(this.sql, { addresses: changed });
         const fresh = new Set(stats.newTokens);
         // Block time of the newest log for each token, so clients can show feed latency.
         const seenAt = new Map<string, number>();
@@ -352,6 +494,7 @@ export class ChainPoller extends DurableObject<Env> {
         }
       }
       if (events.length) await feed.publish(events);
+      await this.sendV2(this.cardDeltas(cards, new Set(stats.newTokens)));
     } catch (err) {
       console.error('publish failed', err);
     }

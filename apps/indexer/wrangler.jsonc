@@ -18,12 +18,14 @@
     "bindings": [
       { "name": "CHAIN_POLLER", "class_name": "ChainPoller" },
       { "name": "LIVE_FEED", "class_name": "LiveFeed" },
-      { "name": "BACKFILLER", "class_name": "Backfiller" }
+      { "name": "BACKFILLER", "class_name": "Backfiller" },
+      { "name": "GATEWAY", "class_name": "Gateway" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ChainPoller", "LiveFeed"] },
-    { "tag": "v2", "new_sqlite_classes": ["Backfiller"] }
+    { "tag": "v2", "new_sqlite_classes": ["Backfiller"] },
+    { "tag": "v3", "new_sqlite_classes": ["Gateway"] }
   ],
   "queues": {
     "producers": [

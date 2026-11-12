@@ -1,6 +1,7 @@
 import type { ChainPoller } from './poller';
 import type { LiveFeed } from './feed';
 import type { Backfiller } from './backfill';
+import type { Gateway } from './gateway';
 
 export interface Env {
   CHAIN_ID: string;
@@ -17,6 +18,8 @@ export interface Env {
   CHAIN_POLLER: DurableObjectNamespace<ChainPoller>;
   LIVE_FEED: DurableObjectNamespace<LiveFeed>;
   BACKFILLER: DurableObjectNamespace<Backfiller>;
+  /** Realtime v2 gateways (docs/realtime.md). */
+  GATEWAY: DurableObjectNamespace<Gateway>;
   ENRICH_QUEUE: Queue<EnrichMessage>;
   /** Token metadata only, so new launches get icons without waiting behind signal recomputes. */
   METADATA_QUEUE: Queue<EnrichMessage>;
