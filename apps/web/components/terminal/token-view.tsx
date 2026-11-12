@@ -2,19 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
-import { API_URL, type Candle, type SignalReason, type TokenCard, type TokenDetail } from '@/lib/api';
+import { API_URL, type Candle, type SignalReason, type TokenDetail } from '@/lib/api';
 import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, quoteLabel, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
-import { useLive } from '@/lib/live';
+import { useTopic } from '@/lib/feed/react';
+import { tokenSpec, type TokenState } from '@/lib/feed/topics';
 import { useNow } from '@/lib/now';
 import { aggregate, usePairs, type Pair } from '@/lib/pairs';
 import { mergePools, useApiPools } from '@/lib/pools';
 
-type Pools = ReturnType<typeof mergePools>;
-import { fromLive, holderContext, mergeTrades, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type LiveTrade, type Tx, type WindowId } from '@/lib/trades';
+
+import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId } from '@/lib/trades';
 import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
 import { PriceChart } from './chart';
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
+
+type Pools = ReturnType<typeof mergePools>;
 
 /**
  * Token page. The header renders from the server; trades and candles arrive as promises that
@@ -32,45 +35,34 @@ export function TokenView({
   candlesP: Promise<Candle[]>;
   serverNow: number;
 }) {
-  const [t, setT] = useState<TokenDetail>(detail);
-  const [trades, setTrades] = useState<Tx[] | null>(null);
-  const [fetched, setFetched] = useState(0);
-  const [candles, setCandles] = useState<Candle[] | null>(null);
+  // Header data from the server render, then the feed: snapshot (the streamed trade list today,
+  // a socket snapshot on v2) plus live deltas.
+  const live = useTopic<TokenState>(`token:${detail.address}`, () => tokenSpec(detail, tradesP));
+  const { token: t, trades, fetched, candles: feedCandles } = live.data;
+  const [httpCandles, setCandles] = useState<Candle[] | null>(null);
+  // v2 carries candles in the feed (and streams history in while hydrating); v1 reads them over HTTP.
+  const candles = feedCandles ?? httpCandles;
+  const hydrating = live.hydration.state === 'hydrating';
   const [maker, setMaker] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('trades');
   const supply = toWhole(detail.total_supply, detail.decimals) ?? 0;
 
   useEffect(() => {
-    let live = true;
+    let mounted = true;
     // Streamed RSC promises are bare thenables; wrap them to get a real promise chain.
-    Promise.resolve(tradesP)
-      .then((list) => {
-        if (!live) return;
-        setFetched(list.length);
-        setTrades((prev) => (prev ? mergeTrades(prev, list) : list));
-      })
-      .catch(() => live && setTrades((p) => p ?? []));
     Promise.resolve(candlesP)
-      .then((c) => live && setCandles(c))
-      .catch(() => live && setCandles([]));
+      .then((c) => mounted && setCandles(c))
+      .catch(() => mounted && setCandles([]));
     return () => {
-      live = false;
+      mounted = false;
     };
-  }, [tradesP, candlesP]);
+  }, [candlesP]);
 
   const holdersQ = useFetch<{ holders: HolderInfo[]; total: number }>(`${API_URL}/tokens/${detail.address}/holders`);
   const ctx = useMemo(() => holderContext(detail.deployer, holdersQ.data?.holders ?? null), [detail.deployer, holdersQ.data]);
   const pairs = usePairs(detail.address);
   const apiPools = useApiPools(detail.address);
   const pools = useMemo(() => mergePools(apiPools, pairs, quoteLabel), [apiPools, pairs]);
-
-  useLive(`token:${detail.address}`, (e) => {
-    if (e.type === 'token') setT((prev) => ({ ...prev, ...(e.data as TokenCard) }));
-    if (e.type === 'trades') {
-      const fresh = (e.data as LiveTrade[]).map((x) => fromLive(x, detail.decimals));
-      setTrades((prev) => mergeTrades(fresh, prev ?? []));
-    }
-  });
 
   const showMaker = useCallback((w: string | null) => {
     setMaker(w);
@@ -123,11 +115,20 @@ export function TokenView({
       <div className="grid gap-2 p-2 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-2 lg:min-h-0 lg:overflow-hidden">
           <Header t={t} pools={pools} priceNow={priceNow} serverNow={serverNow} />
+          {hydrating && (
+            <div role="status" className="flex items-center gap-2 rounded-xl border border-brand/20 bg-brand/[0.06] px-3 py-2 text-xs text-ink/85">
+              <span className="size-1.5 animate-pulse rounded-full bg-brand" />
+              Rushr is reading this token&apos;s history{' '}
+              {live.hydration.source === 'index' ? 'from its index' : live.hydration.source === 'mixed' ? 'from chain and its index' : 'from chain'}. Trades,
+              holders and stats fill in as blocks are read; live trades already stream.
+              {live.hydration.progress != null && <span className="ml-auto font-mono text-muted">{Math.round(live.hydration.progress * 100)}%</span>}
+            </div>
+          )}
           <div className="lg:hidden">
             <WindowStats t={t} trades={trades} candles={candles} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
           <div className="h-[360px] shrink-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:h-auto lg:min-h-[280px] lg:flex-[1.15]">
-            <PriceChart address={t.address} initial={candles} supply={supply} trades={trades} />
+            <PriceChart address={t.address} initial={candles} supply={supply} trades={trades} priceUsd={priceNow} hydration={live.hydration} />
           </div>
           {tabs}
         </div>

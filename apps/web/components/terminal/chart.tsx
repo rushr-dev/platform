@@ -13,6 +13,7 @@ import {
 } from 'lightweight-charts';
 import { API_URL, type Candle } from '@/lib/api';
 import { usd } from '@/lib/format';
+import type { Hydration } from '@/lib/feed/protocol';
 import type { Tx } from '@/lib/trades';
 
 /**
@@ -45,6 +46,8 @@ export function PriceChart({
   initial,
   supply,
   trades,
+  priceUsd = null,
+  hydration,
 }: {
   address: string;
   /** 1m candles for the last 24h; null while they load. */
@@ -53,6 +56,10 @@ export function PriceChart({
   supply: number;
   /** Newest first, live trades included. */
   trades: Tx[] | null;
+  /** Current price: seeds a live bar when there is no history, so the chart is never empty. */
+  priceUsd?: number | null;
+  /** Server-side backfill state (feed v2): shows "fetching from chain" while history streams in. */
+  hydration?: Hydration;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -134,11 +141,25 @@ export function PriceChart({
   // The base series for this interval. Trade-built series only rebuild on interval change; new
   // trades after that are applied incrementally below.
   const tradesReady = trades != null;
-  const base = useMemo<Candle[] | null>(() => {
+  const priceRef = useRef(priceUsd);
+  priceRef.current = priceUsd;
+  const rawBase = useMemo<Candle[] | null>(() => {
     if (FROM_TRADES.has(interval)) return trades ? fromTrades(trades, INTERVALS[interval]) : null;
     if (interval === '1m') return initial;
     return fetched?.iv === interval ? fetched.data : null;
   }, [interval, initial, fetched, tradesReady]);
+  // No history yet (a brand-new or still-hydrating token): start from one bar at the current price
+  // and let live trades build the chart from there.
+  const seeded = rawBase != null && rawBase.length === 0 && priceUsd != null && priceUsd > 0;
+  const base = useMemo<Candle[] | null>(() => {
+    if (!rawBase || rawBase.length || !priceRef.current) return rawBase;
+    const step = INTERVALS[interval];
+    const t = Math.floor(Date.now() / 1000 / step) * step;
+    const p = priceRef.current;
+    return [{ time: t, open: p, high: p, low: p, close: p, volume: 0 }];
+  }, [rawBase, interval, seeded]);
+  // Fit the view once per interval; later redraws (history streaming in) keep the user's zoom.
+  const fitted = useRef<string | null>(null);
 
   // Draw the full series whenever the base data or the mode changes.
   useEffect(() => {
@@ -153,9 +174,13 @@ export function PriceChart({
     // null: trades not loaded yet (whatever arrives first is history); '': none so far.
     appliedTop.current = trades ? (trades[0]?.id ?? '') : null;
     const n = series.length;
-    // Show the most recent ~120 bars rather than squeezing the whole history in.
-    if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
-    else chart.current?.timeScale().fitContent();
+    const fitKey = `${interval}:${n > 1 ? 'data' : 'seed'}`;
+    if (fitted.current !== fitKey) {
+      fitted.current = fitKey;
+      // Show the most recent ~120 bars rather than squeezing the whole history in.
+      if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
+      else chart.current?.timeScale().fitContent();
+    }
     // trades intentionally excluded: they are applied incrementally below
   }, [base, scale]);
 
@@ -192,6 +217,7 @@ export function PriceChart({
   }, [trades, interval, scale, base, hovering]);
 
   const empty = base != null && base.length === 0 && !(trades?.length && FROM_TRADES.has(interval));
+  const hydrating = hydration?.state === 'hydrating';
   const loading = base == null;
   const ch = legend && legend.open ? ((legend.close - legend.open) / legend.open) * 100 : null;
   const up = (ch ?? 0) >= 0;
@@ -246,6 +272,15 @@ export function PriceChart({
           </div>
         )}
         {loading && <div className="absolute inset-x-6 bottom-10 top-10 animate-pulse rounded-xl bg-white/[0.025]" />}
+        {hydrating ? (
+          <HydratingPill hydration={hydration!} />
+        ) : (
+          seeded && (
+            <span className="pointer-events-none absolute bottom-9 left-1/2 z-10 -translate-x-1/2 rounded-full bg-surface-2/90 px-2.5 py-1 text-[11px] text-muted ring-1 ring-white/[0.06]">
+              No trades in this window yet · live from the current price
+            </span>
+          )
+        )}
         {empty && (
           <p className="pointer-events-none absolute inset-0 grid place-items-center text-xs text-muted">
             {FROM_TRADES.has(interval) ? 'No recent trades to build this view from.' : 'No trades in this window yet.'}
@@ -299,4 +334,24 @@ function usdPrecise(n: number) {
   if (n >= 1) return `$${n.toFixed(2)}`;
   if (n === 0) return '$0';
   return `$${n.toPrecision(4)}`;
+}
+
+const SOURCE_TEXT = { chain: 'from chain', index: 'from the Rushr index', mixed: 'from chain and index' } as const;
+
+/** "Fetching history from chain · 42%": the server is still backfilling this token. */
+export function HydratingPill({ hydration, className = '' }: { hydration: Hydration; className?: string }) {
+  const p = hydration.progress;
+  return (
+    <span
+      role="status"
+      className={`pointer-events-none absolute right-3 top-1 z-10 flex items-center gap-1.5 rounded-full bg-surface-2/90 px-2.5 py-1 text-[11px] text-ink/85 ring-1 ring-brand/25 ${className}`}
+    >
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand/60" />
+        <span className="relative inline-flex size-2 rounded-full bg-brand" />
+      </span>
+      Fetching history {SOURCE_TEXT[hydration.source ?? 'chain']}
+      {p != null && <span className="font-mono text-muted">{Math.round(p * 100)}%</span>}
+    </span>
+  );
 }

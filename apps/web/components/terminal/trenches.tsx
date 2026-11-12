@@ -15,9 +15,10 @@ import {
   Sparkle,
   Users,
 } from '@phosphor-icons/react';
-import { API_URL, type Column, type TokenCard } from '@/lib/api';
+import type { Column, TokenCard } from '@/lib/api';
 import { age, LAUNCHPAD_LABEL, pct, usd } from '@/lib/format';
-import { useLive, type LiveEvent } from '@/lib/live';
+import { useTopic, useTopicDeltas } from '@/lib/feed/react';
+import { trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
 import { useNow } from '@/lib/now';
 import { RiskTag, SocialLinks, TokenAvatar } from './bits';
 
@@ -106,18 +107,19 @@ function loadFilters(): Record<Column, Filters> {
 }
 
 const QUICK_KEY = 'rushr.quickbuy';
-/** Rows per column fetched in the browser after the server-rendered first screen. */
-const BACKFILL = 80;
 
 /* ------------------------------------------------------------------ main */
 
 export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverNow: number }) {
-  // All known tokens by address. Mutated in place; `version` re-renders once per animation frame.
-  const tokens = useRef(new Map(initial.map((t) => [t.address, t])));
+  // Every known token, by address: server-rendered first screen, then the HTTP snapshot and live
+  // deltas from the feed client (batched once per frame there).
+  const feedView = useTopic<TrenchesState>('trenches', () => trenchesSpec(initial));
+  const tokens = feedView.data;
   const flashed = useRef(new Map<string, number>());
-  const pending = useRef<LiveEvent[]>([]);
-  const frame = useRef<number | null>(null);
-  const [version, setVersion] = useState(0);
+  // Last seen market cap per token, so a row only flashes when its number actually moves.
+  const mcaps = useRef(new Map(initial.map((t) => [t.address, t.market_cap_usd])));
+  // Tokens that launched while the page was open slide in; everything else just appears.
+  const entering = useRef(new Set<string>());
   // Start from the server's clock so the first client render matches the HTML (ages are time-based).
   const [now, setNow] = useState(serverNow);
   const [filters, setFilters] = useState<Record<Column, Filters>>({ new: NO_FILTERS, almost: NO_FILTERS, migrated: NO_FILTERS });
@@ -126,8 +128,6 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   const [showSpam, setShowSpam] = useState(false);
   const [showPlain, setShowPlain] = useState(false);
   const [quick, setQuick] = useState('0.1');
-  // Tokens present on first paint don't animate in; later arrivals slide in.
-  const initialSet = useRef(new Set(initial.map((t) => t.address)));
 
   useEffect(() => {
     setFilters(loadFilters());
@@ -152,70 +152,28 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
     return () => clearInterval(id);
   }, []);
 
-  // The server sends only the top of each column to keep the HTML small; the rest (and the
-  // plain-pool slice) loads here, after the page is on screen.
-  useEffect(() => {
-    const ctl = new AbortController();
-    const urls = [
-      ...(['new', 'almost', 'migrated'] as const).map((c) => `/tokens?column=${c}&limit=${BACKFILL}`),
-      `/tokens?column=new&limit=60&plain=1`,
-    ];
-    Promise.all(
-      urls.map((u) =>
-        fetch(`${API_URL}${u}`, { signal: ctl.signal })
-          .then((r) => (r.ok ? (r.json() as Promise<{ tokens: (TokenCard | null)[] }>) : { tokens: [] }))
-          .then((d) => d.tokens.filter((t): t is TokenCard => t != null))
-          .catch(() => [] as TokenCard[]),
-      ),
-    ).then((lists) => {
-      if (ctl.signal.aborted) return;
-      let added = 0;
-      for (const t of lists.flat()) {
-        // Live updates may already be newer than this snapshot; never overwrite them.
-        if (tokens.current.has(t.address)) continue;
-        tokens.current.set(t.address, t);
-        initialSet.current.add(t.address);
-        added++;
-      }
-      if (added) setVersion((v) => v + 1);
-    });
-    return () => ctl.abort();
-  }, []);
-
-  // Batch socket events and apply them once per frame, so a burst of trades costs one render.
-  useLive('trenches', (e) => {
-    pending.current.push(e);
-    frame.current ??= requestAnimationFrame(() => {
-      frame.current = null;
-      const batch = pending.current;
-      pending.current = [];
-      const at = Date.now();
-      for (const ev of batch) {
-        const t = ev.data as TokenCard;
+  useTopicDeltas('trenches', (deltas) => {
+    const at = Date.now();
+    for (const d of deltas) {
+      for (const t of (Array.isArray(d.data) ? d.data : [d.data]) as TokenCard[]) {
         if (!t?.address) continue;
-        const prev = tokens.current.get(t.address);
-        tokens.current.set(t.address, { ...prev, ...t });
-        if (ev.type === 'launch' || prev?.market_cap_usd !== t.market_cap_usd) flashed.current.set(t.address, at);
+        if (d.kind === 'launch') entering.current.add(t.address);
+        if (d.kind === 'launch' || mcaps.current.get(t.address) !== t.market_cap_usd) flashed.current.set(t.address, at);
+        mcaps.current.set(t.address, t.market_cap_usd);
       }
-      // Keep memory bounded: drop the oldest tokens beyond a generous cap.
-      if (tokens.current.size > 1500) {
-        const keep = [...tokens.current.values()].sort(SORT.new).slice(0, 1000);
-        tokens.current = new Map(keep.map((t) => [t.address, t]));
-      }
-      setVersion((v) => v + 1);
-    });
+    }
   });
 
   const lists = useMemo(() => {
     const out: Record<Column, TokenCard[]> = { new: [], almost: [], migrated: [] };
-    for (const t of tokens.current.values()) {
+    for (const t of tokens.values()) {
       if (!showSpam && t.spam) continue;
       if (!showPlain && (t.launchpad ?? 'uniswap-v4') === 'uniswap-v4') continue;
       out[columnOf(t)].push(t);
     }
     for (const c of COLUMNS) out[c.id].sort(SORT[c.id]);
     return out;
-  }, [version, showSpam, showPlain]);
+  }, [tokens, showSpam, showPlain]);
 
   const setColFilters = useCallback((col: Column, f: Filters) => {
     setFilters((prev) => {
@@ -251,7 +209,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
           const live = lists[c.id].filter((t) => passes(t, f, now));
           const frozen = paused[c.id];
           const shown = frozen
-            ? frozen.map((a) => tokens.current.get(a)).filter((t): t is TokenCard => !!t)
+            ? frozen.map((a) => tokens.get(a)).filter((t): t is TokenCard => !!t)
             : live.slice(0, PER_COLUMN);
           const waiting = frozen ? live.filter((t) => !frozen.includes(t.address)).length : 0;
           return (
@@ -263,7 +221,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
               waiting={waiting}
               paused={!!frozen}
               flashed={flashed.current}
-              initialSet={initialSet.current}
+              entering={entering.current}
               serverNow={serverNow}
               quick={quick}
               filters={f}
@@ -355,7 +313,7 @@ function ColumnPanel({
   waiting,
   paused,
   flashed,
-  initialSet,
+  entering,
   serverNow,
   quick,
   filters,
@@ -369,7 +327,7 @@ function ColumnPanel({
   waiting: number;
   paused: boolean;
   flashed: Map<string, number>;
-  initialSet: Set<string>;
+  entering: Set<string>;
   serverNow: number;
   quick: string;
   filters: Filters;
@@ -420,7 +378,7 @@ function ColumnPanel({
             col={col.id}
             serverNow={serverNow}
             flashAt={flashed.get(t.address) ?? 0}
-            enter={!initialSet.has(t.address)}
+            enter={entering.has(t.address)}
             quick={quick}
           />
         ))}

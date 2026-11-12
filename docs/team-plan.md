@@ -104,3 +104,32 @@ The terminal already works around each of these; landing them makes the numbers 
 5. **Top traders:** `/tokens/:a/traders?sort=pnl|bought|sold&limit=100` → `{ wallet, buys, sells, bought_usd, sold_usd, bought_tokens, sold_tokens, balance, first_time, last_time }` over the full history. Today it is computed from the last 500 trades.
 6. **Maker tags on trades:** `tags` per trade row and per live socket trade (sniper, bundler, insider, fresh, dev), so tags show for makers outside the top 100 holders. Today tags come from `/holders` (top 100 only, ~2.2s).
 7. **Token amount on live trades** is already sent (`tokenAmount`); please keep it. A `maker_tags` field on the socket payload (item 6) would let the trades table tag rows the moment they land.
+
+### Terminal → Data: feed protocol v2, what the client needs (2026-11-12)
+The client for this is built and waiting (`apps/web/lib/feed/`: `protocol.ts` has the exact types). It speaks today's v1 feed until the server answers `hello`, so the server can ship v2 whenever it's ready. Shapes below are the client's proposal; change names freely, but please keep the semantics or tell Terminal.
+
+**Negotiation.** Client sends `{"op":"hello","v":2}` right after connecting. A v2 server replies `{"type":"hello","v":2}`; today's server replies `subscribed`, which keeps the client on v1. Please keep accepting v1 `subscribe`/`unsubscribe` and sending v1 events to sockets that never said hello, so old tabs keep working during the rollout. The client also sends a v1 `subscribe` right after `hello` (so v1 streams without waiting a round trip): **once a socket has said hello, ignore its v1 ops**; the client re-subscribes with `sub` when your `hello` arrives.
+
+**Client → server:** `{"op":"sub","topic","since"?}` (`since` = last seq the client received; if you still have every delta after it, resume by sending them (the next must be `since + 1`), otherwise send a snapshot), `{"op":"unsub","topic"}`, `{"op":"resync","topic"}` (client saw a sequence gap: send a fresh snapshot), `{"op":"ping"}`.
+
+**Server → client:**
+- `{"type":"snapshot","topic","seq","data","state":"ready"|"hydrating","source"?:"chain"|"index"|"mixed","progress"?:0..1}`. `seq` = the last delta already folded into `data`. Send one on every `sub` and `resync`.
+- `{"type":"delta","topic","seq","kind","data","block_time"?,"source"?:"live"|"poll"}`. `seq` is per topic, increments by exactly 1, never reused. The client drops `seq <= last`, and on `seq > last + 1` holds deltas and sends `resync`. `block_time` (unix s) drives the latency pill.
+- `{"type":"state","topic","state","source"?,"progress"?}` for hydration progress without a full snapshot. Please send `state: "ready"` when a hydrating topic finishes.
+- `{"type":"error","topic"?,"code","message"?}`, e.g. `not_a_token`, `topic_limit`.
+
+**Topics and payloads the UI needs:**
+1. `token:<addr>`. Snapshot `data`: `{ token: <same shape as GET /tokens/:a>, trades: [last 500, newest first, API trade shape incl. token_amount], candles: [1m, last 24h] }`. Deltas:
+   - `token`: a partial card;
+   - `trades`: an array in the current socket trade shape, plus `tags` per trade (request #6);
+   - `candles`: an array of `{time, open, high, low, close, volume, trades}`, upserted by `time`. This is how history streams in while hydrating, and how the live bucket updates.
+2. Unknown addresses: subscribing to `token:<addr>` for a token the index doesn't have should start hydration and answer with `state:"hydrating", source:"chain"` (a snapshot whose `token` may be partial: address, symbol, name, decimals, total_supply as soon as you have them). Answer `error not_a_token` if it isn't an ERC-20, so the page can say so instead of waiting. The page already renders a "fetching from chain" shell for this.
+3. `trenches:new|almost|migrated`. Snapshot `data`: `{ tokens: [cards, column order, ~80] }`. Deltas:
+   - `token`: a card upsert;
+   - `launch`: a new card;
+   - `remove`: `{address}` when a card leaves the column (migrated, dropped out of the top N).
+
+   Until these exist, the client keeps using the single `trenches` topic; the reducer is shared.
+4. Optional, later: `candles:<addr>:<1s|30s|1m|5m|…>` for server-built sub-minute candles (request #3), with the same snapshot/delta rules.
+
+**Sizes and rates.** Snapshots for `token:` are the biggest (≈200 KB with 500 trades); compress if the DO allows, or cap trades at 200 in the snapshot (the client can fetch more over HTTP). Coalesce deltas per topic to at most ~10/s; the client batches per animation frame anyway.

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { cache } from 'react';
+import { TokenPending } from '@/components/terminal/token-pending';
 import { TokenView } from '@/components/terminal/token-view';
 import { getCandles, getTokenDetail, getTrades } from '@/lib/api';
 import { fromApi, TRADE_LIMIT } from '@/lib/trades';
@@ -28,7 +29,8 @@ export default async function TokenPage({ params }: Props) {
   const candlesP = getCandles(address, '1m', 24);
   const rawTradesP = getTrades(address, TRADE_LIMIT, 0);
   const detail = await detailP;
-  if (!detail) notFound();
+  // Not in the index (yet): a shell that fetches it from chain over the feed, or says it isn't tracked.
+  if (!detail) return <TokenPending address={address} />;
   const tradesP = rawTradesP.then((list) => list.map((t) => fromApi(t, detail.decimals)));
   return <TokenView detail={detail} tradesP={tradesP} candlesP={candlesP} serverNow={Date.now()} />;
 }
