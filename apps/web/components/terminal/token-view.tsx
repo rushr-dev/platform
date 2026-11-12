@@ -1,138 +1,222 @@
 'use client';
 
-import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
-import { ArrowSquareOut, Check, Copy, Lightning, Warning, WarningOctagon, Info, CheckCircle } from '@phosphor-icons/react';
-import { API_URL, type Candle, type SignalReason, type TokenCard, type TokenDetail, type Trade } from '@/lib/api';
-import { age, LAUNCHPAD_LABEL, nf, pct, price, short, usd } from '@/lib/format';
-import { useLive } from '@/lib/live';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
+import { API_URL, type Candle, type SignalReason, type TokenDetail } from '@/lib/api';
+import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, quoteLabel, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
+import { useTopic } from '@/lib/feed/react';
+import { tokenSpec, type ServerStats, type TokenState } from '@/lib/feed/topics';
+import { useNow } from '@/lib/now';
+import { aggregate, usePairs, type Pair } from '@/lib/pairs';
+import { mergePools, useApiPools } from '@/lib/pools';
+
+
+import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId, type WindowStats as WindowStatsT } from '@/lib/trades';
 import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
-import { BubbleMap, type BubbleData } from './bubblemap';
-import { PriceChart, type Tick } from './chart';
+import { hydrationLabel, isHydrating, PriceChart } from './chart';
+import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
+import { TradesTable } from './trades-table';
 
-const EXPLORER = 'https://robinhoodchain.blockscout.com';
+type Pools = ReturnType<typeof mergePools>;
 
-interface LiveTrade {
-  tx: string;
-  logIndex: number;
-  time: number;
-  trader: string;
-  side: 'buy' | 'sell';
-  priceUsd: number | null;
-  usd: number | null;
-}
+/** A hydrating token's minimal card may not have a creation time yet. */
+const known = (iso: string | null | undefined) => !!iso && Number.isFinite(new Date(iso).getTime()) && new Date(iso).getTime() > 0;
 
-interface Holder {
-  wallet: string;
-  pct: number;
-  tags: string[];
-  funder: string | null;
-}
-
+/**
+ * Token page. The header renders from the server; trades and candles arrive as promises that
+ * resolve while the page is already on screen, and holders (slow) load in the background to
+ * tag makers. Live trades from the socket are merged into one newest-first list.
+ */
 export function TokenView({
   detail,
-  initialTrades,
-  candles,
+  tradesP,
+  candlesP,
   serverNow,
 }: {
   detail: TokenDetail;
-  initialTrades: Trade[];
-  candles: Candle[];
+  tradesP: Promise<Tx[]>;
+  candlesP: Promise<Candle[]>;
   serverNow: number;
 }) {
-  const [t, setT] = useState<TokenDetail>(detail);
-  const [trades, setTrades] = useState<Trade[]>(initialTrades);
-  const [ticks, setTicks] = useState<Tick[]>([]);
-  const [now, setNow] = useState(serverNow);
-  const supply = Number(BigInt(detail.total_supply) / 10n ** BigInt(Math.max(0, detail.decimals - 6))) / 1e6;
+  // Header data from the server render, then the feed: snapshot (the streamed trade list today,
+  // a socket snapshot on v2) plus live deltas.
+  const live = useTopic<TokenState>(`token:${detail.address}`, () => tokenSpec(detail, tradesP));
+  const { token: t, trades, fetched, candles: feedCandles } = live.data;
+  const [httpCandles, setCandles] = useState<Candle[] | null>(null);
+  // v2 carries candles in the feed (and streams history in while hydrating); v1 reads them over HTTP.
+  const candles = feedCandles ?? httpCandles;
+  const hydrating = isHydrating(live.hydration);
+  const [maker, setMaker] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>('trades');
+  const supply = toWhole(detail.total_supply, detail.decimals) ?? 0;
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
+    let mounted = true;
+    // Streamed RSC promises are bare thenables; wrap them to get a real promise chain.
+    Promise.resolve(candlesP)
+      .then((c) => mounted && setCandles(c))
+      .catch(() => mounted && setCandles([]));
+    return () => {
+      mounted = false;
+    };
+  }, [candlesP]);
+
+  const holdersQ = useFetch<{ holders: HolderInfo[]; total: number }>(`${API_URL}/tokens/${detail.address}/holders`);
+  const ctx = useMemo(() => holderContext(detail.deployer, holdersQ.data?.holders ?? null), [detail.deployer, holdersQ.data]);
+  const pairs = usePairs(detail.address);
+  const apiPools = useApiPools(detail.address);
+  // v2 snapshots carry pools; until then (and on v1) the HTTP endpoint, then DexScreener.
+  const feedPools = live.data.pools;
+  const pools = useMemo(() => mergePools(feedPools ?? apiPools, pairs, quoteLabel), [feedPools, apiPools, pairs]);
+
+  const showMaker = useCallback((w: string | null) => {
+    setMaker(w);
+    if (w) setTab('trades');
   }, []);
 
-  useLive(`token:${detail.address}`, (e) => {
-    if (e.type === 'token') setT((prev) => ({ ...prev, ...(e.data as TokenCard) }));
-    if (e.type === 'trades') {
-      const fresh = (e.data as LiveTrade[]).map<Trade>((x) => ({
-        tx: x.tx, log_index: x.logIndex, time: new Date(x.time * 1000).toISOString(), trader: x.trader, side: x.side, price_usd: x.priceUsd, usd: x.usd,
-      }));
-      setTrades((prev) => {
-        const seen = new Set(prev.map((p) => `${p.tx}:${p.log_index}`));
-        return [...fresh.filter((f) => !seen.has(`${f.tx}:${f.log_index}`)).reverse(), ...prev].slice(0, 300);
-      });
-      setTicks((prev) => [
-        ...(e.data as LiveTrade[]).filter((x) => x.priceUsd).map((x) => ({ time: x.time, priceUsd: x.priceUsd!, usd: x.usd })).reverse(),
-        ...prev,
-      ].slice(0, 2000));
-    }
-  });
-
-  const change = useMemo(() => {
-    const first = candles.find((c) => c.open > 0);
-    const p = t.price_usd ?? null;
-    return first && p ? ((p - first.open) / first.open) * 100 : null;
-  }, [candles, t.price_usd]);
+  const priceNow = trades?.[0]?.priceUsd ?? t.price_usd ?? null;
+  const tabs = (
+    <Tabs
+      tab={tab}
+      setTab={setTab}
+      holdersCount={t.holders}
+      body={
+        <>
+          {tab === 'trades' && <TradesTable trades={trades} ctx={ctx} supply={supply} serverNow={serverNow} maker={maker} onMaker={showMaker} />}
+          {tab === 'holders' && (
+            <HoldersTab
+              holders={holdersQ.data?.holders ?? null}
+              total={holdersQ.data?.total ?? t.holders}
+              error={holdersQ.error}
+              pending={holdersQ.pending}
+              ctx={ctx}
+              priceUsd={priceNow}
+              decimals={t.decimals}
+              onMaker={showMaker}
+            />
+          )}
+          {tab === 'traders' && <TopTradersTab trades={trades} ctx={ctx} priceUsd={priceNow} decimals={t.decimals} serverNow={serverNow} onMaker={showMaker} />}
+          {tab === 'early' && (
+            <EarlyBuyersTab
+              trades={trades}
+              fetched={fetched}
+              limit={TRADE_LIMIT}
+              createdAtMs={new Date(t.created_at).getTime()}
+              launchIndexed={t.launch_indexed}
+              ctx={ctx}
+              priceUsd={priceNow}
+              decimals={t.decimals}
+              onMaker={showMaker}
+            />
+          )}
+          {tab === 'bubbles' && <BubblesTab address={t.address} />}
+          {tab === 'dev' && <DevTokensTab deployer={t.deployer} self={t.address} serverNow={serverNow} />}
+        </>
+      }
+    />
+  );
 
   return (
-    <div className="grid h-full min-h-0 gap-2 p-2 lg:grid-cols-[1fr_340px]">
-      <div className="flex min-h-0 flex-col gap-2 overflow-y-auto lg:overflow-hidden">
-        <Header t={t} change={change} now={now} />
-        <div className="h-[380px] shrink-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:h-auto lg:min-h-[300px] lg:flex-[1.2]">
-          <PriceChart address={t.address} initial={candles} supply={supply} ticks={ticks} />
+    <div className="h-full overflow-y-auto lg:overflow-hidden">
+      <div className="grid gap-2 p-2 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-2 lg:min-h-0 lg:overflow-hidden">
+          <Header t={t} pools={pools} priceNow={priceNow} serverNow={serverNow} />
+          {hydrating && (
+            <div role="status" className="flex items-center gap-2 rounded-xl border border-brand/20 bg-brand/[0.06] px-3 py-2 text-xs text-ink/85">
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-brand" />
+              <span>
+                Rushr is reading this token&apos;s history {live.hydration.source === 'index' ? 'from its index' : live.hydration.source === 'mixed' ? 'from chain and its index' : 'from chain'}.
+                Trades, holders and stats fill in as blocks are read; live trades already stream.
+              </span>
+              {hydrationLabel(live.hydration).detail && <span className="ml-auto shrink-0 font-mono text-muted">{hydrationLabel(live.hydration).detail}</span>}
+            </div>
+          )}
+          <div className="lg:hidden">
+            <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
+          </div>
+          <div className="h-[360px] shrink-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:h-auto lg:min-h-[280px] lg:flex-[1.15]">
+            <PriceChart
+              address={t.address}
+              initial={candles}
+              seconds={live.data.candles1s}
+              supply={supply}
+              trades={trades}
+              priceUsd={priceNow}
+              hydration={live.hydration}
+            />
+          </div>
+          {tabs}
         </div>
-        <Tabs t={t} trades={trades} now={now} />
+        <aside className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:[scrollbar-width:thin]">
+          <div className="hidden lg:block">
+            <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
+          </div>
+          <TradeBox symbol={t.symbol} />
+          <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
+          <Safety t={t} />
+          <DevRecord t={t} />
+        </aside>
       </div>
-      <aside className="flex min-h-0 flex-col gap-2 overflow-y-auto">
-        <TradeBox symbol={t.symbol} />
-        <Safety t={t} />
-        <DevRecord t={t} />
-      </aside>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ header */
 
-function Header({ t, change, now }: { t: TokenDetail; change: number | null; now: number }) {
+function Header({ t, pools, priceNow, serverNow }: { t: TokenDetail; pools: Pools; priceNow: number | null; serverNow: number }) {
   const [copied, setCopied] = useState(false);
+  const now = useNow(serverNow);
   const copy = () => {
     void navigator.clipboard?.writeText(t.address).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
     });
   };
+  const created = new Date(t.created_at).getTime();
+  // Per-pool merge first; the card's own sum (measured pools only) until pools arrive.
+  const liquidity = pools.liquidityUsd ?? t.liquidity_usd ?? null;
+  const supply = toWhole(t.total_supply, t.decimals) ?? 0;
+  const mcap = priceNow && supply ? priceNow * supply : t.market_cap_usd;
   return (
     <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-2xl border border-white/[0.06] bg-surface px-4 py-3">
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <TokenAvatar t={t} size={44} badge />
-        <div>
+        <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold tracking-[-0.02em]">{t.symbol}</h1>
             <span className="max-w-[16ch] truncate text-sm text-muted">{t.name}</span>
             <RiskTag risk={t.risk} />
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-xs text-muted">
-            <button type="button" onClick={copy} className="flex items-center gap-1 font-mono hover:text-ink">
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+            <button type="button" onClick={copy} className="flex items-center gap-1 font-mono hover:text-ink" title="Copy contract address">
               {short(t.address)} {copied ? <Check size={12} className="text-brand" /> : <Copy size={12} />}
             </button>
             <span>·</span>
             <span>{LAUNCHPAD_LABEL[t.launchpad ?? ''] ?? t.launchpad}</span>
             <span>·</span>
-            <span>{age(new Date(t.created_at).getTime(), now)} old</span>
-            <a href={`${EXPLORER}/token/${t.address}`} target="_blank" rel="noreferrer" className="hover:text-ink" aria-label="Open in explorer">
-              <ArrowSquareOut size={12} />
-            </a>
+            <span title={known(t.created_at) ? dateTimeUtc(t.created_at) : undefined} className="font-mono">
+              {known(t.created_at) ? ageLong(created, now) : 'age —'}
+            </span>
             <span>·</span>
+            <a href={`${EXPLORER}/token/${t.address}`} target="_blank" rel="noreferrer" className="rounded bg-white/[0.05] px-1.5 py-px hover:text-ink">
+              Explorer
+            </a>
+            <a href={dexscreenerUrl(t.address)} target="_blank" rel="noreferrer" className="rounded bg-white/[0.05] px-1.5 py-px hover:text-ink">
+              DexScreener
+            </a>
             <SocialLinks t={t} size={14} />
           </div>
-          {t.description && <p className="mt-1 max-w-[60ch] truncate text-xs text-ink/70" title={t.description}>{t.description}</p>}
+          {t.description && (
+            <p className="mt-1 max-w-[60ch] truncate text-xs text-ink/70" title={t.description}>
+              {t.description}
+            </p>
+          )}
         </div>
       </div>
-      <div className="flex flex-wrap gap-x-7 gap-y-2">
-        <Stat k="Market cap" v={usd(t.market_cap_usd)} big />
-        <Stat k="Price" v={price(t.price_usd)} sub={change == null ? undefined : `${change >= 0 ? '▲' : '▼'} ${Math.abs(change).toFixed(1)}%`} up={(change ?? 0) >= 0} />
-        <Stat k="24h volume" v={usd(t.volume_24h_usd)} />
+      <div className="flex flex-wrap gap-x-6 gap-y-2">
+        <Stat k="Market cap" v={usd(mcap)} big />
+        <Stat k="Price" v={price(priceNow)} />
+        <Stat k="Liquidity" v={liquidity == null ? '—' : usd(liquidity)} title={pools.rows.length ? `Across ${pools.rows.length} pools` : 'Not reported for this token yet'} />
         <Stat k="Holders" v={nf.format(t.holders)} />
         <Stat k="ATH mcap" v={usd(t.ath_market_cap_usd)} />
         {t.status !== 'migrated' && t.bonding_progress != null && <Stat k="Bonding" v={pct(t.bonding_progress * 100, 0)} />}
@@ -141,14 +225,160 @@ function Header({ t, change, now }: { t: TokenDetail; change: number | null; now
   );
 }
 
-function Stat({ k, v, sub, up, big }: { k: string; v: string; sub?: string; up?: boolean; big?: boolean }) {
+function Stat({ k, v, big, title }: { k: string; v: string; big?: boolean; title?: string }) {
+  return (
+    <div title={title}>
+      <div className="text-[11px] text-muted">{k}</div>
+      <div className={`font-mono ${big ? 'text-lg font-semibold' : 'text-sm'}`}>{v}</div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ rolling windows */
+
+/**
+ * 5m/1h/6h/24h tiles like GMGN. Rushr's own numbers update with every trade; when DexScreener
+ * knows the token's pools, "All pools" adds the venues our indexer doesn't cover yet.
+ */
+const SERVER_WINDOW: Record<WindowId, '5m' | '1h' | '6h' | '24h'> = { m5: '5m', h1: '1h', h6: '6h', h24: '24h' };
+
+/** v2 `stats` → the panel's shape. Missing windows read as empty. */
+function fromServerStats(s: ServerStats): Record<WindowId, WindowStatsT> {
+  const out = {} as Record<WindowId, WindowStatsT>;
+  for (const w of WINDOWS) {
+    const x = s[SERVER_WINDOW[w.id]];
+    out[w.id] = {
+      change: x?.priceChangePct ?? null,
+      volume: x?.volumeUsd ?? 0,
+      trades: (x?.buys ?? 0) + (x?.sells ?? 0),
+      buys: x?.buys ?? 0,
+      sells: x?.sells ?? 0,
+      buyUsd: x?.buyUsd ?? 0,
+      sellUsd: x?.sellUsd ?? 0,
+      makers: x?.makers ?? 0,
+      complete: true,
+    };
+  }
+  return out;
+}
+
+function WindowStats({
+  t,
+  trades,
+  candles,
+  server,
+  pairs,
+  priceNow,
+  serverNow,
+}: {
+  t: TokenDetail;
+  trades: Tx[] | null;
+  candles: Candle[] | null;
+  /** v2 rolling windows from the server: exact, so they replace the ones derived here. */
+  server: ServerStats | null;
+  pairs: Pair[] | null;
+  priceNow: number | null;
+  serverNow: number;
+}) {
+  const [w, setW] = useState<WindowId>('h24');
+  const [chosen, setSource] = useState<'rushr' | 'all' | null>(null);
+  const hasPairs = !!pairs?.length;
+  // Until the user picks: Rushr when the server sends exact stats (v2 indexes every venue), else
+  // "all pools" for plain-pool tokens DexScreener knows (venues the old index doesn't cover).
+  const source = chosen ?? (!server && hasPairs && t.launchpad === 'uniswap-v4' ? 'all' : 'rushr');
+  const now = useNow(serverNow);
+  // Recomputing per second keeps windows sliding; it's a single pass over ≤1000 trades.
+  const derived = useMemo(
+    () => (!server && trades && candles ? windowStats(trades, candles, Math.floor(now / 1000), priceNow) : null),
+    [server, trades, candles, now, priceNow],
+  );
+  const ours = useMemo(() => (server ? fromServerStats(server) : derived), [server, derived]);
+  const all = useMemo(() => (hasPairs ? aggregate(pairs!) : null), [hasPairs, pairs]);
+  const useAll = source === 'all' && all;
+  const tile = (id: WindowId) => (useAll ? all.byWindow[id].change : (ours?.[id].change ?? null));
+  const cur = useAll
+    ? { volume: all.byWindow[w].volume, buys: all.byWindow[w].buys, sells: all.byWindow[w].sells, buyUsd: null, sellUsd: null, makers: null, complete: true }
+    : ours?.[w];
+  const net = cur && cur.buyUsd != null && cur.sellUsd != null ? cur.buyUsd - cur.sellUsd : null;
+  const total = cur ? cur.buys + cur.sells : 0;
+  const buyShare = total ? (cur!.buys / total) * 100 : 50;
+  const usdTotal = cur?.buyUsd != null && cur.sellUsd != null ? cur.buyUsd + cur.sellUsd : 0;
+  const usdShare = usdTotal ? (cur!.buyUsd! / usdTotal) * 100 : 50;
+
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-surface p-2">
+      <div className="grid grid-cols-4 gap-1">
+        {WINDOWS.map((x) => {
+          const ch = tile(x.id);
+          return (
+            <button
+              key={x.id}
+              type="button"
+              onClick={() => setW(x.id)}
+              className={`rounded-xl px-1 py-1.5 text-center transition ${w === x.id ? 'bg-white/[0.07] ring-1 ring-white/10' : 'hover:bg-white/[0.03]'}`}
+            >
+              <div className="text-[11px] text-muted">{x.label}</div>
+              <div className={`font-mono text-[13px] font-semibold ${ch == null ? 'text-muted' : ch >= 0 ? 'text-brand' : 'text-risk-high'}`}>
+                {ch == null ? (ours || useAll ? '—' : '…') : pctSigned(ch, Math.abs(ch) >= 100 ? 0 : 1)}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      {!cur ? (
+        <div className="mt-2 h-[74px] animate-pulse rounded-xl bg-white/[0.03]" />
+      ) : (
+        <div className="mt-2 space-y-2 px-1.5 pb-1 text-[11px]">
+          <div className="grid grid-cols-4 gap-1">
+            <Mini k="Vol" v={usd(cur.volume)} />
+            <Mini k="Buys" v={nf.format(cur.buys)} tone="text-brand" />
+            <Mini k="Sells" v={nf.format(cur.sells)} tone="text-risk-high" />
+            <Mini k="Net buy" v={net == null ? '—' : usdSigned(net)} tone={net == null ? '' : net >= 0 ? 'text-brand' : 'text-risk-high'} />
+          </div>
+          <Ratio left={buyShare} label={`${nf.format(cur.buys)} / ${nf.format(cur.sells)} txns`} />
+          {usdTotal > 0 && <Ratio left={usdShare} label={`${usd(cur.buyUsd)} / ${usd(cur.sellUsd)}`} />}
+          <div className="flex items-center justify-between text-[10px] text-muted">
+            <span>
+              {cur.makers != null && <>{nf.format(cur.makers)} makers · </>}
+              {useAll ? `${pairs!.length} pools via DexScreener` : cur.complete ? 'Rushr index' : 'Buy/sell split from recent trades'}
+            </span>
+            {hasPairs && (
+              <span className="flex rounded-md bg-white/[0.04] p-px">
+                {(['rushr', 'all'] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setSource(s)}
+                    className={`rounded px-1.5 py-px ${source === s ? 'bg-white/[0.1] text-ink' : 'hover:text-ink'}`}
+                  >
+                    {s === 'rushr' ? 'Rushr' : 'All pools'}
+                  </button>
+                ))}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Mini({ k, v, tone = '' }: { k: string; v: string; tone?: string }) {
   return (
     <div>
-      <div className="text-[11px] text-muted">{k}</div>
-      <div className={`font-mono ${big ? 'text-lg font-semibold' : 'text-sm'}`}>
-        {v}
-        {sub && <span className={`ml-1.5 text-xs ${up ? 'text-brand' : 'text-risk-high'}`}>{sub}</span>}
+      <div className="text-muted">{k}</div>
+      <div className={`font-mono text-xs ${tone}`}>{v}</div>
+    </div>
+  );
+}
+
+function Ratio({ left, label }: { left: number; label: string }) {
+  return (
+    <div>
+      <div className="flex h-1 overflow-hidden rounded-full bg-risk-high/70">
+        <span className="h-full bg-brand transition-[width] duration-500" style={{ width: `${left}%` }} />
       </div>
+      <div className="mt-0.5 font-mono text-[10px] text-muted">{label}</div>
     </div>
   );
 }
@@ -188,7 +418,7 @@ function TradeBox({ symbol }: { symbol: string }) {
             key={v}
             type="button"
             onClick={() => setAmount(v)}
-            className="rounded-lg border border-white/[0.06] py-1.5 font-mono text-xs text-muted hover:text-ink"
+            className={`rounded-lg border py-1.5 font-mono text-xs transition ${amount === v ? 'border-white/20 text-ink' : 'border-white/[0.06] text-muted hover:text-ink'}`}
           >
             {v}
             {side === 'sell' ? '%' : ''}
@@ -205,6 +435,122 @@ function TradeBox({ symbol }: { symbol: string }) {
       <p className="mt-2 text-center text-[11px] text-muted">
         {side === 'buy' ? 'Buy' : 'Sell'} ${symbol} non-custodially, from this screen.
       </p>
+    </div>
+  );
+}
+
+const DEX_LABEL: Record<string, string> = {
+  uniswap: 'Uniswap', ramses: 'Ramses', aero: 'Aero', metric: 'Metric', topaz: 'Topaz', nami: 'Nami', pons: 'PONS curve', curve: 'Curve',
+};
+const SOURCE_NOTE = {
+  rushr: 'Liquidity from Rushr’s index.',
+  dexscreener: 'Liquidity via DexScreener.',
+  mixed: 'Liquidity from Rushr’s index; DexScreener fills pools we don’t measure yet.',
+} as const;
+
+function PoolPanel({ t, pools, supply, serverNow }: { t: TokenDetail; pools: Pools; supply: number; serverNow: number }) {
+  const [all, setAll] = useState(false);
+  const now = useNow(serverNow);
+  const [copied, setCopied] = useState(false);
+  const pool = t.main_pool ?? null;
+  const quote = quoteLabel(t.quote);
+  const rows = pools.rows;
+  const list = all ? rows : rows.slice(0, 4);
+  return (
+    <div className="rounded-2xl border border-white/[0.06] bg-surface p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold">Pools & liquidity</h2>
+        {pools.liquidityUsd != null && <span className="font-mono text-sm">{usd(pools.liquidityUsd)}</span>}
+      </div>
+      <dl className="mt-3 space-y-2 text-[13px]">
+        <Row k="Pair" v={`${t.symbol} / ${quote}`} />
+        <Row k="Venue" v={LAUNCHPAD_LABEL[t.launchpad ?? ''] ?? t.launchpad ?? '—'} />
+        {pool && (
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted">Main pool</dt>
+            <dd>
+              <button
+                type="button"
+                className="flex items-center gap-1 font-mono text-xs hover:text-ink"
+                onClick={() =>
+                  void navigator.clipboard?.writeText(pool).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1200);
+                  })
+                }
+                title="Copy pool id"
+              >
+                {short(pool)} {copied ? <Check size={11} className="text-brand" /> : <Copy size={11} />}
+              </button>
+            </dd>
+          </div>
+        )}
+        <Row k="Supply" v={compact(supply)} />
+        <Row k="Created" v={known(t.created_at) ? `${dateUtc(t.created_at)} · ${ageLong(new Date(t.created_at).getTime(), now).split(' ')[0]} ago` : '—'} />
+        {t.status !== 'migrated' && t.bonding_progress != null && (
+          <div>
+            <div className="flex justify-between">
+              <dt className="text-muted">Bonding curve</dt>
+              <dd className="font-mono">{pct(t.bonding_progress * 100, 1)}</dd>
+            </div>
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+              <span className="block h-full rounded-full bg-brand" style={{ width: `${Math.min(100, t.bonding_progress * 100)}%` }} />
+            </div>
+          </div>
+        )}
+      </dl>
+      {pools.loading ? (
+        <div className="mt-3 h-14 animate-pulse rounded-xl bg-white/[0.03]" />
+      ) : rows.length ? (
+        <div className="mt-3 border-t border-white/[0.05] pt-3">
+          <div className="mb-1.5 flex justify-between text-[10px] uppercase tracking-wider text-muted">
+            <span>{rows.length} pools</span>
+            <span>Liquidity · 24h vol</span>
+          </div>
+          <ul className="space-y-1">
+            {list.map((p) => (
+              <li key={p.id}>
+                <a
+                  href={p.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title={p.liquidityFrom === 'dexscreener' ? 'Liquidity via DexScreener' : undefined}
+                  className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-xs hover:bg-white/[0.03]"
+                >
+                  <span className="min-w-0 flex-1 truncate">
+                    {DEX_LABEL[p.dex] ?? p.dex}
+                    {p.version && p.version !== 'curve' && <span className="ml-1 text-muted">{p.version}</span>}
+                    <span className="ml-1 text-muted">/ {p.quote}</span>
+                  </span>
+                  <span className={`font-mono ${p.liquidityFrom === 'dexscreener' && pools.source === 'mixed' ? 'text-ink/60' : ''}`}>
+                    {usd(p.liquidityUsd)}
+                  </span>
+                  <span className="w-14 text-right font-mono text-muted">{usd(p.volume24hUsd)}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+          {rows.length > 4 && (
+            <button type="button" onClick={() => setAll((a) => !a)} className="mt-1 px-1.5 text-[11px] text-muted hover:text-ink">
+              {all ? 'Show fewer' : `Show all ${rows.length}`}
+            </button>
+          )}
+          {pools.source && <p className="mt-2 px-1.5 text-[10px] text-muted">{SOURCE_NOTE[pools.source]}</p>}
+        </div>
+      ) : (
+        <p className="mt-3 border-t border-white/[0.05] pt-3 text-[11px] text-muted">
+          {t.status === 'migrated' || t.launchpad === 'uniswap-v4' ? 'Liquidity figures for this pool are coming soon.' : 'Still on its bonding curve: liquidity is the curve itself.'}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-3">
+      <dt className="text-muted">{k}</dt>
+      <dd className="truncate font-mono">{v}</dd>
     </div>
   );
 }
@@ -231,9 +577,7 @@ function Safety({ t }: { t: TokenDetail }) {
         <RiskTag risk={t.risk} />
       </div>
       {t.verdict && <p className={`mt-3 text-sm leading-relaxed ${riskText(t.risk)}`}>{t.verdict}</p>}
-      {!t.launch_indexed && (
-        <p className="mt-2 text-xs text-muted">Found after launch. Launch-time checks fill in once its first blocks are indexed.</p>
-      )}
+      {!t.launch_indexed && <p className="mt-2 text-xs text-muted">Found after launch. Launch-time checks fill in once its first blocks are indexed.</p>}
       <dl className="mt-4 space-y-2 text-[13px]">
         {rows.map(([k, v, bad]) => (
           <div key={k} className="flex justify-between">
@@ -296,182 +640,32 @@ function DevStat({ k, v, bad, good }: { k: string; v: string; bad?: boolean; goo
 
 /* ------------------------------------------------------------------ bottom tabs */
 
-type Tab = 'trades' | 'holders' | 'bubbles' | 'dev';
+type Tab = 'trades' | 'holders' | 'traders' | 'early' | 'bubbles' | 'dev';
 
-function Tabs({ t, trades, now }: { t: TokenDetail; trades: Trade[]; now: number }) {
-  const [tab, setTab] = useState<Tab>('trades');
+function Tabs({ tab, setTab, holdersCount, body }: { tab: Tab; setTab: (t: Tab) => void; holdersCount: number; body: React.ReactNode }) {
   const tabs: [Tab, string][] = [
     ['trades', 'Trades'],
-    ['holders', `Holders ${nf.format(t.holders)}`],
+    ['holders', `Holders ${nf.format(holdersCount)}`],
+    ['traders', 'Top traders'],
+    ['early', 'Early buyers'],
     ['bubbles', 'Bubble map'],
     ['dev', "Dev's tokens"],
   ];
   return (
-    <div className="flex min-h-[320px] flex-col overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:min-h-0 lg:flex-1">
-      <div className="flex gap-1 border-b border-white/[0.05] px-2 py-2">
+    <div className="flex h-[560px] shrink-0 flex-col overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink">
+      <div className="flex gap-1 overflow-x-auto border-b border-white/[0.05] px-2 py-2 [scrollbar-width:none]">
         {tabs.map(([id, label]) => (
           <button
             key={id}
             type="button"
             onClick={() => setTab(id)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium ${tab === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'}`}
+            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${tab === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'}`}
           >
             {label}
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === 'trades' && <Trades trades={trades} now={now} />}
-        {tab === 'holders' && <Holders address={t.address} deployer={t.deployer} />}
-        {tab === 'bubbles' && <Bubbles address={t.address} />}
-        {tab === 'dev' && <DevTokens deployer={t.deployer} self={t.address} />}
-      </div>
-    </div>
-  );
-}
-
-function Trades({ trades, now }: { trades: Trade[]; now: number }) {
-  if (!trades.length) return <Empty text="No trades yet." />;
-  return (
-    <table className="w-full text-xs">
-      <thead className="sticky top-0 bg-surface text-left text-[11px] text-muted">
-        <tr>
-          <th className="px-4 py-2 font-normal">Age</th>
-          <th className="py-2 font-normal">Type</th>
-          <th className="py-2 text-right font-normal">USD</th>
-          <th className="py-2 text-right font-normal">Price</th>
-          <th className="px-4 py-2 text-right font-normal">Trader</th>
-        </tr>
-      </thead>
-      <tbody className="font-mono">
-        {trades.map((x) => (
-          <tr key={`${x.tx}:${x.log_index}`} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
-            <td className="px-4 py-1.5 text-muted">{age(new Date(x.time).getTime(), now)}</td>
-            <td className={x.side === 'buy' ? 'text-brand' : 'text-risk-high'}>{x.side === 'buy' ? 'Buy' : 'Sell'}</td>
-            <td className={`text-right ${x.side === 'buy' ? 'text-brand' : 'text-risk-high'}`}>{usd(x.usd)}</td>
-            <td className="text-right text-ink/80">{price(x.price_usd)}</td>
-            <td className="px-4 text-right">
-              <a href={`${EXPLORER}/tx/${x.tx}`} target="_blank" rel="noreferrer" className="text-muted hover:text-ink">
-                {short(x.trader)}
-              </a>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function useFetch<T>(url: string) {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState(false);
-  useEffect(() => {
-    const ctl = new AbortController();
-    fetch(url, { signal: ctl.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<T>) : Promise.reject(new Error(String(r.status)))))
-      .then(setData)
-      .catch((e: Error) => e.name !== 'AbortError' && setError(true));
-    return () => ctl.abort();
-  }, [url]);
-  return { data, error };
-}
-
-const TAG_STYLE: Record<string, string> = {
-  dev: 'bg-white/15 text-ink',
-  sniper: 'bg-risk-medium/15 text-risk-medium',
-  bundler: 'bg-risk-high/15 text-risk-high',
-  insider: 'bg-risk-high/15 text-risk-high',
-  fresh: 'bg-[#5ec8ff]/15 text-[#5ec8ff]',
-  airdrop: 'bg-[#b58cff]/15 text-[#b58cff]',
-};
-
-function Holders({ address, deployer }: { address: string; deployer: string }) {
-  const { data, error } = useFetch<{ holders: Holder[]; total: number }>(`${API_URL}/tokens/${address}/holders`);
-  if (error) return <Empty text="Couldn't load holders." />;
-  if (!data) return <Skeleton />;
-  return (
-    <table className="w-full text-xs">
-      <thead className="sticky top-0 bg-surface text-left text-[11px] text-muted">
-        <tr>
-          <th className="w-10 px-4 py-2 font-normal">#</th>
-          <th className="py-2 font-normal">Wallet</th>
-          <th className="py-2 font-normal">Tags</th>
-          <th className="px-4 py-2 text-right font-normal">Share</th>
-        </tr>
-      </thead>
-      <tbody>
-        {data.holders.slice(0, 100).map((h, i) => (
-          <tr key={h.wallet} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
-            <td className="px-4 py-1.5 font-mono text-muted">{i + 1}</td>
-            <td className="font-mono">
-              <a href={`${EXPLORER}/address/${h.wallet}`} target="_blank" rel="noreferrer" className="hover:text-brand">
-                {short(h.wallet)}
-              </a>
-            </td>
-            <td>
-              <span className="flex flex-wrap gap-1">
-                {(h.wallet === deployer ? ['dev', ...h.tags.filter((x) => x !== 'dev')] : h.tags).map((tag) => (
-                  <span key={tag} className={`rounded px-1.5 py-px text-[10px] font-semibold ${TAG_STYLE[tag] ?? 'bg-white/10 text-muted'}`}>
-                    {tag}
-                  </span>
-                ))}
-              </span>
-            </td>
-            <td className="px-4 text-right font-mono">
-              <span className="inline-flex items-center gap-2">
-                <span className="hidden h-1 w-16 overflow-hidden rounded-full bg-white/[0.06] sm:block">
-                  <span className="block h-full bg-brand/70" style={{ width: `${Math.min(100, h.pct * 4)}%` }} />
-                </span>
-                {pct(h.pct, 2)}
-              </span>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function Bubbles({ address }: { address: string }) {
-  const { data, error } = useFetch<BubbleData>(`${API_URL}/tokens/${address}/bubblemap`);
-  if (error) return <Empty text="Couldn't load the bubble map." />;
-  if (!data) return <Skeleton />;
-  return <BubbleMap data={data} />;
-}
-
-function DevTokens({ deployer, self }: { deployer: string; self: string }) {
-  const { data, error } = useFetch<{ tokens: TokenCard[] }>(`${API_URL}/dev/${deployer}`);
-  if (error) return <Empty text="Couldn't load the dev's tokens." />;
-  if (!data) return <Skeleton />;
-  return (
-    <ul>
-      {data.tokens.map((x) => (
-        <li key={x.address} className="border-t border-white/[0.03] first:border-0">
-          <Link href={`/token/${x.address}`} className={`flex items-center gap-3 px-4 py-2 hover:bg-white/[0.02] ${x.address === self ? 'bg-white/[0.03]' : ''}`}>
-            <TokenAvatar t={x} size={28} />
-            <span className="min-w-0 flex-1">
-              <span className="text-sm font-semibold">{x.symbol}</span>
-              <span className="ml-2 text-xs text-muted">{new Date(x.created_at).toLocaleDateString()}</span>
-            </span>
-            <span className="font-mono text-xs">{usd(x.market_cap_usd)}</span>
-            <RiskTag risk={x.risk} />
-          </Link>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-function Empty({ text }: { text: string }) {
-  return <div className="grid h-40 place-items-center text-sm text-muted">{text}</div>;
-}
-
-function Skeleton() {
-  return (
-    <div className="space-y-2 p-4">
-      {Array.from({ length: 6 }, (_, i) => (
-        <div key={i} className="h-6 animate-pulse rounded-md bg-white/[0.04]" />
-      ))}
+      <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">{body}</div>
     </div>
   );
 }

@@ -1,10 +1,24 @@
-import type { Viewport } from 'next';
-import { Closing, Footer, Hero, Nav, ProductShot, Social } from '@/components/landing/sections';
-import { API_URL, getColumn, getStats, getTrades, type TokenCard } from '@/lib/api';
+import type { Metadata, Viewport } from 'next';
+import { Suspense } from 'react';
+import { Closing, Floor, FloorFallback, FloorHead, Footer, Hero, Nav } from '@/components/landing/sections';
+import { Agents, Leaderboard, Social } from '@/components/landing/social';
+import { API_URL, getColumn, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 
 export const revalidate = 30;
 export const viewport: Viewport = { themeColor: '#f7f5f2' };
+
+/** The share card (1200x630, cut for X and Telegram previews) instead of the 3:1 banner from the root layout. */
+const SHARE = {
+  title: 'Rushr: where humans and AI agents trade, connect, and compete',
+  description:
+    'Agentic social trading on Robinhood Chain: post your calls, flex your PnL and follow the best traders, people and AI agents side by side. Every token safety-checked.',
+  image: { url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: where humans and AI agents trade, connect, and compete. Agentic social trading on Robinhood Chain.' },
+};
+export const metadata: Metadata = {
+  openGraph: { title: SHARE.title, description: SHARE.description, url: 'https://rushr.trade', siteName: 'Rushr', type: 'website', images: [SHARE.image] },
+  twitter: { card: 'summary_large_image', title: SHARE.title, description: SHARE.description, images: [SHARE.image] },
+};
 
 /** What's trending on Robinhood Chain. Market data comes from DexScreener (all pools, all DEXes). */
 const PONS = '0x39dbed3a2bd333467115de45665cc57f813c4571';
@@ -16,7 +30,7 @@ const TRENDING = [PONS, CASHCAT, PRIORS];
 const FALLBACK: Record<string, DexToken> = {
   [PONS]: {
     address: PONS, symbol: 'PONS', name: 'Pons', price_usd: 0.1536, market_cap_usd: 102_968_248, volume_24h_usd: 6_766_915,
-    liquidity_usd: 5_229_649, change_24h: -1.6, image_url: 'https://cdn.dexscreener.com/cms/images/dkmXs8KYMyMXjuU1?width=800&height=800&quality=95&format=auto',
+    liquidity_usd: 5_229_649, change_24h: -1.6, image_url: 'https://cdn.dexscreener.com/cms/images/dkmXs8KYMyMXjuU1?width=128&height=128&quality=90&format=auto',
     website: 'https://ponsfamily.com/launchpad', twitter: 'https://x.com/ponsdotfamily', telegram: null,
   },
   [CASHCAT]: {
@@ -30,8 +44,11 @@ const FALLBACK: Record<string, DexToken> = {
 };
 
 /** Anyone can launch any name, so the marketing page only shows new pairs that look presentable. */
-const BLOCKED = /fag|nig+(a|er)|retard|rape|nazi|hitler|porn|sex|cum|dick|cock|pussy|fuck|shit|cunt|whore|slut|kike|spic/i;
+const BLOCKED = /fag|nig+(a|er)|retard|rape|nazi|hitler|porn|sex|cum|dick|dih|cock|pussy|fuck|shit|cunt|whore|slut|kike|spic/i;
 const presentable = (t: TokenCard) => !!t.image_url && t.risk !== 'high' && !BLOCKED.test(`${t.symbol} ${t.name}`);
+
+/** New pairs that already have a safety verdict come first, so the shot doesn't show a column of "checking". */
+const withVerdictFirst = (ts: TokenCard[]) => [...ts.filter((t) => t.risk), ...ts.filter((t) => !t.risk)];
 
 /** Same-ticker clones of a token, as flagged by our safety checks. */
 async function getClones(symbol: string, original: string): Promise<TokenCard[]> {
@@ -47,9 +64,29 @@ async function getClones(symbol: string, original: string): Promise<TokenCard[]>
   }
 }
 
-export default async function Home() {
-  const [stats, dex, fresh, trades, clones] = await Promise.all([
-    getStats(),
+export default function Home() {
+  return (
+    <div className="theme-paper min-h-dvh">
+      <Nav />
+      <main>
+        <Hero />
+        <Social />
+        <Leaderboard />
+        <Agents />
+        <FloorHead />
+        {/* Everything above is static; only the terminal shot and safety cards wait on the API and DexScreener. */}
+        <Suspense fallback={<FloorFallback />}>
+          <LiveFloor />
+        </Suspense>
+        <Closing />
+      </main>
+      <Footer />
+    </div>
+  );
+}
+
+async function LiveFloor() {
+  const [dex, fresh, trades, clones] = await Promise.all([
     getDexTokens(TRENDING),
     getColumn('new', 60),
     getTrades(PONS, 200),
@@ -57,15 +94,13 @@ export default async function Home() {
   ]);
   const trending = TRENDING.map((a) => dex[a] ?? FALLBACK[a]!);
   return (
-    <div className="theme-paper min-h-dvh">
-      <Nav />
-      <main>
-        <Hero stats={stats} />
-        <ProductShot trending={trending} fresh={fresh.filter(presentable)} focus={trending[0]!} trades={trades} clones={clones} />
-        <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
-        <Closing />
-      </main>
-      <Footer />
-    </div>
+    <Floor
+      trending={trending}
+      fresh={withVerdictFirst(fresh.filter(presentable))}
+      focus={trending[0]!}
+      original={trending[0]!}
+      trades={trades}
+      clones={clones}
+    />
   );
 }

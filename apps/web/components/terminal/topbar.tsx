@@ -4,11 +4,12 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { MagnifyingGlass, Wallet } from '@phosphor-icons/react';
+import { MagnifyingGlass } from '@phosphor-icons/react';
 import { API_URL, type TokenCard } from '@/lib/api';
 import { usd } from '@/lib/format';
 import { useLiveStatus } from '@/lib/live';
 import { TokenAvatar, RiskDot } from './bits';
+import { AccountMenu } from './auth/account-menu';
 
 const NAV = [
   { href: '/trenches', label: 'Trenches' },
@@ -43,15 +44,7 @@ export function TopBar() {
       <Search />
       <div className="ml-auto flex items-center gap-2">
         <LivePill />
-        <button
-          type="button"
-          disabled
-          title="Trading opens soon"
-          className="flex items-center gap-2 rounded-xl bg-ink px-3.5 py-2 text-sm font-semibold text-bg opacity-90"
-        >
-          <Wallet size={16} weight="bold" />
-          <span className="hidden sm:inline">Connect</span>
-        </button>
+        <AccountMenu />
       </div>
     </header>
   );

@@ -5,15 +5,17 @@ import { getColumn } from '@/lib/api';
 export const metadata: Metadata = { title: 'Trenches' };
 export const dynamic = 'force-dynamic';
 
+/** Rows per column in the server HTML: one screen's worth. The browser loads the rest. */
+const FIRST_SCREEN = 10;
+
 export default async function TrenchesPage() {
-  // Server-render all three columns so the page is useful before the socket connects.
-  // Launchpad tokens (the default view), plus a slice of plain pools for the "Plain pools" toggle.
-  const [fresh, almost, migrated, plain] = await Promise.all([
-    getColumn('new', 80, 0),
-    getColumn('almost', 80, 0),
-    getColumn('migrated', 80, 0),
-    getColumn('new', 60, 0, '&plain=1'),
+  // Server-render the top of each column so the page is useful before any script runs, but keep
+  // the HTML small: every token card is serialized twice (HTML and the RSC payload).
+  const [fresh, almost, migrated] = await Promise.all([
+    getColumn('new', FIRST_SCREEN, 0),
+    getColumn('almost', FIRST_SCREEN, 0),
+    getColumn('migrated', FIRST_SCREEN, 0),
   ]);
-  const byAddress = new Map([...fresh, ...almost, ...migrated, ...plain].map((t) => [t.address, t]));
+  const byAddress = new Map([...fresh, ...almost, ...migrated].map((t) => [t.address, t]));
   return <Trenches initial={[...byAddress.values()]} serverNow={Date.now()} />;
 }

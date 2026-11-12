@@ -1,0 +1,33 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+
+      - name: Install dependencies
+        run: forge install foundry-rs/forge-std@v1.9.7 --no-git
+
+      - name: Format
+        run: forge fmt --check
+
+      - name: Build
+        run: forge build --sizes
+
+      # Fork tests run only when the ROBINHOOD_RPC_URL repository secret is set; otherwise they return early.
+      - name: Test
+        run: forge test -vv
+        env:
+          ROBINHOOD_RPC_URL: ${{ secrets.ROBINHOOD_RPC_URL }}

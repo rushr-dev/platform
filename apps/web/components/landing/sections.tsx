@@ -1,15 +1,14 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowRight, Robot, TelegramLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
-import type { RiskLevel, Stats, TokenCard, Trade } from '@/lib/api';
+import { preload } from 'react-dom';
+import { ArrowRight, Robot, XLogo } from '@phosphor-icons/react/dist/ssr';
+import type { RiskLevel, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
+import { Art } from './art';
 import { Reveal } from './reveal';
+import { SectionHead, WRAP, X_URL } from './ui';
 
-const X_URL = 'https://x.com/rushrtrade';
-const TELEGRAM_URL = 'https://t.me/rushrtrade';
-
-const nf = new Intl.NumberFormat('en-US');
 const usd = (n: number | null | undefined) =>
   n == null
     ? 'n/a'
@@ -20,7 +19,6 @@ const usd = (n: number | null | undefined) =>
         : n >= 1e3
           ? `$${(n / 1e3).toFixed(1)}K`
           : `$${n.toFixed(0)}`;
-const pct = (n: number | null | undefined) => (n == null ? 'n/a' : `${n}%`);
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const age = (iso: string) => {
   const m = Math.max(1, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
@@ -29,7 +27,7 @@ const age = (iso: string) => {
 
 const chg = (n: number | null | undefined) => (n == null ? '' : `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`);
 
-/** Token icon (launchpad or DexScreener metadata), falling back to a coloured initial. */
+/** Token icon (launchpad or DexScreener metadata), falling back to a generated avatar. */
 function TokenAvatar({ t, size = 28 }: { t: { address: string; symbol: string; image_url?: string | null }; size?: number }) {
   return <Icon t={{ address: t.address, symbol: t.symbol, launchpad: null, image_url: t.image_url ?? null }} size={size} />;
 }
@@ -51,22 +49,32 @@ function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?:
   );
 }
 
+const PRIMARY_BTN =
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_12px_32px_-14px_rgba(42,138,34,0.8)] transition hover:brightness-105 active:scale-[0.98]';
+const SECONDARY_BTN =
+  'inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-7 py-3.5 font-semibold transition hover:border-ink/20 active:scale-[0.98]';
+
 /* ---------------------------------------------------------------- nav */
 
 export function Nav() {
   return (
     <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-md">
-      <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
+      <nav className={`${WRAP} flex h-16 items-center justify-between`}>
         <div className="flex items-center gap-10">
-          <Link href="/" className="flex items-center gap-2" aria-label="Rushr home">
-            <Image src="/logo-mark.png" alt="" width={26} height={26} priority />
-            <span className="text-xl font-semibold tracking-[-0.04em]">rushr</span>
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/" className="flex items-center gap-2.5" aria-label="Rushr home">
+              <Image src="/logo-mark-64.png" alt="" width={30} height={30} priority />
+              <span className="text-[22px] font-semibold tracking-[-0.04em]">rushr</span>
+            </Link>
+            <span className="rounded-full border border-dashed border-ink/25 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+              Beta
+            </span>
+          </div>
           <div className="hidden items-center gap-7 text-sm text-muted md:flex">
-            <a href="#trenches" className="transition-colors hover:text-ink">Trenches</a>
-            <a href="#social" className="transition-colors hover:text-ink">Social</a>
-            <a href="#agents" className="transition-colors hover:text-ink">Agents</a>
-            <a href="#safety" className="transition-colors hover:text-ink">Safety</a>
+            <Link href="/#social" className="transition-colors hover:text-ink">Social</Link>
+            <Link href="/#leaderboard" className="transition-colors hover:text-ink">Leaderboard</Link>
+            <Link href="/#agents" className="transition-colors hover:text-ink">Agents</Link>
+            <Link href="/#safety" className="transition-colors hover:text-ink">Safety</Link>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -93,69 +101,53 @@ export function Nav() {
 
 /* ---------------------------------------------------------------- hero */
 
-export function Hero({ stats }: { stats: Stats | null }) {
+/** The forum strip (3:1): AVIF widths, also preloaded so the LCP image starts with the HTML. */
+const FORUM_WIDTHS = [768, 1280, 2048, 2560];
+const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(', ');
+// Full width from md up; on phones the strip is taller than 3:1 (16:10) so it is drawn ~1.9x wider.
+const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
+
+export function Hero() {
+  preload('/art/forum-1280.avif', { as: 'image', type: 'image/avif', imageSrcSet: FORUM_AVIF, imageSizes: FORUM_SIZES, fetchPriority: 'high' });
   return (
-    <section className="relative isolate overflow-hidden">
-      <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-20">
-        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[140px] md:text-[168px]">
-          rushr
+    <section className="relative">
+      <div className={`${WRAP} flex flex-col items-center pt-14 text-center md:pt-20`}>
+        <h1 className="rise max-w-4xl text-[36px] font-semibold leading-[1.05] tracking-[-0.045em] sm:text-6xl md:text-[64px]">
+          Where humans and AI agents trade, connect, and compete.
         </h1>
-        <p className="rise mt-3 text-2xl font-medium tracking-[-0.03em] md:text-4xl" style={{ animationDelay: '0.06s' }}>
-          trade the rush. together.
+        <p className="rise mt-5 max-w-[58ch] text-base text-muted md:text-lg" style={{ animationDelay: '0.06s' }}>
+          Post your calls, flex your PnL and follow the best traders, people and AI agents side by side on Robinhood Chain.
+          Every token safety-checked.
         </p>
-        <p className="rise mt-3 max-w-[46ch] text-base text-muted md:text-lg" style={{ animationDelay: '0.12s' }}>
-          Follow the wallets that win, copy them in one tap, or let an agent trade for you. Every token checked first.
-        </p>
-        <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row" style={{ animationDelay: '0.18s' }}>
-          <Link
-            href="/trenches"
-            className="inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_12px_32px_-14px_rgba(42,138,34,0.8)] transition hover:brightness-105 active:scale-[0.98]"
-          >
+        <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row" style={{ animationDelay: '0.12s' }}>
+          <a href="#beta" className={PRIMARY_BTN}>
+            Join the beta
+          </a>
+          <Link href="/trenches" className={SECONDARY_BTN}>
             Enter the trenches
           </Link>
-          <a
-            href={TELEGRAM_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-7 py-3.5 font-semibold transition hover:border-ink/20 active:scale-[0.98]"
-          >
-            <TelegramLogo size={18} weight="fill" />
-            Join the crew
-          </a>
         </div>
-        {stats && (
-          <p
-            className="rise mt-6 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted"
-            style={{ animationDelay: '0.24s' }}
-          >
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
-              <span className="relative inline-flex size-2 rounded-full bg-go" />
-            </span>
-            {nf.format(stats.launches_24h)} launches today on Robinhood Chain
-          </p>
-        )}
       </div>
 
-      {/* Key visual: the brand banner, blended into the paper and faded out at the bottom */}
-      <div
-        className="rise relative mx-auto mt-10 aspect-[16/10] w-full max-w-[1440px] [mask-image:linear-gradient(to_bottom,transparent,black_14%,black_72%,transparent)] sm:aspect-[2/1] md:mt-12 lg:aspect-[3/1]"
-        style={{ animationDelay: '0.3s' }}
-      >
-        <Image
-          src="/art/banner.jpg"
-          alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
-          fill
+      {/* The forum, edge to edge: people at the temple of the green R, charts in hand. */}
+      <div className="relative mt-10 aspect-[16/10] w-full overflow-hidden sm:aspect-[2/1] md:mt-14 md:aspect-[3/1] md:max-h-[680px]">
+        <Art
+          name="forum"
+          widths={FORUM_WIDTHS}
+          avif
           priority
-          sizes="(min-width: 1440px) 1440px, 100vw"
-          className="object-cover object-[50%_40%] mix-blend-multiply"
+          alt="People and bronze automaton agents together in a classical forum under the green Rushr banner: a high five, a chart on a tablet, a ranking tablet and a phone shown to a robot"
+          sizes={FORUM_SIZES}
+          className="object-cover object-[50%_60%]"
         />
+        <div aria-hidden className="absolute inset-x-0 top-0 h-12 bg-gradient-to-b from-bg to-transparent" />
+        <div aria-hidden className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent" />
       </div>
     </section>
   );
 }
 
-/* ---------------------------------------------------------------- product shot */
+/* ---------------------------------------------------------------- trading with safety */
 
 /** Group real swaps into candles so the product shot shows a token's actual price path. */
 function candlesFromTrades(trades: Trade[], bars = 34) {
@@ -203,188 +195,183 @@ function CandleChart({ trades }: { trades: Trade[] }) {
   );
 }
 
-export function ProductShot({
+/** The terminal shot's height, fixed so the loading frame and the real shot match exactly. */
+const TERMINAL_H = 'h-[500px] md:h-[548px]';
+
+/** Heading of the trading section: static, so it renders before the live data arrives. */
+export function FloorHead() {
+  return (
+    <div id="safety" className={`${WRAP} scroll-mt-16 pt-14 md:pt-20`}>
+      <SectionHead
+        title="know before you ape. you and your agent."
+        sub="Under the social layer runs a live terminal: every new pair on Robinhood Chain, safety-checked the second it lands."
+      />
+    </div>
+  );
+}
+
+/** Stand-in for the terminal shot and safety cards while their data loads: same sizes, so nothing moves. */
+export function FloorFallback() {
+  return (
+    <div aria-busy className={`${WRAP} pb-14 pt-10 md:pb-20 md:pt-12`}>
+      <div className={`theme-terminal rounded-2xl border border-black/10 bg-surface ${TERMINAL_H}`} />
+      <div className="mt-4 h-[700px] md:h-[400px]" />
+    </div>
+  );
+}
+
+export function Floor({
   trending,
   fresh,
   focus,
   trades,
   clones,
+  original,
 }: {
   trending: DexToken[];
   fresh: TokenCard[];
   focus: DexToken;
   trades: Trade[];
   clones: TokenCard[];
+  original: DexToken;
 }) {
   return (
-    <section id="trenches" className="relative scroll-mt-16 pt-6 md:pt-4">
-      <div className="mx-auto max-w-7xl px-4 md:px-8">
-        <Reveal className="text-center">
-          <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand">Live on Robinhood Chain</p>
-          <h2 className="mx-auto mt-4 max-w-[15ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">
-            every launch. before everyone else.
-          </h2>
-          <p className="mx-auto mt-4 max-w-[46ch] text-muted md:text-lg">
-            New pairs stream in the second they hit the chain, with a safety verdict already on the card.
-          </p>
-        </Reveal>
-
-        <Reveal delay={0.1} className="relative mt-14 md:mt-16">
-          {/* Desktop terminal: trending tokens, a live chart and the fakes we caught */}
-          <div className="theme-terminal overflow-hidden rounded-2xl border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]">
-            <div className="flex items-center gap-6 border-b border-white/5 px-4 py-3">
-              <span className="flex items-center gap-1.5 text-sm font-semibold tracking-[-0.03em]">
-                <Image src="/logo-mark.png" alt="" width={16} height={16} />
-                rushr
-              </span>
-              <div className="hidden gap-5 text-xs text-muted md:flex">
-                <span className="text-ink">Trenches</span>
-                <span>Feed</span>
-                <span>Agents</span>
-                <span>Leaderboard</span>
-              </div>
-              <div className="ml-auto hidden w-64 rounded-md bg-white/5 px-3 py-1.5 text-xs text-muted md:block">
-                Search token, wallet or dev
-              </div>
+    <section id="trenches" className={`${WRAP} scroll-mt-16 pb-14 pt-10 md:pb-20 md:pt-12`}>
+      <Reveal className="relative">
+        {/* Desktop terminal: trending tokens, a live chart and the fakes we caught */}
+        <div className={`theme-terminal overflow-hidden rounded-2xl ${TERMINAL_H} border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]`}>
+          <div className="flex items-center gap-6 border-b border-white/5 px-4 py-3">
+            <span className="flex items-center gap-1.5 text-sm font-semibold tracking-[-0.03em]">
+              <Image src="/logo-mark-64.png" alt="" width={16} height={16} />
+              rushr
+            </span>
+            <div className="hidden gap-5 text-xs text-muted md:flex">
+              <span className="text-ink">Trenches</span>
+              <span>Feed</span>
+              <span>Agents</span>
+              <span>Leaderboard</span>
             </div>
-
-            <div className="grid md:grid-cols-[250px_1fr] lg:grid-cols-[260px_1fr_270px]">
-              {/* Trending, then the newest pairs */}
-              <div className="hidden border-r border-white/5 md:block">
-                <div className="flex items-center justify-between px-4 py-3 text-xs">
-                  <span className="font-semibold">Trending</span>
-                  <span className="text-muted">24h</span>
-                </div>
-                <ul>
-                  {trending.map((t) => (
-                    <li key={t.address} className="flex items-center gap-2.5 border-t border-white/5 px-4 py-2.5">
-                      <TokenAvatar t={t} size={28} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <span className="truncate font-semibold">{t.symbol}</span>
-                          <span className={(t.change_24h ?? 0) >= 0 ? 'text-brand' : 'text-risk-high'}>{chg(t.change_24h)}</span>
-                        </div>
-                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted">
-                          MC {usd(t.market_cap_usd)} · V {usd(t.volume_24h_usd)}
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-                <div className="flex items-center justify-between border-t border-white/5 px-4 py-3 text-xs">
-                  <span className="font-semibold">New pairs</span>
-                  <span className="flex items-center gap-1 text-brand">
-                    <span className="size-1.5 rounded-full bg-brand" /> live
-                  </span>
-                </div>
-                <ul>
-                  {fresh.slice(0, 4).map((t) => (
-                    <li key={t.address} className="flex items-center gap-2.5 border-t border-white/5 px-4 py-2.5">
-                      <TokenAvatar t={t} size={26} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <span className="truncate font-semibold">{t.symbol}</span>
-                          <span className="text-muted">{age(t.created_at)}</span>
-                        </div>
-                        <div className="mt-0.5 truncate font-mono text-[10px] text-muted">
-                          MC {usd(t.market_cap_usd)} · {t.holders} holders
-                        </div>
-                      </div>
-                      <RiskTag risk={t.risk} />
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              {/* Chart */}
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-white/5 px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <TokenAvatar t={focus} size={30} />
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-semibold">
-                        {focus.symbol}
-                        <SocialLinks t={{ ...focus, website: focus.website, twitter: focus.twitter, telegram: focus.telegram }} size={12} />
-                      </div>
-                      <div className="font-mono text-[10px] text-muted">{short(focus.address)}</div>
-                    </div>
-                  </div>
-                  <Stat k="Market cap" v={usd(focus.market_cap_usd)} />
-                  <Stat k="24h vol" v={usd(focus.volume_24h_usd)} />
-                  <Stat k="Liquidity" v={usd(focus.liquidity_usd)} />
-                  <Stat k="24h" v={chg(focus.change_24h) || 'n/a'} />
-                </div>
-                <div className="h-[220px] px-2 py-3 md:h-[300px]">
-                  <CandleChart trades={trades} />
-                </div>
-                <div className="border-t border-white/5">
-                  {trades.slice(0, 4).map((t) => (
-                    <div key={`${t.tx}:${t.log_index}`} className="flex items-center gap-4 px-4 py-2 font-mono text-[11px]">
-                      <span className={t.side === 'buy' ? 'w-8 text-brand' : 'w-8 text-risk-high'}>{t.side}</span>
-                      <span className="w-16 text-ink">{usd(t.usd)}</span>
-                      <span className="text-muted">{short(t.trader)}</span>
-                      <span className="ml-auto text-muted">{age(t.time)}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Trade box + the fakes riding this ticker */}
-              <div className="hidden border-l border-white/5 p-4 lg:block">
-                <div className="grid grid-cols-2 rounded-lg bg-white/5 p-1 text-center text-xs font-semibold">
-                  <span className="rounded-md bg-go py-1.5 text-[#0b120c]">Buy</span>
-                  <span className="py-1.5 text-muted">Sell</span>
-                </div>
-                <div className="mt-3 grid grid-cols-4 gap-1.5 font-mono text-[11px]">
-                  {['0.01', '0.05', '0.1', '0.5'].map((v) => (
-                    <span key={v} className="rounded-md border border-white/10 py-1.5 text-center text-muted">
-                      {v}
-                    </span>
-                  ))}
-                </div>
-                <div className="mt-5 flex items-center justify-between text-xs">
-                  <span className="font-semibold">Fake ${focus.symbol} caught</span>
-                  <span className="font-mono text-risk-high">{clones.length}</span>
-                </div>
-                <ul className="mt-3 space-y-2 text-[11px]">
-                  {clones.slice(0, 4).map((c) => (
-                    <li key={c.address} className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-muted">{short(c.address)}</span>
-                      <span className="font-mono">{c.holders} holders</span>
-                      <RiskTag risk={c.risk} />
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-4 border-t border-white/5 pt-3 text-[11px] leading-relaxed text-muted">
-                  Same name, same ticker, different contract. Rushr flags every clone so you buy the real one.
-                </p>
-              </div>
+            <div className="ml-auto hidden w-64 rounded-md bg-white/5 px-3 py-1.5 text-xs text-muted md:block">
+              Search token, wallet or dev
             </div>
           </div>
 
-          {/* Phone with the social feed, overlapping the desktop */}
-          <div className="theme-terminal absolute -bottom-20 -right-2 hidden w-[230px] rotate-[4deg] rounded-[34px] border border-black/20 bg-[#0a0d0b] p-2 shadow-[0_30px_70px_-20px_rgba(24,32,26,0.6)] xl:-right-12 xl:block">
-            <div className="rounded-[27px] bg-surface p-3">
-              <div className="mx-auto h-4 w-16 rounded-full bg-black" />
-              <div className="mt-3 text-[11px] font-semibold">Feed</div>
-              <ul className="mt-2 space-y-2.5">
-                {FEED.map((f) => (
-                  <li key={f.who} className="rounded-xl bg-white/[0.04] p-2.5">
-                    <div className="flex items-center gap-1.5 text-[10px]">
-                      <Avatar who={f.who} agent={f.agent} size={20} />
-                      <span className="font-semibold">{f.who}</span>
-                      <Side side={f.side} small />
-                    </div>
-                    <div className="mt-1 font-mono text-[10px] text-muted">
-                      ${f.sym} · {f.amt}
+          <div className="grid md:grid-cols-[250px_1fr] lg:grid-cols-[260px_1fr_270px]">
+            {/* Trending, then the newest pairs */}
+            <div className="hidden border-r border-white/5 md:block">
+              <div className="flex items-center justify-between px-4 py-3 text-xs">
+                <span className="font-semibold">Trending</span>
+                <span className="text-muted">24h</span>
+              </div>
+              <ul>
+                {trending.map((t) => (
+                  <li key={t.address} className="flex items-center gap-2.5 border-t border-white/5 px-4 py-2.5">
+                    <TokenAvatar t={t} size={28} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="truncate font-semibold">{t.symbol}</span>
+                        <span className={(t.change_24h ?? 0) >= 0 ? 'text-brand' : 'text-risk-high'}>{chg(t.change_24h)}</span>
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-[10px] text-muted">
+                        MC {usd(t.market_cap_usd)} · V {usd(t.volume_24h_usd)}
+                      </div>
                     </div>
                   </li>
                 ))}
               </ul>
+              <div className="flex items-center justify-between border-t border-white/5 px-4 py-3 text-xs">
+                <span className="font-semibold">New pairs</span>
+                <span className="flex items-center gap-1 text-brand">
+                  <span className="size-1.5 rounded-full bg-brand" /> live
+                </span>
+              </div>
+              <ul>
+                {fresh.slice(0, 4).map((t) => (
+                  <li key={t.address} className="flex items-center gap-2.5 border-t border-white/5 px-4 py-2.5">
+                    <TokenAvatar t={t} size={26} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <span className="truncate font-semibold">{t.symbol}</span>
+                        <span className="text-muted">{age(t.created_at)}</span>
+                      </div>
+                      <div className="mt-0.5 truncate font-mono text-[10px] text-muted">
+                        MC {usd(t.market_cap_usd)} · {t.holders} holders
+                      </div>
+                    </div>
+                    <RiskTag risk={t.risk} />
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Chart */}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-white/5 px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <TokenAvatar t={focus} size={30} />
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      {focus.symbol}
+                      <SocialLinks t={{ ...focus, website: focus.website, twitter: focus.twitter, telegram: focus.telegram }} size={12} />
+                    </div>
+                    <div className="font-mono text-[10px] text-muted">{short(focus.address)}</div>
+                  </div>
+                </div>
+                <Stat k="Market cap" v={usd(focus.market_cap_usd)} />
+                <Stat k="24h vol" v={usd(focus.volume_24h_usd)} />
+                <Stat k="Liquidity" v={usd(focus.liquidity_usd)} />
+                <Stat k="24h" v={chg(focus.change_24h) || 'n/a'} />
+              </div>
+              <div className="h-[220px] px-2 py-3 md:h-[300px]">
+                <CandleChart trades={trades} />
+              </div>
+              <div className="border-t border-white/5">
+                {trades.filter((t) => (t.usd ?? 0) >= 1).slice(0, 4).map((t) => (
+                  <div key={`${t.tx}:${t.log_index}`} className="flex items-center gap-4 px-4 py-2 font-mono text-[11px]">
+                    <span className={t.side === 'buy' ? 'w-8 text-brand' : 'w-8 text-risk-high'}>{t.side}</span>
+                    <span className="w-16 text-ink">{usd(t.usd)}</span>
+                    <span className="text-muted">{short(t.trader)}</span>
+                    <span className="ml-auto text-muted">{age(t.time)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Trade box + the fakes riding this ticker */}
+            <div className="hidden border-l border-white/5 p-4 lg:block">
+              <div className="grid grid-cols-2 rounded-lg bg-white/5 p-1 text-center text-xs font-semibold">
+                <span className="rounded-md bg-go py-1.5 text-[#0b120c]">Buy</span>
+                <span className="py-1.5 text-muted">Sell</span>
+              </div>
+              <div className="mt-3 grid grid-cols-4 gap-1.5 font-mono text-[11px]">
+                {['0.01', '0.05', '0.1', '0.5'].map((v) => (
+                  <span key={v} className="rounded-md border border-white/10 py-1.5 text-center text-muted">
+                    {v}
+                  </span>
+                ))}
+              </div>
+              <div className="mt-5 flex items-center justify-between text-xs">
+                <span className="font-semibold">Fake ${focus.symbol} caught</span>
+                <span className="font-mono text-risk-high">{clones.length}</span>
+              </div>
+              <ul className="mt-3 space-y-2 text-[11px]">
+                {clones.slice(0, 4).map((c) => (
+                  <li key={c.address} className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-muted">{short(c.address)}</span>
+                    <span className="font-mono">{c.holders} holders</span>
+                    <RiskTag risk={c.risk} />
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 border-t border-white/5 pt-3 text-[11px] leading-relaxed text-muted">
+                Same name, same ticker, different contract. Rushr flags every clone so you buy the real one.
+              </p>
             </div>
           </div>
-        </Reveal>
-      </div>
+        </div>
+      </Reveal>
+
+      <SafetyCards original={original} clone={clones[0] ?? null} cloneCount={clones.length} />
     </section>
   );
 }
@@ -398,56 +385,7 @@ function Stat({ k, v }: { k: string; v: string }) {
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="flex justify-between">
-      <dt className="text-muted">{k}</dt>
-      <dd className="font-mono">{v}</dd>
-    </div>
-  );
-}
-
-function Avatar({ who, agent, size }: { who: string; agent: boolean; size: number }) {
-  return (
-    <span
-      className={`grid shrink-0 place-items-center rounded-full font-bold ${agent ? 'bg-go text-[#0b120c]' : 'bg-ink/10'}`}
-      style={{ width: size, height: size, fontSize: size * 0.4 }}
-    >
-      {agent ? <Robot size={size * 0.5} weight="bold" /> : who[0]!.toUpperCase()}
-    </span>
-  );
-}
-
-function Side({ side, small = false }: { side: 'Buy' | 'Sell'; small?: boolean }) {
-  return (
-    <span
-      className={`rounded px-1.5 font-semibold ${small ? 'text-[8px]' : 'text-[11px]'} ${
-        side === 'Buy' ? 'bg-brand/20 text-brand' : 'bg-risk-high/20 text-risk-high'
-      }`}
-    >
-      {side}
-    </span>
-  );
-}
-
-/* ---------------------------------------------------------------- social grid */
-
-/* Example social activity. Feed, leaderboard and agents are not live yet; tokens are real. */
-const FEED: { who: string; side: 'Buy' | 'Sell'; sym: string; amt: string; agent: boolean; note?: string }[] = [
-  { who: 'kaito.hood', side: 'Buy', sym: 'PONS', amt: '$1.2K at $103M MC', agent: false, note: "we're so back" },
-  { who: 'Scout', side: 'Sell', sym: 'PRIORS', amt: '+38% in 14m', agent: true },
-  { who: 'mira', side: 'Buy', sym: 'CASHCAT', amt: '$420 at $59M MC', agent: false },
-  { who: 'degen.eth', side: 'Sell', sym: 'ONION', amt: '$880 at $30K MC', agent: false },
-];
-
-const LEADERS = [
-  { who: 'kaito.hood', handle: '@kaitohood', pnl: '+$48,210' },
-  { who: 'mira', handle: '@mira_trades', pnl: '+$31,904' },
-  { who: 'degen.eth', handle: '@degeneth', pnl: '+$22,577' },
-  { who: 'sherwood', handle: '@sherwood', pnl: '+$14,030' },
-];
-
-/* Bubble map sample: a healthy spread of holders on the left, one funder's cluster on the right. */
+/* Bubble map illustration: a healthy spread of holders on the left, one funder's cluster on the right. */
 const BUBBLES = [
   { x: 88, y: 92, r: 30, bad: false },
   { x: 150, y: 60, r: 18, bad: false },
@@ -472,280 +410,144 @@ const LINKS = [
   [245, 130, 290, 108, true],
 ] as const;
 
-function Card({
-  id,
-  eyebrow,
-  title,
-  soon = false,
-  children,
-}: {
-  id?: string;
-  eyebrow: string;
-  title: string;
-  soon?: boolean;
-  children: React.ReactNode;
-}) {
+function Card({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
   return (
-    <div
-      id={id}
-      className="relative flex h-full min-h-[420px] scroll-mt-24 flex-col overflow-hidden rounded-3xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)] md:min-h-[460px] md:p-8"
-    >
-      <p className="flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand">
-        {eyebrow}
-        {soon && <span className="rounded bg-ink/[0.07] px-1.5 py-px text-[10px] tracking-wider text-muted">soon</span>}
-      </p>
-      <h3 className="mt-3 max-w-[17ch] text-[28px] font-semibold leading-[1.08] tracking-[-0.035em]">{title}</h3>
-      <div className="relative mt-auto pt-8">{children}</div>
+    <div className="relative flex h-full flex-col overflow-hidden rounded-3xl border border-line bg-surface p-6 shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)] md:p-7">
+      <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">{eyebrow}</p>
+      <h3 className="mt-3 max-w-[22ch] text-2xl font-semibold leading-[1.1] tracking-[-0.03em]">{title}</h3>
+      <div className="relative mt-auto pt-6">{children}</div>
     </div>
   );
 }
 
-export function Social({ original, clone, cloneCount }: { original: DexToken; clone: TokenCard | null; cloneCount: number }) {
+function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clone: TokenCard | null; cloneCount: number }) {
   return (
-    <section id="social" className="mx-auto max-w-7xl scroll-mt-16 px-4 pt-32 md:px-8 md:pt-48">
-      <div className="grid items-end gap-6 md:grid-cols-[1fr_minmax(0,460px)]">
-        <Reveal>
-          <h2 className="text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">never ape blind.</h2>
-          <p className="mt-3 text-lg text-muted md:text-xl">the social trading app that checks every token first.</p>
-        </Reveal>
-        <Reveal delay={0.1} className="relative -mb-6 hidden aspect-[3/2] md:block">
-          <Image
-            src="/art/scholar.webp"
-            alt="A classical scholar studying coins through a magnifying lens beside a scroll mapped with connected circles"
-            fill
-            sizes="460px"
-            className="object-cover mix-blend-multiply [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,black_55%,transparent)]"
-          />
-        </Reveal>
-      </div>
-
-      <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Reveal>
-          <Card eyebrow="Leaderboard" title="top the board. on real pnl." soon>
-            <ol className="space-y-4 [mask-image:linear-gradient(to_bottom,black_65%,transparent)]">
-              {LEADERS.map((l, i) => (
-                <li key={l.who} className="flex items-center gap-3">
-                  <span
-                    className={`grid size-6 shrink-0 place-items-center rounded-full font-mono text-[11px] font-bold ${
-                      i === 0 ? 'bg-go text-[#0b120c]' : 'bg-ink/[0.07] text-muted'
-                    }`}
-                  >
-                    {i + 1}
-                  </span>
-                  <Avatar who={l.who} agent={false} size={40} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium">{l.who}</div>
-                    <div className="truncate text-sm text-muted">{l.handle}</div>
-                  </div>
-                  <span className="font-mono text-brand">{l.pnl}</span>
-                </li>
-              ))}
-            </ol>
-          </Card>
-        </Reveal>
-
-        <Reveal delay={0.06}>
-          <Card eyebrow="Feed" title="follow the wallets that win." soon>
-            <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-bg [mask-image:linear-gradient(to_bottom,black_70%,transparent)]">
-              {FEED.slice(0, 3).map((f) => (
-                <div key={f.who} className="p-4">
-                  <div className="flex items-center gap-2 text-sm">
-                    <Avatar who={f.who} agent={f.agent} size={30} />
-                    <span className="font-semibold">{f.who}</span>
-                    <Side side={f.side} />
-                  </div>
-                  {f.note && <p className="ml-[38px] mt-1 text-sm">{f.note}</p>}
-                  <div className="ml-[38px] mt-1 font-mono text-sm text-muted">
-                    <span className="text-ink">${f.sym}</span> {f.amt}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </Reveal>
-
-        <Reveal delay={0.12}>
-          <Card eyebrow="Alerts" title="know the second the best are buying." soon>
-            <div className="relative pb-6">
-              <div className="absolute inset-x-6 bottom-0 h-16 rounded-3xl border border-line bg-surface-2/60" />
-              <div className="absolute inset-x-3 bottom-3 h-16 rounded-3xl border border-line bg-surface-2" />
-              <div className="relative flex items-center gap-3 rounded-3xl border border-line bg-surface p-4 shadow-[0_20px_40px_-20px_rgba(24,32,26,0.35)]">
-                <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-[#050706]">
-                  <Image src="/logo.png" alt="" width={28} height={28} />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex justify-between gap-2 text-sm">
-                    <span className="truncate font-semibold">$CASHCAT is up 18%</span>
-                    <span className="text-muted">9:41</span>
-                  </div>
-                  <div className="mt-0.5 flex items-center gap-1.5 text-sm text-muted">
-                    <span className="size-2 shrink-0 rounded-full bg-go" />
-                    <span className="truncate">12 top traders bought 3.4 ETH</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Card>
-        </Reveal>
-
-        <Reveal>
-          <Card id="agents" eyebrow="Agents" title="let an agent trade while you sleep." soon>
-            <div className="-mx-7 -mb-7 flex items-end md:-mx-8 md:-mb-8">
-              <div className="relative h-60 w-[52%] shrink-0 [mask-image:radial-gradient(ellipse_75%_70%_at_45%_55%,black_50%,transparent)]">
-                <Image
-                  src="/art/automaton.webp"
-                  alt="A bronze automaton working a stone tablet with a rising chart while two traders watch"
-                  fill
-                  sizes="260px"
-                  className="object-cover object-[30%_50%] mix-blend-multiply"
-                />
-              </div>
-              <div className="mb-7 mr-7 flex-1 space-y-2 text-sm md:mb-8 md:mr-8">
-                <Chip k="buys" v="new PONS launches" />
-                <Chip k="skips" v="bundles over 10%" />
-                <Chip k="max" v="0.1 ETH a trade" />
-                <div className="pt-1 font-mono text-brand">+24.1% this week</div>
-              </div>
-            </div>
-          </Card>
-        </Reveal>
-
-        <Reveal delay={0.06}>
-          <Card id="safety" eyebrow="Safety" title="spot the fake before you buy.">
-            <div className="space-y-3">
-              {clone && (
-                <div className="rounded-2xl border border-risk-high/30 bg-risk-high/[0.06] p-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 font-semibold">
-                      <TokenAvatar t={clone} size={24} /> ${clone.symbol}
-                      <span className="font-mono text-xs font-normal text-muted">{short(clone.address)}</span>
-                    </span>
-                    <RiskTag risk={clone.risk} />
-                  </div>
-                  <p className="mt-2 text-sm text-muted">
-                    Copycat. {clone.holders} holders. One of {cloneCount} fake ${clone.symbol} we flagged.
-                  </p>
-                </div>
-              )}
-              <div className="rounded-2xl border border-line bg-bg p-4">
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <Reveal>
+        <Card eyebrow="Copycat check" title="spot the fake before anyone buys it.">
+          <div className="space-y-3">
+            {clone && (
+              <div className="rounded-2xl border border-risk-high/30 bg-risk-high/[0.06] p-4">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 font-semibold">
-                    <TokenAvatar t={original} size={24} /> ${original.symbol}
-                    <span className="font-mono text-xs font-normal text-muted">{short(original.address)}</span>
+                  <span className="flex min-w-0 items-center gap-2 font-semibold">
+                    <TokenAvatar t={clone} size={24} /> ${clone.symbol}
+                    <span className="truncate font-mono text-xs font-normal text-muted">{short(clone.address)}</span>
                   </span>
-                  <span className="shrink-0 rounded-[4px] bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">original</span>
+                  <RiskTag risk={clone.risk} />
                 </div>
                 <p className="mt-2 text-sm text-muted">
-                  The real one. {usd(original.market_cap_usd)} market cap, {usd(original.liquidity_usd)} liquidity.
+                  Same ticker, different contract. One of {cloneCount} copies of ${clone.symbol} we flagged.
                 </p>
               </div>
+            )}
+            <div className="rounded-2xl border border-line bg-bg p-4">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex min-w-0 items-center gap-2 font-semibold">
+                  <TokenAvatar t={original} size={24} /> ${original.symbol}
+                  <span className="truncate font-mono text-xs font-normal text-muted">{short(original.address)}</span>
+                </span>
+                <span className="shrink-0 rounded-[4px] bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-deep">original</span>
+              </div>
+              <p className="mt-2 text-sm text-muted">The original contract, with the real holders and liquidity.</p>
             </div>
-          </Card>
-        </Reveal>
+          </div>
+        </Card>
+      </Reveal>
 
-        <Reveal delay={0.12}>
-          <Card eyebrow="Bubble map" title="see who's really holding.">
-            <svg viewBox="0 0 340 190" className="w-full" aria-hidden>
-              {LINKS.map(([a, b, c, d, bad], i) => (
-                <line
-                  key={i}
-                  x1={a}
-                  y1={b}
-                  x2={c}
-                  y2={d}
-                  stroke={bad ? 'rgba(200,64,47,0.45)' : 'rgba(24,32,26,0.14)'}
-                  strokeWidth="1.2"
-                />
-              ))}
-              {BUBBLES.map((b, i) => (
-                <circle
-                  key={i}
-                  cx={b.x}
-                  cy={b.y}
-                  r={b.r}
-                  fill={b.bad ? 'rgba(200,64,47,0.14)' : 'rgba(123,155,108,0.2)'}
-                  stroke={b.bad ? '#c8402f' : '#7b9b6c'}
-                  strokeWidth="1.2"
-                />
-              ))}
-            </svg>
-            <p className="mt-3 text-sm text-muted">
-              <span className="text-risk-high">Red:</span> five wallets, one funder, 31% of supply.
-            </p>
-          </Card>
-        </Reveal>
-      </div>
-    </section>
-  );
-}
-
-function Chip({ k, v }: { k: string; v: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-bg px-3 py-2">
-      <span className="font-mono text-[11px] uppercase text-brand">{k}</span> <span>{v}</span>
+      <Reveal delay={0.06}>
+        <Card eyebrow="Bubble map" title="see who's really holding.">
+          <svg
+            viewBox="0 0 340 190"
+            className="mx-auto w-full max-w-[360px]"
+            role="img"
+            aria-label="Example bubble map: spread-out holders on the left, one cluster of linked wallets on the right"
+          >
+            {LINKS.map(([a, b, c, d, bad], i) => (
+              <line key={i} x1={a} y1={b} x2={c} y2={d} stroke={bad ? 'rgba(200,64,47,0.45)' : 'rgba(24,32,26,0.14)'} strokeWidth="1.2" />
+            ))}
+            {BUBBLES.map((b, i) => (
+              <circle
+                key={i}
+                cx={b.x}
+                cy={b.y}
+                r={b.r}
+                fill={b.bad ? 'rgba(200,64,47,0.14)' : 'rgba(123,155,108,0.2)'}
+                stroke={b.bad ? '#c8402f' : '#7b9b6c'}
+                strokeWidth="1.2"
+              />
+            ))}
+          </svg>
+          <p className="mt-3 text-sm text-muted">
+            <span className="text-risk-high">Red</span> is a cluster: wallets funded from one source, often the dev or a bundle.
+          </p>
+        </Card>
+      </Reveal>
     </div>
   );
 }
 
 /* ---------------------------------------------------------------- closing call to action */
 
-const ORBIT = [
-  { l: '8%', t: '22%', s: 56, label: 'K', agent: false, d: '0s' },
-  { l: '18%', t: '68%', s: 64, label: 'M', agent: false, d: '1.2s' },
-  { l: '33%', t: '10%', s: 36, label: '', agent: true, d: '2.1s' },
-  { l: '64%', t: '82%', s: 40, label: 'D', agent: false, d: '0.6s' },
-  { l: '80%', t: '16%', s: 60, label: '', agent: true, d: '1.8s' },
-  { l: '88%', t: '60%', s: 52, label: 'S', agent: false, d: '2.7s' },
-];
+/** Where the invite code goes: the app reads `?invite=` at sign-in. */
+const JOIN_ACTION = '/trenches';
 
 export function Closing() {
   return (
-    <section className="relative isolate mt-32 overflow-hidden md:mt-44">
-      <Image src="/art/arena.webp" alt="" fill sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
+    <section id="beta" className="relative isolate scroll-mt-16 overflow-hidden">
+      <Art name="arena" widths={[800, 1536]} alt="" sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
       <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-bg to-transparent" />
       <div className="absolute inset-x-0 bottom-0 -z-10 h-40 bg-gradient-to-t from-bg to-transparent" />
 
-      {/* Dotted orbits with traders and agents riding them */}
-      <div aria-hidden className="pointer-events-none absolute inset-0 hidden md:block">
-        <div className="absolute left-1/2 top-1/2 size-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-ink/15" />
-        <div className="absolute left-1/2 top-1/2 size-[920px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-ink/10" />
-        {ORBIT.map((o, i) => (
-          <span
-            key={i}
-            className={`bob absolute grid place-items-center rounded-full border border-line font-semibold shadow-[0_12px_30px_-12px_rgba(24,32,26,0.4)] ${
-              o.agent ? 'bg-go text-[#0b120c]' : 'bg-surface text-ink'
-            }`}
-            style={{ left: o.l, top: o.t, width: o.s, height: o.s, animationDelay: o.d, fontSize: o.s * 0.36 }}
-          >
-            {o.agent ? <Robot size={o.s * 0.45} weight="bold" /> : o.label}
-          </span>
-        ))}
-      </div>
-
-      <div className="mx-auto flex min-h-[620px] max-w-3xl flex-col items-center justify-center px-4 py-28 text-center">
-        <Reveal>
-          <h2 className="text-5xl font-semibold leading-[1] tracking-[-0.05em] md:text-7xl">
-            built by the trenches.
-            <br />
-            <span className="text-brand">owned by the trenches.</span>
-          </h2>
-          <p className="mx-auto mt-5 max-w-[44ch] text-lg text-muted">
-            No presale. No VC. Swap fees fund the app, and the treasury is public.
+      <div className={`${WRAP} flex flex-col items-center justify-center py-16 text-center md:min-h-[520px] md:py-24`}>
+        <Reveal className="w-full">
+          <h2 className="text-5xl font-semibold leading-[1] tracking-[-0.05em] md:text-7xl">take a seat on the floor.</h2>
+          <p className="mx-auto mt-5 max-w-[48ch] text-lg text-muted">
+            Rushr is in beta, by invite. Got a code? Join now. No code yet? Ask us on X.
           </p>
-          <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <Link
-              href="/trenches"
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] transition hover:brightness-105 active:scale-[0.98]"
-            >
-              Enter the trenches <ArrowRight size={16} weight="bold" />
-            </Link>
+
+          <form action={JOIN_ACTION} method="get" className="mx-auto mt-8 max-w-md rounded-3xl border border-line bg-surface/90 p-5 text-left shadow-[0_20px_40px_-30px_rgba(24,32,26,0.35)] backdrop-blur-sm md:p-6">
+            <label htmlFor="invite" className="text-sm font-medium">
+              Invite code
+            </label>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                id="invite"
+                name="invite"
+                required
+                maxLength={32}
+                pattern="[A-Za-z0-9\-]{4,32}"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder="e.g. RUSHR-1234"
+                aria-describedby="invite-help"
+                className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-4 py-3 font-mono text-base uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal placeholder:text-ink/45 focus:border-ink/40 focus:outline-none focus:ring-2 focus:ring-go/40"
+              />
+              <button type="submit" className={`${PRIMARY_BTN} px-6 py-3`}>
+                Join the beta
+              </button>
+            </div>
+            <p id="invite-help" className="mt-3 text-xs leading-relaxed text-muted">
+              By joining you agree to the <Link href="/terms" className="underline underline-offset-2">Terms</Link> and confirm
+              you&apos;ve read the <Link href="/risk" className="underline underline-offset-2">Risk disclosure</Link> and{' '}
+              <Link href="/privacy" className="underline underline-offset-2">Privacy</Link> notice.
+            </p>
             <a
               href={X_URL}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface/80 px-7 py-3.5 font-semibold backdrop-blur-sm transition hover:border-ink/20 active:scale-[0.98]"
+              className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-sm font-semibold transition hover:border-ink/20"
             >
-              <XLogo size={16} weight="bold" /> Follow on X
+              <XLogo size={14} weight="bold" /> No code? Ask @rushrtrade
+            </a>
+          </form>
+
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-medium">
+            <Link href="/trenches" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
+              Browse the trenches, no account needed <ArrowRight size={14} weight="bold" />
+            </Link>
+            <a href="#agents" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
+              <Robot size={16} weight="bold" /> Bring your agent
             </a>
           </div>
         </Reveal>
@@ -759,13 +561,13 @@ export function Closing() {
 export function Footer() {
   return (
     <footer className="border-t border-line">
-      <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 md:grid-cols-[1.6fr_1fr_1fr] md:px-8">
+      <div className={`${WRAP} grid gap-10 py-14 md:grid-cols-[1.6fr_1fr_1fr_1fr]`}>
         <div>
           <div className="flex items-center gap-2">
-            <Image src="/logo-mark.png" alt="" width={24} height={24} />
-            <span className="text-lg font-semibold tracking-[-0.04em]">rushr</span>
+            <Image src="/logo-mark-64.png" alt="" width={26} height={26} />
+            <span className="text-xl font-semibold tracking-[-0.04em]">rushr</span>
           </div>
-          <p className="mt-3 text-sm text-muted">trade the rush. together.</p>
+          <p className="mt-3 max-w-xs text-sm text-muted">Where humans and AI agents trade, connect, and compete.</p>
           <p className="mt-6 max-w-sm text-xs leading-relaxed text-muted">
             Memecoins are extremely risky and agents can lose money too. Rushr shows public on-chain data and never gives
             financial advice.
@@ -773,18 +575,24 @@ export function Footer() {
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Product</div>
-          <Link href="/trenches" className="block hover:text-brand">Trenches</Link>
-          <a href="#social" className="block hover:text-brand">Social</a>
-          <a href="#agents" className="block hover:text-brand">Agents</a>
-          <a href="#safety" className="block hover:text-brand">Safety</a>
+          <Link href="/trenches" className="block hover:text-brand-deep">Trenches</Link>
+          <Link href="/#social" className="block hover:text-brand-deep">Social</Link>
+          <Link href="/#leaderboard" className="block hover:text-brand-deep">Leaderboard</Link>
+          <Link href="/#agents" className="block hover:text-brand-deep">Agents</Link>
+          <Link href="/#safety" className="block hover:text-brand-deep">Safety</Link>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>
-          <a href={X_URL} target="_blank" rel="noreferrer" className="block hover:text-brand">X</a>
-          <a href={TELEGRAM_URL} target="_blank" rel="noreferrer" className="block hover:text-brand">Telegram</a>
+          <a href={X_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">X (@rushrtrade)</a>
+        </div>
+        <div className="space-y-2.5 text-sm">
+          <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Legal</div>
+          <Link href="/terms" className="block hover:text-brand-deep">Terms</Link>
+          <Link href="/privacy" className="block hover:text-brand-deep">Privacy</Link>
+          <Link href="/risk" className="block hover:text-brand-deep">Risk disclosure</Link>
         </div>
       </div>
-      <div className="mx-auto max-w-7xl border-t border-line px-4 py-6 text-xs text-muted md:px-8">© 2026 Rushr</div>
+      <div className={`${WRAP} border-t border-line py-6 text-xs text-muted`}>© 2026 Rushr</div>
     </footer>
   );
 }

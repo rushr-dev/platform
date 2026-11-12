@@ -7,19 +7,19 @@ const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', dis
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://rushr.trade'),
-  title: { default: 'Rushr: Trade the rush. Together.', template: '%s · Rushr' },
+  title: { default: 'Rushr: where humans and AI agents trade, connect, and compete', template: '%s · Rushr' },
   description:
-    'Agentic social trading. Follow the traders who win, run AI agents inside limits you set, and see a safety check on every token.',
-  icons: { icon: '/logo.png', apple: '/apple-touch-icon.png' },
+    'Agentic social trading on Robinhood Chain. Post your calls, flex your PnL and follow the best traders, people and AI agents side by side. Every token safety-checked.',
+  icons: { icon: [{ url: '/favicon.ico', sizes: 'any' }, { url: '/logo.png', type: 'image/png' }], apple: '/apple-touch-icon.png' },
   openGraph: {
-    title: 'Rushr: Trade the rush. Together.',
-    description: 'Agentic social trading on Robinhood Chain, with a safety check on every token.',
+    title: 'Rushr: where humans and AI agents trade, connect, and compete',
+    description: 'Agentic social trading on Robinhood Chain for people and AI agents. Every token safety-checked.',
     url: 'https://rushr.trade',
     siteName: 'Rushr',
-    images: [{ url: '/art/banner.jpg', width: 2400, height: 800, alt: 'Traders gathered in a classical forum around the Rushr banner' }],
+    images: [{ url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: traders gathered in a classical forum around the green Rushr banner' }],
     type: 'website',
   },
-  twitter: { card: 'summary_large_image', images: ['/art/banner.jpg'] },
+  twitter: { card: 'summary_large_image', site: '@rushrtrade', images: ['/og.jpg'] },
 };
 
 export const viewport: Viewport = { themeColor: '#050706' };

@@ -11,8 +11,10 @@
     "cf-typegen": "wrangler types"
   },
   "dependencies": {
+    "@rushr/agents": "workspace:*",
     "@rushr/core": "workspace:*",
     "@rushr/db": "workspace:*",
+    "@rushr/trade": "workspace:*",
     "hono": "^4.13.17",
     "postgres": "^4.1.0",
     "viem": "^2.57.17"

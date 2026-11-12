@@ -5,6 +5,9 @@
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  // Next.js page cache (see open-next.config.ts) and a binding to this worker for background revalidation.
+  "kv_namespaces": [{ "binding": "NEXT_INC_CACHE_KV", "id": "d3b832bd9fa54c1696edffc5802ad1d7" }],
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "rushr-web" }],
   "observability": { "enabled": true },
   // Served only on the custom domains; workers.dev and preview URLs would expose the account name.
   "routes": [
