@@ -21,6 +21,7 @@ import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
 import type { Delta } from '@/lib/feed/protocol';
 import { useNow } from '@/lib/now';
+import { updateSettings, useSettings } from '@/lib/settings';
 import { RiskTag, SocialLinks, TokenAvatar } from './bits';
 
 /* ------------------------------------------------------------------ column rules (mirror the API) */
@@ -107,7 +108,6 @@ function loadFilters(): Record<Column, Filters> {
   }
 }
 
-const QUICK_KEY = 'rushr.quickbuy';
 
 /* ------------------------------------------------------------------ main */
 
@@ -135,25 +135,11 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   const [mobileCol, setMobileCol] = useState<Column>('new');
   const [showSpam, setShowSpam] = useState(false);
   const [showPlain, setShowPlain] = useState(false);
-  const [quick, setQuick] = useState('0.1');
+  // One-tap buy amount: shared with the settings page.
+  const quick = useSettings().quickBuy;
 
-  useEffect(() => {
-    setFilters(loadFilters());
-    try {
-      const q = localStorage.getItem(QUICK_KEY);
-      if (q) setQuick(q);
-    } catch {
-      // storage unavailable
-    }
-  }, []);
-  const changeQuick = useCallback((v: string) => {
-    setQuick(v);
-    try {
-      localStorage.setItem(QUICK_KEY, v);
-    } catch {
-      // storage unavailable
-    }
-  }, []);
+  useEffect(() => setFilters(loadFilters()), []);
+  const changeQuick = useCallback((v: string) => updateSettings({ quickBuy: v }), []);
   useEffect(() => {
     // Only the max-age filter needs this; row ages tick on their own clock.
     const id = setInterval(() => setNow(Date.now()), 5000);
@@ -282,6 +268,9 @@ function Toolbar({
   quick: string;
   onQuick: (v: string) => void;
 }) {
+  // Local text so partial input ("0.") can be typed; valid amounts are saved as they're entered.
+  const [quickText, setQuickText] = useState(quick);
+  useEffect(() => setQuickText(quick), [quick]);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
       <h1 className="text-lg font-semibold tracking-[-0.03em]">Trenches</h1>
@@ -307,8 +296,13 @@ function Toolbar({
         <Lightning size={14} weight="fill" className="text-brand" />
         <span className="hidden text-muted sm:inline">Quick buy</span>
         <input
-          value={quick}
-          onChange={(e) => onQuick(e.target.value.replace(/[^0-9.]/g, '').slice(0, 8))}
+          value={quickText}
+          onChange={(e) => {
+            const v = e.target.value.replace(/[^0-9.]/g, '').slice(0, 8);
+            setQuickText(v);
+            if (/^\d*\.?\d+$/.test(v) && Number(v) > 0) onQuick(v);
+          }}
+          onBlur={() => setQuickText(quick)}
           className="w-12 bg-transparent text-right font-mono text-sm text-ink outline-none"
           inputMode="decimal"
           aria-label="Quick buy amount in ETH"

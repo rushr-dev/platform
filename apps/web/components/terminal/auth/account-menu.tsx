@@ -1,17 +1,23 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { ArrowSquareOut, Check, Copy, SignOut, Wallet } from '@phosphor-icons/react';
+import Link from 'next/link';
+import { ArrowSquareOut, Check, Copy, GearSix, SignOut, Wallet } from '@phosphor-icons/react';
 import { auth, displayName, useAuth } from '@/lib/auth';
+import { fmtUnits, useBalances } from '@/lib/balances';
 import { EXPLORER, short } from '@/lib/format';
 import { GeneratedAvatar } from '../avatar';
 import { iconSrc } from '../bits';
+import { WalletPanel } from './wallet-panel';
 
 /** Top-bar sign-in button, and the account menu once signed in. */
 export function AccountMenu() {
   const { enabled, authenticated, user } = useAuth();
   const [open, setOpen] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
+  // Balance only while the menu is open (the wallet drawer reads its own).
+  const { balances } = useBalances(open ? (user?.wallet ?? null) : null);
 
   useEffect(() => {
     if (!open) return;
@@ -70,7 +76,29 @@ export function AccountMenu() {
             </div>
           </div>
           <WalletRow label="Rushr wallet" address={user.wallet} pending={!user.wallet} />
+          <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-2.5 text-sm">
+            <span className="text-muted">Balance</span>
+            <span className="font-mono">{balances ? `${fmtUnits(balances.eth, 18, 4)} ETH` : '…'}</span>
+          </div>
           {user.externalWallet && <WalletRow label="Signed in with" address={user.externalWallet} />}
+          <div className="p-1.5">
+            <MenuButton
+              onClick={() => {
+                setOpen(false);
+                setWalletOpen(true);
+              }}
+            >
+              <Wallet size={15} /> Wallet &amp; deposit
+            </MenuButton>
+            <Link
+              href="/settings"
+              role="menuitem"
+              onClick={() => setOpen(false)}
+              className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-muted hover:bg-white/[0.04] hover:text-ink"
+            >
+              <GearSix size={15} /> Trading settings
+            </Link>
+          </div>
           <div className="border-t border-white/[0.06] p-1.5">
             <button
               type="button"
@@ -86,7 +114,21 @@ export function AccountMenu() {
           </div>
         </div>
       )}
+      {walletOpen && <WalletPanel onClose={() => setWalletOpen(false)} />}
     </div>
+  );
+}
+
+function MenuButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm text-muted hover:bg-white/[0.04] hover:text-ink"
+    >
+      {children}
+    </button>
   );
 }
 
