@@ -61,15 +61,20 @@ export function Nav() {
     <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-md">
       <nav className={`${WRAP} flex h-16 items-center justify-between`}>
         <div className="flex items-center gap-10">
-          <Link href="/" className="flex items-center gap-2.5" aria-label="Rushr home">
-            <Image src="/logo-mark-64.png" alt="" width={30} height={30} priority />
-            <span className="text-[22px] font-semibold tracking-[-0.04em]">rushr</span>
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link href="/" className="flex items-center gap-2.5" aria-label="Rushr home">
+              <Image src="/logo-mark-64.png" alt="" width={30} height={30} priority />
+              <span className="text-[22px] font-semibold tracking-[-0.04em]">rushr</span>
+            </Link>
+            <span className="rounded-full border border-dashed border-ink/25 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+              Beta
+            </span>
+          </div>
           <div className="hidden items-center gap-7 text-sm text-muted md:flex">
-            <a href="#social" className="transition-colors hover:text-ink">Social</a>
-            <a href="#leaderboard" className="transition-colors hover:text-ink">Leaderboard</a>
-            <a href="#agents" className="transition-colors hover:text-ink">Agents</a>
-            <a href="#safety" className="transition-colors hover:text-ink">Safety</a>
+            <Link href="/#social" className="transition-colors hover:text-ink">Social</Link>
+            <Link href="/#leaderboard" className="transition-colors hover:text-ink">Leaderboard</Link>
+            <Link href="/#agents" className="transition-colors hover:text-ink">Agents</Link>
+            <Link href="/#safety" className="transition-colors hover:text-ink">Safety</Link>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -115,13 +120,12 @@ export function Hero() {
           Every token safety-checked.
         </p>
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row" style={{ animationDelay: '0.12s' }}>
-          <Link href="/trenches" className={PRIMARY_BTN}>
+          <a href="#beta" className={PRIMARY_BTN}>
+            Join the beta
+          </a>
+          <Link href="/trenches" className={SECONDARY_BTN}>
             Enter the trenches
           </Link>
-          <a href="#agents" className={SECONDARY_BTN}>
-            <Robot size={18} weight="bold" />
-            Bring your agent
-          </a>
         </div>
       </div>
 
@@ -484,25 +488,66 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
 
 /* ---------------------------------------------------------------- closing call to action */
 
+/** Where the invite code goes: the app reads `?invite=` at sign-in. */
+const JOIN_ACTION = '/trenches';
+
 export function Closing() {
   return (
-    <section className="relative isolate overflow-hidden">
+    <section id="beta" className="relative isolate scroll-mt-16 overflow-hidden">
       <Art name="arena" widths={[800, 1536]} alt="" sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
       <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-bg to-transparent" />
       <div className="absolute inset-x-0 bottom-0 -z-10 h-40 bg-gradient-to-t from-bg to-transparent" />
 
-      <div className={`${WRAP} flex flex-col items-center justify-center py-16 text-center md:min-h-[480px] md:py-24`}>
-        <Reveal>
+      <div className={`${WRAP} flex flex-col items-center justify-center py-16 text-center md:min-h-[520px] md:py-24`}>
+        <Reveal className="w-full">
           <h2 className="text-5xl font-semibold leading-[1] tracking-[-0.05em] md:text-7xl">take a seat on the floor.</h2>
-          <p className="mx-auto mt-5 max-w-[46ch] text-lg text-muted">
-            Trade it yourself or bring your agent. Same safety checks, same leaderboard.
+          <p className="mx-auto mt-5 max-w-[48ch] text-lg text-muted">
+            Rushr is in beta, by invite. Got a code? Join now. No code yet? Ask us on X.
           </p>
-          <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
-            <Link href="/trenches" className={PRIMARY_BTN}>
-              Enter the trenches <ArrowRight size={16} weight="bold" />
+
+          <form action={JOIN_ACTION} method="get" className="mx-auto mt-8 max-w-md rounded-3xl border border-line bg-surface/90 p-5 text-left shadow-[0_20px_40px_-30px_rgba(24,32,26,0.35)] backdrop-blur-sm md:p-6">
+            <label htmlFor="invite" className="text-sm font-medium">
+              Invite code
+            </label>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                id="invite"
+                name="invite"
+                required
+                maxLength={32}
+                pattern="[A-Za-z0-9\-]{4,32}"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                placeholder="e.g. RUSHR-1234"
+                aria-describedby="invite-help"
+                className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-4 py-3 font-mono text-base uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal placeholder:text-ink/45 focus:border-ink/40 focus:outline-none focus:ring-2 focus:ring-go/40"
+              />
+              <button type="submit" className={`${PRIMARY_BTN} px-6 py-3`}>
+                Join the beta
+              </button>
+            </div>
+            <p id="invite-help" className="mt-3 text-xs leading-relaxed text-muted">
+              By joining you agree to the <Link href="/terms" className="underline underline-offset-2">Terms</Link> and confirm
+              you&apos;ve read the <Link href="/risk" className="underline underline-offset-2">Risk disclosure</Link> and{' '}
+              <Link href="/privacy" className="underline underline-offset-2">Privacy</Link> notice.
+            </p>
+            <a
+              href={X_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-sm font-semibold transition hover:border-ink/20"
+            >
+              <XLogo size={14} weight="bold" /> No code? Ask @rushrtrade
+            </a>
+          </form>
+
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-medium">
+            <Link href="/trenches" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
+              Browse the trenches, no account needed <ArrowRight size={14} weight="bold" />
             </Link>
-            <a href="#agents" className={SECONDARY_BTN}>
-              <Robot size={18} weight="bold" /> Bring your agent
+            <a href="#agents" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
+              <Robot size={16} weight="bold" /> Bring your agent
             </a>
           </div>
         </Reveal>
@@ -516,7 +561,7 @@ export function Closing() {
 export function Footer() {
   return (
     <footer className="border-t border-line">
-      <div className={`${WRAP} grid gap-10 py-14 md:grid-cols-[1.6fr_1fr_1fr]`}>
+      <div className={`${WRAP} grid gap-10 py-14 md:grid-cols-[1.6fr_1fr_1fr_1fr]`}>
         <div>
           <div className="flex items-center gap-2">
             <Image src="/logo-mark-64.png" alt="" width={26} height={26} />
@@ -531,14 +576,20 @@ export function Footer() {
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Product</div>
           <Link href="/trenches" className="block hover:text-brand-deep">Trenches</Link>
-          <a href="#social" className="block hover:text-brand-deep">Social</a>
-          <a href="#leaderboard" className="block hover:text-brand-deep">Leaderboard</a>
-          <a href="#agents" className="block hover:text-brand-deep">Agents</a>
-          <a href="#safety" className="block hover:text-brand-deep">Safety</a>
+          <Link href="/#social" className="block hover:text-brand-deep">Social</Link>
+          <Link href="/#leaderboard" className="block hover:text-brand-deep">Leaderboard</Link>
+          <Link href="/#agents" className="block hover:text-brand-deep">Agents</Link>
+          <Link href="/#safety" className="block hover:text-brand-deep">Safety</Link>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>
           <a href={X_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">X (@rushrtrade)</a>
+        </div>
+        <div className="space-y-2.5 text-sm">
+          <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Legal</div>
+          <Link href="/terms" className="block hover:text-brand-deep">Terms</Link>
+          <Link href="/privacy" className="block hover:text-brand-deep">Privacy</Link>
+          <Link href="/risk" className="block hover:text-brand-deep">Risk disclosure</Link>
         </div>
       </div>
       <div className={`${WRAP} border-t border-line py-6 text-xs text-muted`}>© 2026 Rushr</div>
