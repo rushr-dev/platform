@@ -1,6 +1,6 @@
 // Members: humans sign up with Privy (trading wallet = Privy embedded wallet); public profiles.
 import { Hono } from 'hono';
-import type { Sql } from 'postgres';
+import type { Sql, TransactionSql } from 'postgres';
 import { checkHandle } from '@rushr/agents/guard';
 import { newMemberId } from '@rushr/agents/crypto';
 import { on } from './env';
@@ -42,7 +42,34 @@ async function handleFree(sql: Sql, handle: string, exceptId?: string) {
   return !row || row.id === exceptId;
 }
 
+/** Invite codes: A-Z, 0-9 and dash, 4-32 chars, matched case-insensitively (stored uppercase). */
+export function normalizeInvite(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const code = raw.trim().toUpperCase();
+  return /^[A-Z0-9-]{4,32}$/.test(code) ? code : null;
+}
+
+export type InviteStatus = 'valid' | 'used' | 'expired' | 'revoked' | 'unknown';
+
+export async function inviteStatus(sql: Sql | TransactionSql, code: string): Promise<InviteStatus> {
+  const [row] = await sql<{ used_at: Date | null; revoked_at: Date | null; expires_at: Date | null }[]>`
+    select used_at, revoked_at, expires_at from invite_codes where code = ${code}`;
+  if (!row) return 'unknown';
+  if (row.revoked_at) return 'revoked';
+  if (row.used_at) return 'used';
+  if (row.expires_at && row.expires_at.getTime() <= Date.now()) return 'expired';
+  return 'valid';
+}
+
 export const members = new Hono<Ctx>();
+
+/** Check a code before sign-up (the landing passes ?invite=). Doesn't claim it. */
+members.get('/invites/:code', async (c) => {
+  await limit(c, 'nonce');
+  const code = normalizeInvite(c.req.param('code'));
+  const status: InviteStatus = code ? await inviteStatus(c.var.sql, code) : 'unknown';
+  return c.json({ code, valid: status === 'valid', status, invitesRequired: on(c.env.INVITES_REQUIRED) }, 200, PRIVATE);
+});
 
 members.get('/me', async (c) => {
   const v = c.var.viewer;
@@ -74,27 +101,34 @@ members.post('/me', async (c) => {
   if (!profile.wallet) throw fail(422, 'no_embedded_wallet', 'Your Privy account has no embedded wallet yet. Create one, then try again.');
   const id = newMemberId();
   const inviteRequired = on(c.env.INVITES_REQUIRED);
-  const code = typeof b.inviteCode === 'string' ? b.inviteCode.trim().toUpperCase() : null;
-  if (inviteRequired && !code) throw fail(403, 'invite_required', 'Rushr is invite-only during the beta. Enter an invite code.');
+  const code = normalizeInvite(b.inviteCode);
+  if (inviteRequired && !code) {
+    throw fail(403, b.inviteCode ? 'invite_invalid' : 'invite_required', b.inviteCode ? 'That invite code is not valid.' : 'Rushr is invite-only during the beta. Enter an invite code.');
+  }
 
   const member = await sql.begin(async (tx) => {
+    let claimedCode: string | null = null;
     if (code) {
-      // One code, one sign-up: claim it in the same transaction as the account.
-      const [claimed] = await tx`
-        update invite_codes set used_at = now(), used_by = null
+      // One code, one human sign-up: claim it in the same transaction as the account.
+      const [claimed] = await tx<{ code: string }[]>`
+        update invite_codes set used_at = now()
         where code = ${code} and used_at is null and revoked_at is null and (expires_at is null or expires_at > now())
         returning code`;
-      if (!claimed && inviteRequired) throw fail(403, 'invite_invalid', 'That invite code is invalid or already used.');
+      if (claimed) claimedCode = claimed.code;
+      else if (inviteRequired) {
+        const status = await inviteStatus(tx, code);
+        throw fail(403, status === 'used' ? 'invite_used' : 'invite_invalid', status === 'used' ? 'That invite code has already been used.' : 'That invite code is not valid.', { inviteStatus: status });
+      }
     }
     const [taken] = await tx<{ id: string }[]>`select id from members where wallet = ${profile.wallet}`;
     if (taken) throw fail(409, 'wallet_taken', 'This wallet already belongs to another account.');
     const [row] = await tx.unsafe<MemberRow[]>(
       `insert into members (id, kind, handle, wallet, privy_did, display_name, bio, avatar_url, x_username, x_verified, invite_code)
        values ($1, 'human', $2, $3, $4, $5, $6, $7, $8, $9, $10) returning ${memberColumns}`,
-      [id, h.handle, profile.wallet, v.privyDid!, displayName, bio, profile.xAvatarUrl, profile.xUsername, Boolean(profile.xUsername), code],
+      [id, h.handle, profile.wallet, v.privyDid!, displayName, bio, profile.xAvatarUrl, profile.xUsername, Boolean(profile.xUsername), claimedCode],
     );
-    if (code) await tx`update invite_codes set used_by = ${id} where code = ${code} and used_by is null`;
-    await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: code })})`;
+    if (claimedCode) await tx`update invite_codes set used_by = ${id} where code = ${claimedCode}`;
+    await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: claimedCode })})`;
     return row!;
   });
   return c.json({ member: publicMember(member) }, 201, PRIVATE);

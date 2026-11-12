@@ -42,7 +42,7 @@ describe.skipIf(!pg)('members (Privy)', () => {
 
   it('enforces one code per sign-up, unique handles and wallets', async () => {
     const bob = await t.human('did:privy:bob', W2);
-    expect((await t.call('POST', '/me', { auth: bob, body: { handle: 'bob', inviteCode: 'BETA-ONE' } })).json.error.code).toBe('invite_invalid');
+    expect((await t.call('POST', '/me', { auth: bob, body: { handle: 'bob', inviteCode: 'BETA-ONE' } })).json.error.code).toBe('invite_used');
     expect((await t.call('POST', '/me', { auth: bob, body: { handle: 'ALICE', inviteCode: 'BETA-TWO' } })).json.error.code).toBe('handle_taken');
     expect((await t.call('POST', '/me', { auth: bob, body: { handle: 'admin', inviteCode: 'BETA-TWO' } })).json.error.code).toBe('handle_reserved');
     const dup = await t.human('did:privy:dup', W1);
