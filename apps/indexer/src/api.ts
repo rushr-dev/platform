@@ -4,7 +4,7 @@ import { tagHolders } from '@rushr/core';
 import { dbUrl, type Env } from './env';
 import { hydrator } from './hydrator';
 import {
-  POOL_TVL_TTL_S, minuteCandles, subMinuteCandles, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
+  POOL_TVL_TTL_S, minuteCandles, subMinuteCandles, tokenDetail, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
 } from './data';
 
 export { tokenSummaries } from './data';
@@ -62,16 +62,9 @@ api.get('/tokens', async (c) => {
 api.get('/tokens/:address', async (c) => {
   const sql = c.var.sql;
   const token = addr(c.req.param('address'));
-  const [summary] = await tokenSummaries(sql, { addresses: [token] });
-  if (!summary) return hydrating(c, token);
-  const [extra] = await sql`
-    select t.deployer, t.total_supply, t.decimals, t.main_pool, t.created_block, t.launch_indexed, t.description,
-      s.data as signals, s.updated_at as signals_updated_at
-    from tokens t left join signals s on s.token = t.address where t.address = ${token}`;
-  const [dev] = await sql`select * from deployer_stats where deployer = ${extra!.deployer}`;
-  const [{ count: trades24h } = { count: 0 }] = await sql<{ count: number }[]>`
-    select count(*)::int as count from swaps where token = ${token} and time > now() - interval '24 hours'`;
-  return c.json({ ...summary, ...extra, dev: dev ?? null, trades_24h: trades24h }, 200, cache(2));
+  const detail = await tokenDetail(sql, token);
+  if (!detail) return hydrating(c, token);
+  return c.json(detail, 200, cache(2));
 });
 
 /** Every pool of a token with its routing key, 24h volume and liquidity (see tokenPools). */

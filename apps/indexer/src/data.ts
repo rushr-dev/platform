@@ -134,9 +134,10 @@ export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
       const r = qrows.find((x) => x.address === q);
       return { decimals: r?.decimals ?? 18, usd: r?.price_usd ? Number(r.price_usd) : null };
     };
-    try {
+    const refresh = (async () => {
       const bal = await new Rpc(rpcUrl).balances(stale.flatMap((p) => [{ token, holder: p.id }, { token: p.quote, holder: p.id }]));
       const now = new Date();
+      const updates: { id: string; usd: number }[] = [];
       for (const [i, p] of stale.entries()) {
         const tb = bal[i * 2];
         const qb = bal[i * 2 + 1];
@@ -145,11 +146,12 @@ export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
         const usd = (Number(tb) / 10 ** t.decimals) * Number(t.price_usd) + (Number(qb) / 10 ** q.decimals) * q.usd;
         p.liquidity_usd = String(usd);
         p.liquidity_at = now;
-        await sql`update pools set liquidity_usd = ${usd}, liquidity_at = ${now} where id = ${p.id}`;
+        updates.push({ id: p.id, usd });
       }
-    } catch (err) {
-      console.error('pool tvl refresh failed', token, err);
-    }
+      for (const u of updates) await sql`update pools set liquidity_usd = ${u.usd}, liquidity_at = ${now} where id = ${u.id}`;
+    })().catch((err) => console.error('pool tvl refresh failed', token, err));
+    // Never hold a page on the RPC: answer with the last measured values after 1.5s; the refresh finishes behind.
+    await Promise.race([refresh, new Promise((r) => setTimeout(r, 1_500))]);
   }
 
   const version = (dex: string) => (dex === 'uniswap-v4' ? 'v4' : dex === 'pons-curve' ? 'curve' : dex);
@@ -190,7 +192,10 @@ export interface Window {
 export type Stats = { '5m': Window; '1h': Window; '6h': Window; '24h': Window; asOf: number };
 const WINDOWS = { '5m': '5 minutes', '1h': '1 hour', '6h': '6 hours', '24h': '24 hours' } as const;
 
-/** 5m/1h/6h/24h windows for several tokens in one query (index: swaps(token, time)). */
+/**
+ * 5m/1h/6h/24h windows for several tokens in one query (index: swaps(token, time)). Tokens with no
+ * trades in 24h still get their price change (0%) when they traded before.
+ */
 export async function tokenStats(sql: Sql, tokens: string[]): Promise<Map<string, Stats>> {
   const out = new Map<string, Stats>();
   if (!tokens.length) return out;
@@ -201,7 +206,10 @@ export async function tokenStats(sql: Sql, tokens: string[]): Promise<Map<string
       , coalesce(sum(s.usd) filter (where s.side = 'buy' and s.time > now() - ${iv}::interval), 0)::float8 as ${sql(`${k}_buy_usd`)}
       , coalesce(sum(s.usd) filter (where s.side = 'sell' and s.time > now() - ${iv}::interval), 0)::float8 as ${sql(`${k}_sell_usd`)}
       , count(distinct s.trader) filter (where s.time > now() - ${iv}::interval)::int as ${sql(`${k}_makers`)}
-      , ((array_agg(s.price_usd order by s.block, s.log_index) filter (where s.time > now() - ${iv}::interval and s.price_usd is not null))[1])::float8 as ${sql(`${k}_open`)}`,
+      , ((array_agg(s.price_usd order by s.block, s.log_index) filter (where s.time > now() - ${iv}::interval and s.price_usd is not null))[1])::float8 as ${sql(`${k}_first`)}
+      , (select p.price_usd from swaps p where p.token = s.token and p.time <= now() - ${iv}::interval and p.price_usd is not null
+           and p.time > now() - ${iv}::interval - interval '7 days'
+         order by p.time desc limit 1)::float8 as ${sql(`${k}_prev`)}`,
   );
   const rows = await sql<Record<string, number | string | null>[]>`
     select s.token ${parts.reduce((a, p) => sql`${a} ${p}`, sql``)},
@@ -211,7 +219,9 @@ export async function tokenStats(sql: Sql, tokens: string[]): Promise<Map<string
   const asOf = Math.floor(Date.now() / 1000);
   for (const r of rows) {
     const w = (k: keyof typeof WINDOWS): Window => {
-      const open = r[`${k}_open`] as number | null;
+      // Like GMGN: against the close at the window's start (the last price before it); the first trade in
+      // the window only for tokens younger than the window. A quiet window then reads 0%, not null.
+      const open = (r[`${k}_prev`] as number | null) ?? (r[`${k}_first`] as number | null);
       const price = r.price as number | null;
       const buyUsd = r[`${k}_buy_usd`] as number;
       const sellUsd = r[`${k}_sell_usd`] as number;
@@ -223,8 +233,15 @@ export async function tokenStats(sql: Sql, tokens: string[]): Promise<Map<string
     };
     out.set(r.token as string, { '5m': w('5m'), '1h': w('1h'), '6h': w('6h'), '24h': w('24h'), asOf });
   }
-  const empty: Window = { priceChangePct: null, volumeUsd: 0, buys: 0, sells: 0, buyUsd: 0, sellUsd: 0, makers: 0 };
-  for (const t of tokens) if (!out.has(t)) out.set(t, { '5m': empty, '1h': empty, '6h': empty, '24h': empty, asOf });
+  const missing = tokens.filter((t) => !out.has(t));
+  const priced = new Set(
+    missing.length ? (await sql<{ address: string }[]>`select address from tokens where address = any(${missing}) and price_usd is not null`).map((r) => r.address) : [],
+  );
+  for (const t of missing) {
+    // No trades in 24h: flat in every window if it ever traded, else unknown.
+    const empty: Window = { priceChangePct: priced.has(t) ? 0 : null, volumeUsd: 0, buys: 0, sells: 0, buyUsd: 0, sellUsd: 0, makers: 0 };
+    out.set(t, { '5m': empty, '1h': empty, '6h': empty, '24h': empty, asOf });
+  }
   return out;
 }
 
@@ -276,9 +293,23 @@ export async function minuteCandles(sql: Sql, token: string, interval: string, h
     group by b order by b`;
 }
 
+/** Token page header (GET /tokens/:a): summary + supply/decimals + full signals + dev record + 24h trade count. */
+export async function tokenDetail(sql: Sql, token: string) {
+  const [summary] = await tokenSummaries(sql, { addresses: [token] });
+  if (!summary) return null;
+  const [extra] = await sql`
+    select t.deployer, t.total_supply::text as total_supply, t.decimals, t.main_pool, t.created_block::text as created_block,
+      t.launch_indexed, t.description, s.data as signals, s.updated_at as signals_updated_at
+    from tokens t left join signals s on s.token = t.address where t.address = ${token}`;
+  const [dev] = await sql`select * from deployer_stats where deployer = ${extra!.deployer}`;
+  const [{ count: trades24h } = { count: 0 }] = await sql<{ count: number }[]>`
+    select count(*)::int as count from swaps where token = ${token} and time > now() - interval '24 hours'`;
+  return { ...summary, ...extra, dev: dev ?? null, trades_24h: trades24h };
+}
+
 /** Everything a token page needs at once (the realtime `token:` snapshot, docs/realtime.md). */
 export async function tokenSnapshot(sql: Sql, rpcUrl: string, token: string) {
-  const [card] = await tokenSummaries(sql, { addresses: [token] });
+  const card = await tokenDetail(sql, token);
   if (!card) return null;
   const [stats, pools, trades, c1s, c1m] = await Promise.all([
     tokenStats(sql, [token]).then((m) => m.get(token)!),

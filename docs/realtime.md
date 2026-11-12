@@ -13,7 +13,7 @@ wss://api.rushr.trade/ws?v=2
 - `?v=2` selects this protocol. Without it you get the v1 feed (today's `{topic,type,data,source}` events from the single `LiveFeed`), which keeps working until Terminal has switched.
 - Later, agents authenticate with `Sec-WebSocket-Protocol: rushr.v2, key.<api-key>`. This is not enforced yet; anonymous sockets get the public topics below.
 
-Right after the upgrade the server sends:
+Right after the upgrade, and **always as the first frame**, the server sends the following. You may send `subscribe` before it arrives; ops are processed in order once the socket is open.
 
 ```json
 { "type": "hello", "protocol": 2, "epoch": "p-1794460000000", "limits": { "maxTopics": 50, "maxOpsPer10s": 20, "pingSeconds": 25 } }
@@ -37,6 +37,8 @@ Topics are lowercase:
 | Reserved for later | `wallet:<address>`, `member:<id>`, `callouts` (these will need scopes) |
 
 Limits: at most 50 topics per socket and 20 ops per 10s. Over a limit you get an `error` message, and the op is ignored.
+
+Unknown topics (e.g. v1's bare `trenches`) get `{type:"error", code:"bad_topic", topic}`. The other topics in the same op are still subscribed, and the socket stays open.
 
 ## Server → client
 
@@ -66,7 +68,9 @@ Every message from the server except `hello`/`pong`/`error` has this envelope:
 ```ts
 data: {
   state: 'live' | 'hydrating' | 'partial' | 'busy' | 'not_token';   // hydrating/partial: chain data still arriving, show "fetching from chain"
-  card: TokenCard | null;                     // same fields as GET /tokens/:a (summary + liquidity_usd); null/minimal while hydrating
+  card: TokenDetail | null;                   // exactly GET /tokens/:a (summary + deployer, decimals, total_supply, main_pool, created_block,
+                                              // launch_indexed, description, signals, dev, trades_24h); null or minimal while hydrating
+  progress?: { from: number; to: number };    // hydrating/partial only: the covered time range, unix seconds
   stats: Stats | null;                        // windows, see `stats` below; null while hydrating
   pools: Pool[];                              // same shape as GET /tokens/:a/pools
   trades: Trade[];                            // newest first, up to 200
@@ -87,7 +91,7 @@ data: { tokens: TokenCard[] }   // same order and size as GET /tokens?column=<co
 | `trades` | `Trade[]` (new trades, oldest first) | Every indexer flush with trades (~200ms) |
 | `candle` | `CandleTick[]` | With trades. Merge into the bucket (see below) |
 | `stats` | `Stats` | About every 5s while the token has trades in the last hour |
-| `token` | `TokenCard` (full card, replace) | When price, mcap, holders, risk, metadata, liquidity… change |
+| `token` | `TokenCard` (the summary fields: **merge** into `card`, keep the detail-only fields) | When price, mcap, holders, risk, metadata, liquidity… change |
 | `state` | `{ state: 'live' \| 'hydrating' \| 'partial', progress?: { from: number; to: number } }` | Hydration transitions |
 
 ### Deltas for `trenches:<column>`
@@ -103,6 +107,10 @@ data: { tokens: TokenCard[] }   // same order and size as GET /tokens?column=<co
 ### Hydration (tokens we had no data for)
 - Subscribing to a token we have nothing on (or no trades for) starts a fetch from chain. You first get a `snapshot` with `seq: null`, `source: "chain"` and `state: "hydrating"`. Its `card` may be null and `trades`/`candles` empty.
 - About 1-2s later a chain-built snapshot arrives with trades and candles for the last 30 min. In that one `card` is minimal (symbol, name, price, mcap), and `stats` is null and `pools` empty until the data is persisted.
+- The minimal hydrating `card` already has `decimals` and `total_supply` (string), so amounts and mcap can be computed from the first chain snapshot.
+- Hydration snapshots come at ~1-2s (the first 30 min, from chain), at ~10s (30 min persisted, with stats and pools), then when 6h and when 24h land (seconds to a minute for busy tokens). Each carries `progress: {from, to}` (unix seconds of the covered range).
+- About when the first 30 min is persisted, the indexer starts tracking the token and **numbered** `trades`/`candle`/`token`/`stats` deltas begin. While the topic is still hydrating (no numbered snapshot received yet), apply them idempotently and skip gap checks; start gap checking at the numbered snapshot that follows `state: live`. The chart therefore keeps streaming between hydration snapshots.
+- `state` messages are not numbered (`seq: null`).
 - `state` can also be `"busy"` (the server's fetch budget is spent; it retries on the next view, so resubscribe after ~60s) or `"not_token"` (the address is not an ERC-20; stop).
 - While the server fetches a token from chain, the topic gets `snapshot` messages with `seq: null`, `source: "chain"` and `state: "hydrating"`, and then `"partial"` as wider windows land: first the last 30 min, then 6h, then 24h. Each one fully replaces the previous.
 - When indexing takes over, the server sends a normal `snapshot` (numbered `seq`, `source: "index"`, `state: "live"`), and numbered deltas follow.
@@ -129,11 +137,14 @@ type CandleTick = Candle & { interval: '1s' | '1m' };
 //        volume += tick.volume, trades += tick.trades (open stays).
 
 type Window = {
-  priceChangePct: number | null;   // vs the first trade price in the window
+  priceChangePct: number | null;   // percent, see below
   volumeUsd: number; buys: number; sells: number;
   buyUsd: number; sellUsd: number; makers: number;   // distinct traders
 };
 type Stats = { '5m': Window; '1h': Window; '6h': Window; '24h': Window; asOf: number };
+// priceChangePct: current price vs the last price before the window started (GMGN's rule): a quiet
+// window reads 0. If there is no price in the 7 days before the window (young token, or a gap in our data),
+// the first trade in the window is used. null = never priced.
 
 type Pool = {
   pool: string; dex: string; version: 'v4' | 'v3' | 'v2' | 'curve'; launchpad: string | null; quote: string;
@@ -143,7 +154,7 @@ type Pool = {
 };
 ```
 
-`TokenCard` is the object returned by `GET /tokens/:address`'s summary part (`address, symbol, name, image_url, …, price_usd, market_cap_usd, volume_24h_usd, holders, liquidity_usd, risk, …`). New fields are only ever added.
+`TokenDetail` is `TokenCard` plus the page fields of `GET /tokens/:address` (deployer, decimals, total_supply, main_pool, created_block, launch_indexed, description, signals, signals_updated_at, dev, trades_24h). `TokenCard` is the summary part (`address, symbol, name, image_url, …, price_usd, market_cap_usd, volume_24h_usd, holders, liquidity_usd, risk, …`). New fields are only ever added.
 
 ## Errors
 

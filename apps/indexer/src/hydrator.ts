@@ -159,7 +159,9 @@ export class TokenHydrator extends DurableObject<Env> {
         }
         this.state = span === WINDOWS_S.at(-1) ? 'live' : 'partial';
         const snap = await tokenSnapshot(sql, this.env.RPC_URL, token);
-        if (snap) await this.publish(token, { type: 'snapshot', data: { state: this.state === 'live' ? 'partial' : this.state, ...snap } });
+        // Covered range so far, in unix seconds (the client shows "last 6h loaded").
+        const now = Math.floor(Date.now() / 1000);
+        if (snap) await this.publish(token, { type: 'snapshot', data: { state: 'partial', progress: { from: now - span, to: now }, ...snap } });
         to = from - 1n;
       }
       // Indexing owns the topic now: gateways send viewers a numbered snapshot.
@@ -220,13 +222,16 @@ export class TokenHydrator extends DurableObject<Env> {
     };
     const price = [...trades].reverse().find((t) => t.priceUsd != null)?.priceUsd ?? null;
     const card = {
-      address: token, symbol: meta.symbol, name: meta.name, image_url: null, price_usd: price,
+      address: token, symbol: meta.symbol, name: meta.name, decimals: meta.decimals, total_supply: meta.totalSupply.toString(), image_url: null, price_usd: price,
       market_cap_usd: price == null ? null : price * (Number(meta.totalSupply) / 10 ** meta.decimals),
       volume_24h_usd: null, holders: null, liquidity_usd: null, launchpad: null, status: null,
     };
     await this.publish(token, {
       type: 'snapshot',
-      data: { state: 'hydrating', card, stats: null, pools: [], trades: [...trades].reverse().slice(0, 200), candles: { '1s': candles(1), '1m': candles(60) } },
+      data: {
+        state: 'hydrating', progress: { from: Math.floor(Date.now() / 1000) - WINDOWS_S[0]!, to: Math.floor(Date.now() / 1000) },
+        card, stats: null, pools: [], trades: [...trades].reverse().slice(0, 200), candles: { '1s': candles(1), '1m': candles(60) },
+      },
     });
   }
 
