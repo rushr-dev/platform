@@ -20,6 +20,7 @@ import {
   type PoolInfo,
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
+import { updateCurveProgress } from './curves';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
 const ZERO = NATIVE_ETH;
@@ -32,8 +33,6 @@ const ORIGIN_GAP_S = 10 * 60;
 const HISTORY_BUDGET = { maxLogs: 20_000, maxMs: 10_000 };
 /** First ~66s after launch (0.11s blocks): enough for bundle (first blocks) and sniper (first 5s) signals. */
 const LAUNCH_WINDOW_BLOCKS = 600n;
-/** PONS curve graduation target (observed: ~4.2 ETH). */
-const PONS_GRADUATION_WEI = '4200000000000000000';
 const LAUNCHER_TO_PAD = new Map<string, PoolInfo['launchpad']>([
   ...LAUNCHPADS.filter((l) => l.launcher).map((l) => [l.launcher!, l.id] as const),
   ['0x1eef016f22a943abc7dd11422edee9d235942104', 'doppler'], // Doppler Airlock proxy
@@ -326,6 +325,18 @@ export class Pipeline {
       }
       // Register in memory now so swaps in this range price correctly.
       fresh.forEach((l, i) => this.tokens.set(l.token, { decimals: meta[i]!.decimals, totalSupply: meta[i]!.totalSupply }));
+      // A market cap from the launch itself (pool sqrtPrice or the creator's buy), so a new card isn't
+      // blank until its first trade. Real trades override it (price_at moves forward).
+      for (const [i, l] of fresh.entries()) {
+        if (!l.initialPrice) continue;
+        const q = this.quoteUsd(l.quote);
+        if (!q) continue;
+        const perToken = (Number(l.initialPrice.quoteRaw) / Number(l.initialPrice.tokenRaw)) * 10 ** (meta[i]!.decimals - q.decimals) * q.usd;
+        if (!(perToken > 0) || !Number.isFinite(perToken)) continue;
+        const mcap = perToken * (Number(meta[i]!.totalSupply) / 10 ** meta[i]!.decimals);
+        await tx`update tokens set price_usd = ${perToken}, market_cap_usd = ${mcap}, price_at = ${new Date(l.time * 1000)}
+                 where address = ${l.token} and price_usd is null`;
+      }
       for (const p of r.pools) this.pools.set(p.id, p);
 
       lap('tx:tokens+pools');
@@ -699,6 +710,14 @@ export class Pipeline {
     if (prices.length) this.ethUsd = prices[Math.floor(prices.length / 2)]!;
   }
 
+  /** Decimals and USD value of a quote asset (ETH/WETH/USDG, or a priced extra quote). */
+  private quoteUsd(quote: string): { decimals: number; usd: number } | null {
+    if (quote === QUOTES.USDG) return { decimals: 6, usd: 1 };
+    if (ETH_LIKE.has(quote)) return this.ethUsd ? { decimals: 18, usd: this.ethUsd } : null;
+    const extra = this.quotes.get(quote);
+    return extra?.usd ? { decimals: extra.decimals, usd: extra.usd } : null;
+  }
+
   private price(s: DecodedSwap): { priceUsd: string | null; usd: string | null } {
     const meta = this.tokens.get(s.token);
     if (!meta || s.tokenAmount === 0n) return { priceUsd: null, usd: null };
@@ -909,19 +928,9 @@ export class Pipeline {
                  ath_market_cap_usd = greatest(coalesce(ath_market_cap_usd, 0), ${mcap}::numeric), updated_at = now()
                where address = ${token}`;
     }
-    // PONS curves graduate at ~4.2 ETH: progress = net ETH in the curve. Curves priced in other tokens
-    // (USDG, stock tokens, ...) are measured in USD against the same target (an approximation until
-    // their exact targets are known).
-    const usdTarget = this.ethUsd ? 4.2 * this.ethUsd : null;
-    await tx`update tokens t set bonding_progress = least(1, greatest(0,
-        case when coalesce(t.quote, ${ZERO}) in (${ZERO}, ${QUOTES.WETH}) then
-          (select coalesce(sum(case when s.side = 'buy' then s.quote_amount else -s.quote_amount end), 0)
-           from swaps s where s.token = t.address and s.pool = t.main_pool) / ${PONS_GRADUATION_WEI}::numeric
-        else
-          (select coalesce(sum(case when s.side = 'buy' then s.usd else -s.usd end), 0)
-           from swaps s where s.token = t.address and s.pool = t.main_pool) / nullif(${usdTarget}::numeric, 0)
-        end))
-      where t.address = any(${touched}) and t.launchpad = 'pons' and t.status <> 'migrated' and length(t.main_pool) = 42`;
+    // PONS curves: progress against each curve's own graduationThreshold(), in its own quote (curves.ts).
+    const curveTokens = touched.filter((t) => this.tokens.has(t));
+    if (curveTokens.length) await updateCurveProgress(tx, this.rpc, curveTokens);
     await tx`update tokens t set
         holders = (select count(*) from balances b where b.token = t.address and b.amount > 0),
         volume_24h_usd = (select coalesce(sum(usd), 0) from swaps s where s.token = t.address and s.time > now() - interval '24 hours')

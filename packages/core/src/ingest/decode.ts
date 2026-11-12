@@ -78,6 +78,11 @@ export interface Launch {
   block: bigint;
   time: number;
   tx: Hex;
+  /**
+   * Starting price in raw quote units per raw token unit, before any trade: from the pool's Initialize
+   * sqrtPrice (v4) or the creator's buy in the launch (PONS). Lets a new token show a market cap at once.
+   */
+  initialPrice?: { quoteRaw: bigint; tokenRaw: bigint } | null;
 }
 
 export interface PoolInfo {
@@ -92,6 +97,8 @@ export interface PoolInfo {
   /** Pool key parts (v4: from Initialize or PositionManager; v3: fee()/tickSpacing()). Null when unknown or n/a. */
   fee?: number | null;
   tickSpacing?: number | null;
+  /** v4 only: sqrtPriceX96 at Initialize. */
+  initSqrtPriceX96?: bigint | null;
   launchpad: LaunchpadId | null;
   hooks: Address | null;
   block: bigint;
@@ -239,6 +246,7 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
         hooks: hooks === NATIVE_ETH ? null : hooks,
         fee: Number(ev.args.fee),
         tickSpacing: Number(ev.args.tickSpacing),
+        initSqrtPriceX96: ev.args.sqrtPriceX96,
         block: m.block,
         time: m.time,
       };
@@ -271,8 +279,12 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
       const curve = topicAddr(l.topics[2]);
       newTokens.add(token);
       const quote = ctx.curveQuote?.(curve) ?? NATIVE_ETH;
+      // data: creator?, quote paid by the creator's first buy, tokens it got.
+      const devIn = l.data.length >= 2 + 64 * 3 ? uint(l.data, 1) : 0n;
+      const devOut = l.data.length >= 2 + 64 * 3 ? uint(l.data, 2) : 0n;
       launchByToken.set(token, {
         token, launchpad: 'pons', creator: topicAddr(l.topics[3]), quote, pool: curve, block: m.block, time: m.time, tx: m.tx,
+        initialPrice: devIn > 0n && devOut > 0n ? { quoteRaw: devIn, tokenRaw: devOut } : null,
       });
       const pool: PoolInfo = {
         id: curve, token, quote, tokenIsCurrency0: false, dex: 'pons-curve', launchpad: 'pons', hooks: null, block: m.block, time: m.time,
@@ -304,6 +316,12 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
       const p = newPools.get(launch.pool);
       if (p && launch.launchpad !== 'uniswap-v4') p.launchpad = launch.launchpad;
     }
+  }
+  // v4 launches: starting price from the pool's sqrtPrice (quote per token, raw units).
+  for (const launch of launchByToken.values()) {
+    if (launch.initialPrice !== undefined || !launch.pool) continue;
+    const p = newPools.get(launch.pool);
+    if (p?.initSqrtPriceX96) launch.initialPrice = priceFromSqrt(p.initSqrtPriceX96, p.tokenIsCurrency0);
   }
   out.launches = [...launchByToken.values()];
 
@@ -434,6 +452,17 @@ export function resolveTrader(
     for (const t of own) if (!skip(t.from)) return t.from;
   }
   return fallback;
+}
+
+/**
+ * Quote per token from a Uniswap sqrtPriceX96 (currency1 per currency0 = (sqrtP / 2^96)^2), as a
+ * ratio of raw amounts: quoteRaw / tokenRaw.
+ */
+export function priceFromSqrt(sqrtPriceX96: bigint, tokenIsCurrency0: boolean): { quoteRaw: bigint; tokenRaw: bigint } | null {
+  if (sqrtPriceX96 <= 0n) return null;
+  const num = sqrtPriceX96 * sqrtPriceX96; // currency1 per currency0, scaled by 2^192
+  const den = 1n << 192n;
+  return tokenIsCurrency0 ? { quoteRaw: num, tokenRaw: den } : { quoteRaw: den, tokenRaw: num };
 }
 
 function signed256(w: Hex): bigint {

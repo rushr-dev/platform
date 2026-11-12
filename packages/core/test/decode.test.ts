@@ -220,3 +220,25 @@ describe('decodeLogs: focus token', () => {
     expect(r.swaps[0]).toMatchObject({ side: 'buy', tokenAmount: 2n * 10n ** 18n, quoteAmount: 500_000000n }); // v4 amounts are the swapper's: +SPCX = buy
   });
 });
+
+describe('launch starting price', () => {
+  it('derives quote per token from the Initialize sqrtPrice, for either currency order', async () => {
+    const { priceFromSqrt } = await import('../src/ingest/decode');
+    // 1 token = 0.0001 ETH (both 18 decimals): currency0 = ETH, currency1 = token, so token per ETH = 10,000.
+    const sqrt = 100n * 2n ** 96n; // sqrt(10000) * 2^96
+    const p = priceFromSqrt(sqrt, false)!;
+    expect(Number(p.quoteRaw) / Number(p.tokenRaw)).toBeCloseTo(0.0001, 10);
+    const q = priceFromSqrt(sqrt, true)!;
+    expect(Number(q.quoteRaw) / Number(q.tokenRaw)).toBeCloseTo(10_000, 4);
+  });
+
+  it('attaches it to a v4 launch, and the creator buy to a PONS launch', () => {
+    const r = decodeLogs([initLog(QUOTES.USDG as Address, TOKEN, DOPPLER_HOOK)], emptyCtx);
+    expect(r.launches[0]!.initialPrice).toEqual({ quoteRaw: 1n << 192n, tokenRaw: 1n << 192n }); // sqrtPrice 2^96 = price 1
+    const t = (a: Address) => pad(a, { size: 32 });
+    const words = (...v: bigint[]) => encodeAbiParameters(v.map(() => ({ type: 'uint256' })), v);
+    const curve = '0xd6915857f90dec51141f26970be3368967c28f54' as Address;
+    const pons = decodeLogs([log('0xe33e9e479df8802cb0866d5d05258bec4cf62948', [TOPICS.ponsLaunch, t(TOKEN), t(curve), t(USER)], words(0n, 2n * 10n ** 16n, 10n ** 24n))], emptyCtx);
+    expect(pons.launches[0]!.initialPrice).toEqual({ quoteRaw: 2n * 10n ** 16n, tokenRaw: 10n ** 24n });
+  });
+});

@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import postgres from 'postgres';
 import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
 import { refreshWalletPnl } from './data';
+import { checkGraduations, updateCurveProgress } from './curves';
 import { Rpc } from './rpc';
 import { ensureFunding, recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
@@ -140,6 +141,19 @@ app.post('/admin/pools/backfill', async (c) => {
   }
 });
 
+// PONS curves: recompute every curve's progress from its own threshold, then confirm graduations.
+app.post('/admin/curves/refresh', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const rpc = new Rpc(c.env.RPC_URL);
+    const updated = await updateCurveProgress(sql, rpc);
+    const graduated = await checkGraduations(sql, rpc);
+    return c.json({ updated, graduated });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 // Wallet positions: rebuild from all swaps (once, after migration 0006), then live keeps them current.
 app.post('/admin/positions/rebuild', async (c) => c.json(await positionsJob(c.env).rebuildPositions()));
 app.get('/admin/positions', async (c) => c.json(await positionsJob(c.env).positionsStatus()));
@@ -246,6 +260,18 @@ export default {
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
     await pollerOf(env).start();
+    // Every 5 minutes: confirm PONS graduations near the threshold (events can be missed or new).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 1) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const done = await checkGraduations(sql, new Rpc(env.RPC_URL));
+        if (done.length) console.log(`graduated: ${done.join(', ')}`);
+      } catch (err) {
+        console.error('graduation check failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
     // Every 5 minutes: wallet PnL summaries (once positions exist).
     if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 2) {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
