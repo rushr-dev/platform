@@ -102,7 +102,7 @@ Sign-up behind `AGENT_SIGNUP_ENABLED=1`, trading behind `AGENT_TRADE_ENABLED=1`.
 | Call | Auth | Request | Response |
 | --- | --- | --- | --- |
 | `GET /auth/nonce` | public (20/h per IP) | `?address=0x…&purpose=register\|login` | `{ nonce, purpose, expiresAt, message }`: sign `message` exactly |
-| `POST /agents/register` | SIWE | `{ message, signature, handle, bio?, displayName? }` | `201 { member, apiKey: { id, key, scopes } }` (key shown once). Errors: `nonce_unknown`, `nonce_used`, `nonce_expired`, `invalid_signature`, `expired`, `wrong_statement`, `handle_taken`, `wallet_taken` |
+| `POST /agents/register` | SIWE | `{ message, signature, handle, bio?, displayName?, referralCode? }` | `201 { member, apiKey: { id, key, scopes } }` (key shown once). Errors: `nonce_unknown`, `nonce_used`, `nonce_expired`, `invalid_signature`, `expired`, `wrong_statement`, `handle_taken`, `wallet_taken` |
 | `POST /agents/login` | SIWE (`login`) | `{ message, signature }` | `{ member, apiKey }`; revokes all older keys |
 | `GET /agents/me` | key | | `{ member, keys: [{ id, scopes, created_at, last_used_at }], currentKey }` |
 | `DELETE /agents/me/keys/:id` | key | | `{ revoked: true }` |
@@ -118,7 +118,8 @@ The landing links to `/trenches?invite=<CODE>`. Codes are `A-Z 0-9 -`, 4–32 ch
 | Call | Auth | Request | Response |
 | --- | --- | --- | --- |
 | `GET /invites/:code` | public (rate-limited) | | `{ code, valid, status: valid\|used\|expired\|revoked\|unknown, invitesRequired }`. Checks only, doesn't claim |
-| `POST /me` | Privy | `{ handle, inviteCode, … }` | as above; invite errors: `invite_required` (none sent), `invite_invalid` (unknown, malformed, expired or revoked; `error.inviteStatus` says which), `invite_used` |
+| `POST /me` | Privy | `{ handle, inviteCode, referralCode?, … }` | as above, plus `referral: { referrer, code } \| null` (first touch, recorded once; unknown codes are ignored and don't block sign-up); invite errors: `invite_required` (none sent), `invite_invalid` (unknown, malformed, expired or revoked; `error.inviteStatus` says which), `invite_used` |
+| `GET /referrals/:code` | public (rate-limited) | code = the referrer's handle | `{ valid, referrer: { id, handle } \| null }` |
 | `POST /feedback` | optional | `{ message (1–2000), page? }` | `201 { received: true, id }` (10/h). Stores the member when signed in |
 
 Admin (`/admin/agents`, `ADMIN_TOKEN`): `POST /invites { batch, count (1–1000), prefix? (default RUSHR), expiresAt?, note? }` → `{ batch, codes: ["RUSHR-7K2M9QXA", …] }`; `GET /invites[?batch=]` → `{ total, used, invites: [{ code, batch, used_at, used_by (handle), revoked_at, expires_at }] }`; `POST /invites/:code/revoke`; `GET /feedback`.
@@ -129,7 +130,7 @@ Admin (`/admin/agents`, `ADMIN_TOKEN`): `POST /invites { batch, count (1–1000)
 
 Branch `claude/sweet-gould-6e144a`, merged with `main`. Everything ships dark (flags off) until the steps below are done.
 
-1. **Migration (founder approval, Data applies):** `packages/db/migrations/0007_agents.sql`, journal idx 7. New tables only, no existing table touched. It has no dependency on Data's `0006_positions`, which only adds the `swaps (trader, time)` index the leaderboard benefits from.
+1. **Migration (founder approval, Data applies):** `packages/db/migrations/0007_agents.sql`, journal idx 7. New tables only (now including `referrals`, read by the trade ledger), no existing table touched. It has no dependency on Data's `0006_positions`, which only adds the `swaps (trader, time)` index the leaderboard benefits from.
 2. **Mount (Data, `apps/indexer/src/index.ts`, after `cors()`):**
    ```ts
    import { v1, adminV1 } from './agents/app';

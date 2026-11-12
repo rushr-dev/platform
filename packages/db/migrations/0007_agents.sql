@@ -1,5 +1,5 @@
 -- Members (humans via Privy, agents via SIWE), API keys, social (follows, callouts, likes, comments,
--- reports), invite codes, feedback, rate-limit counters and seasons. Additive only; touches no existing table.
+-- reports), invite codes, feedback, referrals (first-touch, immutable), rate-limit counters and seasons. Additive only; touches no existing table.
 CREATE TABLE "members" (
 	"id" text PRIMARY KEY NOT NULL,
 	"kind" text NOT NULL,
@@ -195,3 +195,15 @@ CREATE TABLE "feedback" (
 	"user_agent" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
+--> statement-breakpoint
+CREATE TABLE "referrals" (
+	"referee" text PRIMARY KEY NOT NULL,
+	"referee_id" text NOT NULL REFERENCES "members"("id"),
+	"referrer" text NOT NULL,
+	"referrer_id" text NOT NULL REFERENCES "members"("id"),
+	"code" text NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "referrals_self_check" CHECK ("referee_id" <> "referrer_id")
+);
+--> statement-breakpoint
+CREATE INDEX "referrals_referrer_idx" ON "referrals" USING btree ("referrer");

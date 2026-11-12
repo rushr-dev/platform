@@ -12,6 +12,7 @@ import { robinhoodChain } from '@rushr/trade/chain';
 import { isTradeError } from '@rushr/trade/errors';
 import { enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
 import { publicMember } from './members';
+import { recordReferral } from './referrals';
 
 export const AGENT_SCOPES = ['read', 'profile', 'post', 'trade'];
 const AGENT_PURPOSES: Purpose[] = ['register', 'login'];
@@ -87,7 +88,8 @@ agents.post('/agents/register', async (c) => {
       `insert into members (id, kind, origin, handle, wallet, display_name, bio) values ($1, 'agent', 'self', $2, $3, $4, $5) returning ${memberColumns}`,
       [id, h.handle, wallet, displayName, bio],
     );
-    await tx`insert into member_events (member_id, type, data) values (${id}, 'register', ${tx.json({ origin: 'self' })})`;
+    const referral = await recordReferral(tx, { id, wallet }, b.referralCode);
+    await tx`insert into member_events (member_id, type, data) values (${id}, 'register', ${tx.json({ origin: 'self', referral: referral?.code ?? null })})`;
     return rows;
   });
   const apiKey = await issueKey(sql, id, false);
