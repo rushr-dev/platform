@@ -27,7 +27,11 @@ export type DataSource = 'index' | 'chain' | 'mixed';
 
 /** Where a topic's data stands. `hydrating`/`partial`: the server is still fetching it from chain. */
 export interface Hydration {
-  state: 'ready' | 'hydrating' | 'partial';
+  /**
+   * ready: indexed and live. hydrating/partial: chain data still arriving. busy: the server's fetch
+   * budget is spent (resubscribe in ~60s). not_token: the address isn't an ERC-20 (stop).
+   */
+  state: 'ready' | 'hydrating' | 'partial' | 'busy' | 'not_token';
   source?: DataSource;
   /** Unix seconds of the history already covered, when the server says. */
   covered?: { from: number; to: number } | null;
@@ -97,5 +101,6 @@ export function hydrationOf(state: unknown, source?: DataSource, progress?: unkn
   const p = progress as { from?: number; to?: number } | null | undefined;
   const covered = p && Number.isFinite(p.from) && Number.isFinite(p.to) ? { from: p.from!, to: p.to! } : null;
   if (state === 'hydrating' || state === 'partial') return { state, source, covered };
+  if (state === 'busy' || state === 'not_token') return { state, source };
   return { state: 'ready', source };
 }

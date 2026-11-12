@@ -71,7 +71,27 @@ export interface FeedStatus {
 
 type DeltaListener = (deltas: Delta[]) => void;
 
-const WS_URL = `${API_URL.replace(/^http/, 'ws')}/ws?v=2`;
+const WS_BASE = `${API_URL.replace(/^http/, 'ws')}/ws`;
+/** How long to wait before resubscribing when the server reports `busy`. */
+const BUSY_RETRY_MS = 60_000;
+
+/**
+ * Feed v2 is behind a flag until the server ships. Per browser, `?feed=v2` / `?feed=v1` on any
+ * terminal URL picks a side (remembered); otherwise the build flag NEXT_PUBLIC_FEED_V2=1 decides.
+ * Off, the client connects to the v1 feed exactly as before.
+ */
+function wantV2(): boolean {
+  try {
+    const q = new URLSearchParams(window.location.search).get('feed');
+    if (q === 'v2' || q === 'v1') localStorage.setItem('rushr.feed', q);
+    const saved = localStorage.getItem('rushr.feed');
+    if (saved === 'v2' || saved === 'v1') return saved === 'v2';
+  } catch {
+    // storage unavailable: fall through to the build flag
+  }
+  return process.env.NEXT_PUBLIC_FEED_V2 === '1';
+}
+
 const DEFAULT_PING_MS = 25_000;
 /** A v2 server's first frame is hello; a v1 server never sends one. */
 const HELLO_TIMEOUT_MS = 2_000;
@@ -96,6 +116,12 @@ class Entry<S> {
    */
   lastSeq: number | null = null;
   epoch: string | null = null;
+  /**
+   * Gap checks start at the first numbered snapshot. While a token hydrates, numbered deltas
+   * already flow (the indexer adopted it) but are applied as they come, without checks (spec).
+   */
+  gapChecks = false;
+  busyTimer: ReturnType<typeof setTimeout> | undefined;
   attempts = 0;
   fetchCtl: AbortController | null = null;
   pollTimer: ReturnType<typeof setInterval> | undefined;
@@ -228,6 +254,7 @@ class FeedClient {
   private close<S>(topic: string, e: Entry<S>) {
     e.fetchCtl?.abort();
     clearInterval(e.pollTimer);
+    clearTimeout(e.busyTimer);
     this.serverTopics.delete(topic);
     this.send({ op: 'unsubscribe', topics: [topic] });
   }
@@ -290,8 +317,8 @@ class FeedClient {
     if (!e) return;
     if (this.status.protocol === 2) {
       if (e.awaitingSnapshot) return; // dropped until the snapshot (spec)
-      if (epoch && e.epoch && epoch !== e.epoch) return this.resync(topic, e);
-      if (delta.seq != null) {
+      if (e.gapChecks && epoch && e.epoch && epoch !== e.epoch) return this.resync(topic, e);
+      if (delta.seq != null && e.gapChecks) {
         if (e.lastSeq == null) return this.resync(topic, e); // numbered delta without a numbered snapshot
         if (delta.seq <= e.lastSeq) return; // duplicate
         if (delta.seq !== e.lastSeq + 1) return this.resync(topic, e); // gap
@@ -317,9 +344,30 @@ class FeedClient {
     e.awaitingSnapshot = false;
     e.lastSeq = msg.seq;
     e.epoch = msg.epoch;
+    // Numbered snapshot: ordered deltas from here. Unnumbered (hydration): apply as they come.
+    e.gapChecks = msg.seq != null;
     // Anything queued before this snapshot is already in it.
     e.queue.length = 0;
-    e.set({ data: base, seq: msg.seq, phase: 'live', fromServer: true, hydration: hydrationOf(data?.state, msg.source, data?.progress) });
+    const hydration = hydrationOf(data?.state, msg.source, data?.progress);
+    e.set({ data: base, seq: msg.seq, phase: 'live', fromServer: true, hydration });
+    this.onHydration(topic, e, hydration);
+  }
+
+  /** busy: try again in a minute. not_token: stop following the topic. */
+  private onHydration<S>(topic: string, e: Entry<S>, h: Hydration) {
+    clearTimeout(e.busyTimer);
+    if (h.state === 'busy') {
+      e.busyTimer = setTimeout(() => {
+        if (this.entries.get(topic) !== (e as Entry<unknown>) || e.refs === 0) return;
+        this.send({ op: 'unsubscribe', topics: [topic] });
+        this.serverTopics.delete(topic);
+        e.awaitingSnapshot = true;
+        this.subscribeTopics([topic]);
+      }, BUSY_RETRY_MS);
+    } else if (h.state === 'not_token') {
+      this.send({ op: 'unsubscribe', topics: [topic] });
+      this.serverTopics.delete(topic);
+    }
   }
 
   private scheduleFlush() {
@@ -337,6 +385,7 @@ class FeedClient {
         const sd = state?.data as { state?: unknown; progress?: unknown } | undefined;
         const hydration = sd ? hydrationOf(sd.state, (state!.source as Hydration['source']) ?? e.view.hydration.source, sd.progress) : e.view.hydration;
         if (next !== e.view.data || seq !== e.view.seq || hydration !== e.view.hydration) e.set({ data: next, seq, hydration });
+        if (hydration !== e.view.hydration || state) this.onHydration(topic, e, hydration);
         this.deltaWatchers.get(topic)?.forEach((l) => l(batch));
       }
     };
@@ -358,7 +407,7 @@ class FeedClient {
 
   private connect() {
     if (typeof window === 'undefined' || this.socket) return;
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(wantV2() ? `${WS_BASE}?v=2` : WS_BASE);
     this.socket = ws;
     ws.onopen = () => {
       this.retry = 0;

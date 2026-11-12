@@ -52,8 +52,10 @@ export type ServerStats = Partial<Record<'5m' | '1h' | '6h' | '24h', ServerWindo
 /** `token:<a>` snapshot data (docs/realtime.md on the data branch). */
 interface TokenSnapshotV2 {
   state?: string;
-  card?: Partial<TokenDetail>;
-  stats?: ServerStats;
+  /** Full GET /tokens/:a detail; null or minimal while hydrating. */
+  card?: Partial<TokenDetail> | null;
+  /** Null while hydrating (the page derives windows from trades then). */
+  stats?: ServerStats | null;
   pools?: ApiPool[];
   trades?: (Trade | LiveTrade)[];
   candles?: { '1s'?: Candle[]; '1m'?: Candle[] };
@@ -91,7 +93,7 @@ export function tokenSpec(detail: TokenDetail, ssrTrades: Promise<Tx[]>): Omit<T
     kind: 'token',
     initial: { token: detail, trades: null, fetched: 0, candles: null, candles1s: null, stats: null, pools: null },
     apply(state, deltas: Delta[]) {
-      let { token, trades, candles, candles1s, stats } = state;
+      let { token, trades, candles, candles1s, stats, pools } = state;
       for (const d of deltas) {
         if (!d.data) continue;
         switch (d.kind) {
@@ -113,11 +115,14 @@ export function tokenSpec(detail: TokenDetail, ssrTrades: Promise<Tx[]>): Omit<T
           case 'stats':
             stats = d.data as ServerStats;
             break;
+          case 'pools':
+            if (Array.isArray(d.data)) pools = d.data as ApiPool[];
+            break;
         }
       }
-      return token === state.token && trades === state.trades && candles === state.candles && candles1s === state.candles1s && stats === state.stats
+      return token === state.token && trades === state.trades && candles === state.candles && candles1s === state.candles1s && stats === state.stats && pools === state.pools
         ? state
-        : { ...state, token, trades, candles, candles1s, stats };
+        : { ...state, token, trades, candles, candles1s, stats, pools };
     },
     fromSnapshot(data, prev) {
       const s = data as TokenSnapshotV2;
@@ -129,8 +134,10 @@ export function tokenSpec(detail: TokenDetail, ssrTrades: Promise<Tx[]>): Omit<T
         fetched: list.length,
         candles: s.candles?.['1m'] ? sortCandles(s.candles['1m']) : prev.candles,
         candles1s: s.candles?.['1s'] ? sortCandles(s.candles['1s']) : prev.candles1s,
-        stats: s.stats ?? prev.stats,
-        pools: s.pools ?? prev.pools,
+        // A snapshot replaces the topic: null stats (hydrating) means "derive them here".
+        stats: s.stats ?? null,
+        // Hydrating snapshots send no pools yet; keep HTTP/DexScreener until they do.
+        pools: s.pools?.length ? s.pools : prev.pools,
       };
     },
     async fetchSnapshot(signal, attempt) {
@@ -145,7 +152,9 @@ export function tokenSpec(detail: TokenDetail, ssrTrades: Promise<Tx[]>): Omit<T
         getJson<{ trades: Trade[] }>(`/tokens/${detail.address}/trades?limit=${TRADE_LIMIT}`, signal),
       ]);
       const list = body.trades.map((t) => fromApi(t, decimals));
-      return (prev) => ({ ...prev, token: { ...prev.token, ...token }, trades: mergeTrades(list, prev.trades ?? []), fetched: list.length });
+      // 202 while the server fetches it from chain: no card yet, keep what we have.
+      const card = token && 'symbol' in token ? token : null;
+      return (prev) => ({ ...prev, token: card ? { ...prev.token, ...card } : prev.token, trades: mergeTrades(list, prev.trades ?? []), fetched: list.length });
     },
   };
 }

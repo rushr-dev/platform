@@ -19,6 +19,9 @@ import { TradesTable } from './trades-table';
 
 type Pools = ReturnType<typeof mergePools>;
 
+/** A hydrating token's minimal card may not have a creation time yet. */
+const known = (iso: string | null | undefined) => !!iso && Number.isFinite(new Date(iso).getTime()) && new Date(iso).getTime() > 0;
+
 /**
  * Token page. The header renders from the server; trades and candles arrive as promises that
  * resolve while the page is already on screen, and holders (slow) load in the background to
@@ -190,8 +193,8 @@ function Header({ t, pools, priceNow, serverNow }: { t: TokenDetail; pools: Pool
             <span>·</span>
             <span>{LAUNCHPAD_LABEL[t.launchpad ?? ''] ?? t.launchpad}</span>
             <span>·</span>
-            <span title={dateTimeUtc(t.created_at)} className="font-mono">
-              {ageLong(created, now)}
+            <span title={known(t.created_at) ? dateTimeUtc(t.created_at) : undefined} className="font-mono">
+              {known(t.created_at) ? ageLong(created, now) : 'age —'}
             </span>
             <span>·</span>
             <a href={`${EXPLORER}/token/${t.address}`} target="_blank" rel="noreferrer" className="rounded bg-white/[0.05] px-1.5 py-px hover:text-ink">
@@ -482,7 +485,7 @@ function PoolPanel({ t, pools, supply, serverNow }: { t: TokenDetail; pools: Poo
           </div>
         )}
         <Row k="Supply" v={compact(supply)} />
-        <Row k="Created" v={`${dateUtc(t.created_at)} · ${ageLong(new Date(t.created_at).getTime(), now).split(' ')[0]} ago`} />
+        <Row k="Created" v={known(t.created_at) ? `${dateUtc(t.created_at)} · ${ageLong(new Date(t.created_at).getTime(), now).split(' ')[0]} ago` : '—'} />
         {t.status !== 'migrated' && t.bonding_progress != null && (
           <div>
             <div className="flex justify-between">
