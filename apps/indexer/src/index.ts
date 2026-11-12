@@ -98,7 +98,12 @@ app.post('/admin/poller/:action', async (c) => {
 app.post('/admin/signals/all', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
-    const rows = await sql<{ address: string }[]>`select address from tokens`;
+    // ?active: only tokens traded in the last 24h (the ones on cards), missing or oldest signals first.
+    const rows = c.req.query('active') !== undefined
+      ? await sql<{ address: string }[]>`
+          select t.address from tokens t left join signals g on g.token = t.address
+          where t.volume_24h_usd > 0 order by g.updated_at nulls first`
+      : await sql<{ address: string }[]>`select address from tokens`;
     for (let i = 0; i < rows.length; i += 100) {
       await c.env.ENRICH_QUEUE.sendBatch(rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-signals' as const, token: r.address } })));
     }
