@@ -10,6 +10,8 @@ import { quotePool, rankQuotes, withSlippage } from './quote';
 import { draftTradeRecord, type TradeRecord } from './referral';
 import { simulateCalls, type SimCall } from './simulate';
 import type { Pool, Quote, Referral } from './types';
+import type { ApiPoolRow } from './api-pools';
+import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
 /**
  * Beta trading v0: quick buy / sell signed client-side by the user's Privy embedded wallet with its UI
@@ -57,6 +59,8 @@ export interface TokenRiskInfo {
 export type GuardCode =
   | 'CURVE_NOT_GRADUATED'
   | 'NO_ROUTE'
+  | 'LIQUIDITY_REMOVED'
+  | 'NON_ETH_QUOTE'
   | 'OVER_CAP'
   | 'RISK_ACK_REQUIRED'
   | 'HONEYPOT'
@@ -68,6 +72,23 @@ export type GuardCode =
 export interface Guard {
   code: GuardCode;
   message: string;
+}
+
+const QUOTE_NAMES: Record<string, string> = {
+  [TRADE_ADDRESSES.usdg.toLowerCase()]: 'USDG',
+  ...Object.fromEntries(Object.entries(STOCK_QUOTES).map(([sym, a]) => [a.toLowerCase(), sym])),
+};
+
+/**
+ * The token only trades against another asset (Doppler pairs many launches with USDG or a stock token).
+ * Routing ETH through that asset (multi-hop) isn't built yet, so say so instead of "no pool".
+ */
+export function nonEthQuoteGuard(rows: ApiPoolRow[] | null | undefined): Guard | null {
+  const eth = new Set([TRADE_ADDRESSES.eth.toLowerCase(), TRADE_ADDRESSES.weth.toLowerCase()]);
+  const other = (rows ?? []).map((r) => r.quote?.toLowerCase()).filter((q): q is string => !!q && !eth.has(q));
+  if (!other.length) return null;
+  const name = QUOTE_NAMES[other[0]!] ?? 'another token';
+  return { code: 'NON_ETH_QUOTE', message: `This token trades against ${name}, not ETH. Buying with ETH through ${name} isn't supported yet.` };
 }
 
 /**
@@ -232,7 +253,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     return empty([
       uniswap.length
         ? { code: 'NO_ROUTE', message: `Only pools with fees above ${MAX_VENUE_FEE_BPS / 100}% exist for this token; not routed.` }
-        : { code: 'NO_ROUTE', message: 'No Uniswap pool with ETH liquidity for this token yet.' },
+        : nonEthQuoteGuard(opts.discover?.apiPools) ?? { code: 'NO_ROUTE', message: 'No Uniswap pool with ETH liquidity for this token yet.' },
     ]);
 
   // Chain facts the guards need, fetched while the pools quote (one round trip instead of two in a row).
@@ -253,7 +274,20 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   const quotes = rankQuotes(settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : [])));
   if (!quotes.length) {
     void facts.catch(() => undefined);
-    return empty([{ code: 'NO_ROUTE', message: 'Every pool failed to quote (no liquidity in range).' }]);
+    const codes = settled.map((x) => (x.status === 'rejected' && isTradeError(x.reason) ? x.reason.code : 'QUOTE_FAILED'));
+    if (codes.every((c) => c === 'LIQUIDITY_REMOVED'))
+      return empty([{ code: 'LIQUIDITY_REMOVED', message: 'No liquidity left: the pool\'s liquidity was withdrawn by its provider, so this token can\'t be bought or sold.' }]);
+    const hookRejected = settled.find((x, i) => {
+      const p = tradable[i]!;
+      return x.status === 'rejected' && p.venue === 'uniswap-v4' && p.key.hooks !== '0x0000000000000000000000000000000000000000' && isTradeError(x.reason) && x.reason.code === 'QUOTE_FAILED';
+    });
+    if (hookRejected && hookRejected.status === 'rejected')
+      return empty([{ code: 'NO_ROUTE', message: `This token's pool hook rejects ${req.side}s right now (${String(hookRejected.reason.message).replace(/^.*reverted: /, '').slice(0, 60)}).` }]);
+    const oneSided = settled.some((x) => x.status === 'rejected' && isTradeError(x.reason) && /no buy-side liquidity/.test(x.reason.message));
+    if (oneSided) return empty([{ code: 'NO_ROUTE', message: 'Nothing to sell into yet: this launch pool only has the token side until others buy.' }]);
+    if (codes.some((c) => c === 'INSUFFICIENT_LIQUIDITY'))
+      return empty([{ code: 'NO_ROUTE', message: 'Not enough liquidity for this amount; try a smaller one.' }]);
+    return empty([{ code: 'NO_ROUTE', message: 'Every pool failed to quote.' }]);
   }
   const best0 = quotes[0]!;
   const tax = req.side === 'buy' ? opts.risk?.buyTaxBps : opts.risk?.sellTaxBps;

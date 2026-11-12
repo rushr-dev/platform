@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseEther, type Address, type Hex, type PublicClient } from 'viem';
 import {
   autoSlippageBps,
@@ -14,6 +14,7 @@ import {
   resolveConfig,
   SendError,
   TxPipeline,
+  type ApiPoolRow,
   type Pool,
   type QuickTrade,
   type SendResult,
@@ -193,20 +194,22 @@ export function pipelineFor(wallet: Address): TxPipeline {
   return p;
 }
 
-const poolCache = new Map<string, { at: number; pools: Promise<Pool[]> }>();
-function poolsFor(token: TradeToken, trader: Address): Promise<Pool[]> {
+type PoolSet = { pools: Pool[]; rows: ApiPoolRow[] | null };
+const poolCache = new Map<string, { at: number; pools: Promise<PoolSet> }>();
+function poolsFor(token: TradeToken, trader: Address): Promise<PoolSet> {
   const k = token.address.toLowerCase();
   const hit = poolCache.get(k);
   if (hit && Date.now() - hit.at < POOLS_TTL_MS) return hit.pools;
   const pools = (async () => {
     const apiPools = await fetchApiPools(token.address, { apiUrl: API_URL });
-    return discoverPools(chainClient(), token.address, {
+    const pools = await discoverPools(chainClient(), token.address, {
       mainPool: token.mainPool ?? null,
       createdBlock: token.createdBlock ? BigInt(token.createdBlock) : undefined,
       apiPools,
       quoteAsset: 'ETH',
       trader,
     });
+    return { pools, rows: apiPools };
   })();
   pools.catch(() => poolCache.delete(k));
   poolCache.set(k, { at: Date.now(), pools });
@@ -227,7 +230,14 @@ const keyOf = (side: 'buy' | 'sell', amount: bigint) => `${side}:${amount}`;
 
 // ---- hook -----------------------------------------------------------------------------------------
 
-export function useQuickTrade(token: TradeToken) {
+export function useQuickTrade(tokenArg: TradeToken) {
+  // Callers often pass a fresh object each render: key everything on the fields, so `prepare`,
+  // `warm` and `execute` keep their identity (safe in effect dependencies).
+  const { address, symbol, decimals, risk: tokenRisk, verdict, createdAt, mainPool, createdBlock, priceChange5mPct } = tokenArg;
+  const token = useMemo<TradeToken>(
+    () => ({ address, symbol, decimals, risk: tokenRisk, verdict, createdAt, mainPool, createdBlock, priceChange5mPct }),
+    [address, symbol, decimals, tokenRisk, verdict, createdAt, mainPool, createdBlock, priceChange5mPct],
+  );
   const session = useAuth();
   const settings = useSettings();
   const [ack, setAck] = useRiskAck(token.address);
@@ -281,14 +291,14 @@ export function useQuickTrade(token: TradeToken) {
   const build = useCallback(
     async (side: 'buy' | 'sell', amount: bigint, silent: boolean, probe: TokenSafety | null = safetyRef.current): Promise<QuickTrade | null> => {
       const client = chainClient();
-      const pools = await poolsFor(token, trader);
+      const { pools, rows } = await poolsFor(token, trader);
       const r = risk(probe);
       const auto = autoSlippageBps({ side, ageMinutes: r.ageMinutes, priceChange5mPct: r.priceChange5mPct, taxBps: side === 'buy' ? r.buyTaxBps : r.sellTaxBps });
       const opts = {
         settings: { maxTradeWei: parseEther(String(settings.maxTradeEth)), slippageBps: slippageFor(settings, auto) },
         risk: r,
         acknowledgedHighRisk: ack,
-        discover: { pools },
+        discover: { pools, apiPools: rows },
         simulate: trader !== GUEST,
       };
       let t = side === 'buy' ? await quickBuy(client, { token: token.address, ethWei: amount, trader }, opts) : await quickSell(client, { token: token.address, trader, amount }, opts);

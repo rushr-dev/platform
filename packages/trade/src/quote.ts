@@ -89,6 +89,22 @@ export async function quoteVenue(client: PublicClient, pool: Pool, side: SwapReq
     if (e instanceof TradeError) throw e;
     const data = revertDataOf(e);
     const msg = data ? decodeRevert(data) : sanitizeRpcMessage(e);
+    // A v4 pool with no active liquidity that can't fill even a quote: the LP withdrew everything
+    // (common on Robinhood launches: full-range liquidity added at launch, removed minutes later).
+    // Launch pools (Doppler, plain v4 launches) hold only the token side until people buy, so a sell
+    // can't fill yet while buys can: only both directions failing means the liquidity is gone.
+    if (pool.venue === 'uniswap-v4' && /NotEnoughLiquidity/.test(msg)) {
+      const liq = await client.readContract({ address: TRADE_ADDRESSES.v4.stateView, abi: v4StateViewAbi, functionName: 'getLiquidity', args: [pool.id] }).catch(() => null);
+      if (liq === 0n) {
+        const zeroForOne = pool.key.currency0 === tokenIn;
+        const other = await client
+          .simulateContract({ address: TRADE_ADDRESSES.v4.quoter, abi: v4QuoterAbi, functionName: 'quoteExactInputSingle', args: [{ poolKey: pool.key, zeroForOne: !zeroForOne, exactAmount: 1_000_000n, hookData: pool.hookData }] })
+          .then(() => true)
+          .catch((e2) => !/NotEnoughLiquidity/.test(decodeRevert(revertDataOf(e2) ?? '0x')));
+        if (!other) throw new TradeError('LIQUIDITY_REMOVED', 'uniswap-v4 pool has no liquidity left (withdrawn by its provider)', { pool: pool.id });
+        if (side === 'sell') throw new TradeError('INSUFFICIENT_LIQUIDITY', 'uniswap-v4 pool has no buy-side liquidity yet (launch pool: sells fill once others have bought)', { pool: pool.id });
+      }
+    }
     const code = /NotEnoughLiquidity|SPL|LOK/.test(msg) ? 'INSUFFICIENT_LIQUIDITY' : 'QUOTE_FAILED';
     throw new TradeError(code, `${pool.venue} quote failed: ${msg}`, { pool: pool.id });
   }

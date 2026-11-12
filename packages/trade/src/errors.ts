@@ -9,6 +9,7 @@ export type TradeErrorCode =
   | 'UNSUPPORTED_VENUE' // e.g. PONS curve without a deployed fee router
   | 'QUOTE_FAILED'
   | 'INSUFFICIENT_LIQUIDITY'
+  | 'LIQUIDITY_REMOVED' // v4 pool with zero liquidity in both directions (the LP withdrew it)
   | 'CURVE_GRADUATED'
   | 'SNIPE_TAX_ACTIVE'
   | 'SIMULATION_REVERTED'

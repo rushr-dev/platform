@@ -14,12 +14,13 @@ import { useKeepWarm, useQuickTrade, type TradeToken } from './use-quick-trade';
  * "I understand" on the token page first.
  * Renders nothing unless trading is enabled.
  */
-export function QuickBuyButton({ token, amountEth }: { token: TradeToken; amountEth?: string }) {
+/** `subtle`: a tinted chip for dense lists (trenches cards, two per card); `solid` is the default. */
+export function QuickBuyButton({ token, amountEth, variant = 'solid' }: { token: TradeToken; amountEth?: string; variant?: 'solid' | 'subtle' }) {
   if (!tradingAvailable()) return null;
-  return <QuickBuyInner token={token} amountEth={amountEth} />;
+  return <QuickBuyInner token={token} amountEth={amountEth} variant={variant} />;
 }
 
-function QuickBuyInner({ token, amountEth }: { token: TradeToken; amountEth?: string }) {
+function QuickBuyInner({ token, amountEth, variant }: { token: TradeToken; amountEth?: string; variant: 'solid' | 'subtle' }) {
   const q = useQuickTrade(token);
   const [note, setNote] = useState<string | null>(null);
   const eth = amountEth ?? q.settings.quickBuy;
@@ -45,7 +46,7 @@ function QuickBuyInner({ token, amountEth }: { token: TradeToken; amountEth?: st
   const ackNeeded = q.trade?.blockers.some((b) => b.code === 'RISK_ACK_REQUIRED');
   const failedNote = q.status.kind === 'failed' ? (ackNeeded ? 'High risk: open the token page to confirm "I understand" first.' : q.status.message) : null;
 
-  const label = q.status.kind === 'success' ? 'Bought' : q.status.kind === 'pending' ? 'Sent' : q.status.kind === 'failed' ? 'Retry' : busy ? '…' : `${eth} ETH`;
+  const label = q.status.kind === 'success' ? 'Bought' : q.status.kind === 'pending' ? 'Sent' : q.status.kind === 'failed' ? 'Retry' : busy ? '…' : variant === 'subtle' ? eth : `${eth} ETH`;
   return (
     <span className="relative inline-flex">
       <button
@@ -59,7 +60,7 @@ function QuickBuyInner({ token, amountEth }: { token: TradeToken; amountEth?: st
         title={note ?? failedNote ?? (q.status.kind === 'success' ? `Confirmed in ${(q.status.ms / 1000).toFixed(1)}s` : `Quick buy ${eth} ETH of ${token.symbol}`)}
         aria-label={`Quick buy ${eth} ETH of ${token.symbol}`}
         className={`rounded-lg px-2 py-1 font-mono text-[11px] font-semibold transition disabled:opacity-50 ${
-          q.status.kind === 'success' ? 'bg-brand/20 text-brand' : q.status.kind === 'pending' ? 'bg-brand/20 text-brand' : q.status.kind === 'failed' || note ? 'bg-risk-high/20 text-risk-high' : 'bg-go text-bg hover:brightness-110'
+          q.status.kind === 'success' ? 'bg-brand/20 text-brand' : q.status.kind === 'pending' ? 'bg-brand/20 text-brand' : q.status.kind === 'failed' || note ? 'bg-risk-high/20 text-risk-high' : variant === 'subtle' ? 'bg-brand/15 text-brand hover:bg-brand/25' : 'bg-go text-bg hover:brightness-110'
         }`}
       >
         ⚡ {label}

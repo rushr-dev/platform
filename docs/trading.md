@@ -56,6 +56,29 @@ What changed:
 
 Not verified yet: a real signed trade on this path (only the founder trades). Unit tests cover the pipeline (cached nonce/fees, sync and polling broadcast, nonce error, mismatched or bare signatures never broadcast); the production build was checked as a signed-out visitor.
 
+### Uniswap v4 "every quote fails" (Terminal's report, 2026-11-12)
+
+The v4 quote engine was not broken. Quoter, StateView and the PoolManager they read all match the chain, and pool keys from Data's rows hash to the pools that actually trade. Reproduced on 30 high-volume v4 tokens with `scripts/pool-survey.ts`:
+
+- **Liquidity withdrawn (22 of 30 plain v4 launches, incl. Terminal's AGENTIX and mihao):**
+  - The creator adds full-range liquidity at launch through the v4 PositionManager and removes all of it minutes later. AGENTIX: added at block 112574025, removed at 112580140 (~10 min), after 222 swaps.
+  - Active liquidity is 0 and the quoter can't fill either direction.
+  - GIRAFF quoted fine at 21:10 and was drained by 21:40.
+  - These tokens still show volume and market cap in the API (`liquidity_usd` is null).
+  - Now: blocker `LIQUIDITY_REMOVED`, "No liquidity left: the pool's liquidity was withdrawn by its provider…".
+- **Launch pools with only the token side (Doppler, fresh launches):**
+  - Buys quote; sells can't fill until others have bought.
+  - That used to read as "no liquidity in range"; it now reads "Nothing to sell into yet…" and is never mislabelled as withdrawn (both directions are probed).
+- **Hooks that reject a direction:** e.g. LLEAK's hook reverts sells with `0x6570f956`. Now: "This token's pool hook rejects sells right now (…)".
+- **Doppler tokens priced in USDG or a stock token** (92 of 100 Doppler launches; NVDA, SPCX, TTWO…):
+  - Routing ETH through that asset (multi-hop) isn't built.
+  - Now: blocker `NON_ETH_QUOTE`, "This token trades against USDG, not ETH…", instead of "no pool".
+- **Work:** plain v4 with native ETH (FLC), hooked v4 with WETH (LLEAK buys), Doppler with a WETH numeraire (E/ACC buys), graduated PONS.
+
+**Tests:**
+- Offline: `test/v4-classify.test.ts` (withdrawn vs one-sided vs non-ETH).
+- Live: `test/live/v4.live.test.ts` (`pnpm --filter @rushr/trade test:live`; read-only quotes plus `eth_simulateV1` buys and sells, skipped by default since chain state moves).
+
 ### Guardrails (client)
 - **Per-trade cap:** on the ETH side (buy input, expected sell output), from Terminal's `/settings`. Note: Terminal's default is 0.5 ETH, while the founder's spec said 0.25 ETH; the default lives in `lib/settings.ts` (Terminal).
 - **Slippage:** automatic. 5% base; +3% for tokens under 1 h old, +5% under 10 min; +3%/+5% for 5-min moves above 20%/50%; plus extra for impact above 2%. Capped at 15%, then the measured token tax is added on top, Terminal's `/settings` chooses **auto** (this) or a **fixed** percentage.
