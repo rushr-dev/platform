@@ -16,6 +16,7 @@ interface IPonsCurveViews {
 contract RushrPonsRouterForkTest is Test {
     IPonsFactory constant PONS_FACTORY = IPonsFactory(0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e);
     address treasury = makeAddr("treasury");
+    address guardian = makeAddr("guardian");
     address trader = makeAddr("trader");
     RushrPonsRouter router;
     address token;
@@ -31,7 +32,7 @@ contract RushrPonsRouterForkTest is Test {
         vm.createSelectFork(rpc);
         token = vm.envOr("PONS_CURVE_TOKEN", address(0x89964D7fCd9cDeE7c1e4FdC17b997Bb979B05525));
         (, curve) = PONS_FACTORY.getLaunchedToken(token);
-        router = new RushrPonsRouter(PONS_FACTORY, treasury, 50, 45);
+        router = new RushrPonsRouter(PONS_FACTORY, treasury, 50, 45, guardian, 1 hours);
         vm.deal(trader, 100 ether);
     }
 

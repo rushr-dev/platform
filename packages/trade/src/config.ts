@@ -3,10 +3,19 @@ import { TRADE_ADDRESSES } from './addresses';
 import { TradeError } from './errors';
 
 /**
- * Platform fee configuration. PLACEHOLDER VALUES: the founder sets the real treasury (a multisig) and
- * rate. While the recipient is the placeholder, quotes and simulations work but `assertSignable`
- * refuses to hand a transaction to a wallet.
+ * Platform fee configuration.
+ *
+ * Treasury (founder decision 2026-11-12): the founder's own wallet, an EOA with no code on 4663. Known
+ * risk (docs/trading.md): a single key. Mitigations: hardware-wallet key, regular sweeps, move to a Safe
+ * before volume grows. The on-chain routers can switch to a Safe later through their guardian timelock
+ * (TreasuryTimelock); this default must then be updated to match.
+ *
+ * A real treasury no longer gates signing by itself: one-click (server-signed) trading is gated by
+ * `assertOneClickAllowed` (RushrRouter deployed AND audited), the web UI by NEXT_PUBLIC_SWAP_ENABLED.
  */
+export const RUSHR_TREASURY: Address = '0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40';
+
+/** Kept for tests and forks: a config using it is refused by `assertSignable`. */
 export const PLACEHOLDER_FEE_RECIPIENT: Address = '0x000000000000000000000000000000000000fee1';
 
 /** Hard cap so a bad config can never take more than 3% of a trade. */
@@ -39,7 +48,7 @@ export const DEFAULT_TRADE_CONFIG: TradeConfig = {
   feeBps: 50,
   referralDiscountBps: 1_000,
   referrerShareBps: 2_000,
-  feeRecipient: PLACEHOLDER_FEE_RECIPIENT,
+  feeRecipient: RUSHR_TREASURY,
   universalRouter: TRADE_ADDRESSES.universalRouter,
   ponsRouter: null,
   rushrRouter: null,

@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {TreasuryTimelock} from "../src/TreasuryTimelock.sol";
 import {RushrRouter, IUniversalRouter} from "../src/RushrRouter.sol";
 
 /// @notice Access control, timelock, validation and pause, without a fork. Swap paths are covered by
@@ -38,11 +39,11 @@ contract RushrRouterTest is Test {
         new RushrRouter(IUniversalRouter(UR), WETH, treasury, 301, 0, guardian, operator, 1 hours, none);
         vm.expectRevert(RushrRouter.FeeTooHigh.selector);
         new RushrRouter(IUniversalRouter(UR), WETH, treasury, 50, 51, guardian, operator, 1 hours, none);
-        vm.expectRevert(RushrRouter.DelayTooShort.selector);
+        vm.expectRevert(TreasuryTimelock.DelayTooShort.selector);
         new RushrRouter(IUniversalRouter(UR), WETH, treasury, 50, 45, guardian, operator, 5 minutes, none);
-        vm.expectRevert(RushrRouter.ZeroAddress.selector);
+        vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
         new RushrRouter(IUniversalRouter(UR), WETH, address(0), 50, 45, guardian, operator, 1 hours, none);
-        vm.expectRevert(RushrRouter.ZeroAddress.selector);
+        vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
         new RushrRouter(IUniversalRouter(UR), WETH, treasury, 50, 45, address(0), operator, 1 hours, none);
         assertTrue(router.hookAllowed(address(0)));
         assertFalse(router.hookAllowed(lift));
@@ -79,7 +80,7 @@ contract RushrRouterTest is Test {
         vm.stopPrank();
 
         vm.prank(alice);
-        vm.expectRevert(RushrRouter.NotGuardian.selector);
+        vm.expectRevert(TreasuryTimelock.NotGuardian.selector);
         router.setPaused(true);
         vm.prank(guardian);
         router.setPaused(true);
@@ -129,7 +130,7 @@ contract RushrRouterTest is Test {
         assertEq(router.queuedAt(key), 0);
 
         vm.prank(operator);
-        vm.expectRevert(RushrRouter.NotGuardian.selector);
+        vm.expectRevert(TreasuryTimelock.NotGuardian.selector);
         router.removeSellPool(key);
         vm.prank(guardian);
         router.removeSellPool(key);
@@ -155,7 +156,7 @@ contract RushrRouterTest is Test {
 
     function test_operatorRotationOnlyByGuardian() public {
         vm.prank(operator);
-        vm.expectRevert(RushrRouter.NotGuardian.selector);
+        vm.expectRevert(TreasuryTimelock.NotGuardian.selector);
         router.setOperator(alice);
         vm.prank(guardian);
         router.setOperator(alice);

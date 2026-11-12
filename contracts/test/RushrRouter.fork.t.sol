@@ -78,6 +78,25 @@ contract RushrRouterForkTest is Test {
         _roundTrip(_routes()[0], true);
     }
 
+    /// After a timelocked treasury change, real Universal Router buys pay the fee to the new treasury.
+    function test_fork_feesGoToNewTreasuryAfterTimelock() public {
+        if (noFork) return;
+        address safe = makeAddr("safe");
+        RushrRouter.Route memory r = _routes()[2];
+        vm.prank(guardian);
+        router.queueTreasury(safe);
+        vm.prank(trader);
+        router.buy{value: 0.01 ether}(r, 1, block.timestamp + 60, false);
+        assertEq(treasury.balance, 0.00005 ether, "still the old treasury while queued");
+
+        vm.warp(block.timestamp + 1 hours);
+        router.activateTreasury();
+        vm.prank(trader);
+        router.buy{value: 0.01 ether}(r, 1, block.timestamp + 60, false);
+        assertEq(safe.balance, 0.00005 ether, "new treasury after activation");
+        assertEq(treasury.balance, 0.00005 ether, "old treasury unchanged");
+    }
+
     function _roundTrip(RushrRouter.Route memory r, bool referred) internal {
         uint256 bps = referred ? 45 : 50;
         uint256 urToken0 = IERC20R(r.token).balanceOf(address(UR));

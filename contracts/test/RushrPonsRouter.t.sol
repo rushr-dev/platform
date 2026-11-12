@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {TreasuryTimelock} from "../src/TreasuryTimelock.sol";
 import {RushrPonsRouter, IPonsFactory} from "../src/RushrPonsRouter.sol";
 import {MockToken, MockCurve, MockFactory, RejectingTreasury} from "./Mocks.sol";
 
@@ -14,6 +15,7 @@ contract RushrPonsRouterTest is Test {
     MockFactory factory;
     RushrPonsRouter router;
     address treasury = makeAddr("treasury");
+    address guardian = makeAddr("guardian");
     address alice = makeAddr("alice");
     uint256 deadline;
 
@@ -35,7 +37,7 @@ contract RushrPonsRouterTest is Test {
         token.mint(address(curve), 1e27);
         factory = new MockFactory();
         factory.set(address(token), address(curve));
-        router = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, FEE, REF_FEE);
+        router = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, FEE, REF_FEE, guardian, 1 hours);
         vm.deal(alice, 100 ether);
         deadline = block.timestamp + 300;
     }
@@ -49,13 +51,13 @@ contract RushrPonsRouterTest is Test {
 
     function test_constructorValidates() public {
         vm.expectRevert(RushrPonsRouter.FeeTooHigh.selector);
-        new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 301, 0);
+        new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 301, 0, guardian, 1 hours);
         vm.expectRevert(RushrPonsRouter.FeeTooHigh.selector);
-        new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 50, 51); // referral rate above base
-        vm.expectRevert(RushrPonsRouter.ZeroAddress.selector);
-        new RushrPonsRouter(IPonsFactory(address(factory)), address(0), 50, 45);
-        vm.expectRevert(RushrPonsRouter.ZeroAddress.selector);
-        new RushrPonsRouter(IPonsFactory(address(0)), treasury, 50, 45);
+        new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 50, 51, guardian, 1 hours); // referral rate above base
+        vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
+        new RushrPonsRouter(IPonsFactory(address(factory)), address(0), 50, 45, guardian, 1 hours);
+        vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
+        new RushrPonsRouter(IPonsFactory(address(0)), treasury, 50, 45, guardian, 1 hours);
         assertEq(router.feeBps(), 50);
         assertEq(router.referralFeeBps(), 45);
         assertEq(router.treasury(), treasury);
@@ -114,7 +116,8 @@ contract RushrPonsRouterTest is Test {
         bps = uint16(bound(bps, 0, 300));
         uint16 refBps = bps / 2;
         uint256 v = bound(value, 1e9, 50 ether);
-        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, bps, refBps);
+        RushrPonsRouter r =
+            new RushrPonsRouter(IPonsFactory(address(factory)), treasury, bps, refBps, guardian, 1 hours);
         uint256 before = treasury.balance;
         vm.prank(alice);
         r.buy{value: v}(address(token), 0, alice, deadline, referred);
@@ -239,7 +242,7 @@ contract RushrPonsRouterTest is Test {
         vm.expectRevert(RushrPonsRouter.ZeroAmount.selector);
         router.buy{value: 0}(address(token), 0, alice, deadline, false);
         vm.prank(alice);
-        vm.expectRevert(RushrPonsRouter.ZeroAddress.selector);
+        vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
         router.buy{value: 1 ether}(address(token), 0, address(0), deadline, false);
         vm.prank(alice);
         vm.expectRevert(RushrPonsRouter.ZeroAmount.selector);
@@ -270,15 +273,16 @@ contract RushrPonsRouterTest is Test {
     }
 
     function test_failingTreasuryRevertsTrade() public {
-        RushrPonsRouter r =
-            new RushrPonsRouter(IPonsFactory(address(factory)), address(new RejectingTreasury()), FEE, REF_FEE);
+        RushrPonsRouter r = new RushrPonsRouter(
+            IPonsFactory(address(factory)), address(new RejectingTreasury()), FEE, REF_FEE, guardian, 1 hours
+        );
         vm.prank(alice);
         vm.expectRevert(RushrPonsRouter.EthTransferFailed.selector);
         r.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
     }
 
     function test_zeroFee() public {
-        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 0, 0);
+        RushrPonsRouter r = new RushrPonsRouter(IPonsFactory(address(factory)), treasury, 0, 0, guardian, 1 hours);
         vm.prank(alice);
         r.buy{value: 1 ether}(address(token), 0, alice, deadline, false);
         assertEq(treasury.balance, 0);
