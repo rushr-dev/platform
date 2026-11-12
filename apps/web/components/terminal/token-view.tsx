@@ -20,9 +20,9 @@ import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, us
 import { TradesTable } from './trades-table';
 
 /** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
-const TradeBox = dynamic(() => import('@/components/trade/trade-box').then((m) => m.TradeBox), {
+const TradePanel = dynamic(() => import('./trade-panel').then((m) => m.TradePanel), {
   ssr: false,
-  loading: () => <div className="h-[230px] animate-pulse rounded-2xl border border-white/[0.06] bg-surface" />,
+  loading: () => <div className="h-[380px] shrink-0 animate-pulse rounded-2xl border border-white/[0.06] bg-surface" />,
 });
 
 type Pools = ReturnType<typeof mergePools>;
@@ -160,7 +160,9 @@ export function TokenView({
             <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
           </div>
           {tradingAvailable() ? (
-            <TradeBox
+            <TradePanel
+              priceUsd={priceNow}
+              trades={trades}
               token={{
                 address: t.address as `0x${string}`,
                 symbol: t.symbol,

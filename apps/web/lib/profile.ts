@@ -131,14 +131,14 @@ export function useProfileMember(ref: string | null, tick = 0): Loadable<Profile
   return useJson(ref ? `${V1}/members/${encodeURIComponent(ref)}` : null, (b) => (b as { member?: ProfileMember }).member ?? null, { tick });
 }
 
-export function useWalletPnl(wallet: string | null): Loadable<{ summary: PnlSummary | null; positions: Position[] }> {
+export function useWalletPnl(wallet: string | null, tick = 0): Loadable<{ summary: PnlSummary | null; positions: Position[] }> {
   return useJson(
     wallet ? `${API_URL}/wallets/${wallet.toLowerCase()}/pnl` : null,
     (b) => {
       const body = b as { summary?: PnlSummary | null; positions?: Position[] };
       return Array.isArray(body.positions) ? { summary: body.summary ?? null, positions: body.positions } : null;
     },
-    { refreshMs: 30_000 },
+    { refreshMs: 30_000, tick },
   );
 }
 
