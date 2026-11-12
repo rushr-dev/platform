@@ -144,3 +144,9 @@ The token page's trade panel reads the wallet's position for that token from `/w
 - On submit, the panel waits for a quote whose `quote.request` matches the side and amount, then calls `execute()`. It applies an optimistic balance when `status` is `pending` on the last call, and re-reads on `success` or `failed`. If you change the status shape or add an "onBroadcast" hook while cutting signing latency, tell Terminal.
 - `useQuickTrade(token)` builds a new `prepare` and `execute` on every render when the caller passes a fresh `token` object. Memoising on `token.address` (and the fields used) would let callers use them in effect dependencies.
 - **Bug:** quotes fail for every Uniswap v4 token tried (AGENTIX `0xa5d7…a540`, mihao `0xafd3…7777`): `NO_ROUTE: Every pool failed to quote (no liquidity in range)`. This reproduces in Node with `quickBuy` and the API pool rows, so it isn't the UI. Doppler tokens give "No Uniswap pool with ETH liquidity", and PONS tokens give CURVE_NOT_GRADUATED as expected.
+
+### Terminal → Data: wallet holdings (2026-11-12)
+The wallet drawer and the profile's wallet card list every token a wallet holds. Today the list comes from `/wallets/:w/pnl` positions, with amounts read on-chain. Please add:
+- `GET /wallets/:w/holdings` → `{ items: [{ token, symbol, name, image_url, decimals, balance (raw string), price_usd, price_change_24h_pct, value_usd }], eth_usd, eth_change_24h_pct }`, covering every token with a non-zero balance (not capped at 100), sorted by value.
+- Until then, adding `price_change_24h_pct` and `decimals` to the positions entries would cover per-token 24h % in the list. The wallet's total 24h change only shows when most of its value has a known change.
+- `held_tokens` in `/wallets/:w/pnl` can be wrong. Wallet `0x8876…0904` lists 100 positions with held_tokens > 0, but `balanceOf` is 0 for all of them (likely transfers out that aren't tracked). The wallet views trust the chain for amounts.
