@@ -10,9 +10,9 @@ import { UserAvatar } from './account-menu';
 
 const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
 
-/** A starting handle from the X username or the email's local part. */
+/** A starting handle from the email's local part (sign-in is email or wallet). */
 function suggestHandle(u: AuthUser | null): string {
-  const raw = u?.twitter?.username ?? u?.email?.split('@')[0] ?? '';
+  const raw = u?.email?.split('@')[0] ?? '';
   const s = raw.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20);
   return s.length >= 3 ? s : '';
 }

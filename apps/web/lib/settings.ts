@@ -14,8 +14,11 @@ export interface TradeSettings {
   sellPresets: [number, number, number];
   /** The amount trenches' one-tap Buy uses, in ETH. */
   quickBuy: string;
-  /** Max slippage, percent. */
-  slippagePct: number;
+  /**
+   * Slippage: 'auto' (5–15% from the token's age, volatility and price impact, plus its measured
+   * tax) or a fixed percentage.
+   */
+  slippagePct: number | 'auto';
   /** Per-trade cap in ETH: buys above it are refused before signing. */
   maxTradeEth: number;
 }
@@ -24,14 +27,21 @@ export const DEFAULT_SETTINGS: TradeSettings = {
   buyPresets: ['0.01', '0.05', '0.1', '0.5'],
   sellPresets: [25, 50, 100],
   quickBuy: '0.01',
-  slippagePct: 10,
-  maxTradeEth: 0.5,
+  slippagePct: 'auto',
+  // Founder spec: 0.25 ETH per trade unless the user raises it.
+  maxTradeEth: 0.25,
 };
 
 /** Hard bounds the settings page enforces. */
 export const LIMITS = { slippagePct: [0.1, 50], maxTradeEth: [0.001, 5] } as const;
 
-const KEY = 'rushr.settings';
+/**
+ * v2: slippage 'auto' and a 0.25 ETH cap became the defaults. Saves under the first key held the old
+ * defaults (every quick-buy change wrote the whole object), so only presets and the quick-buy
+ * amount carry over; slippage and cap start from the new defaults.
+ */
+const KEY = 'rushr.settings.v2';
+const V1_KEY = 'rushr.settings';
 const LEGACY_QUICK_KEY = 'rushr.quickbuy';
 
 let current: TradeSettings = DEFAULT_SETTINGS;
@@ -43,8 +53,18 @@ function load() {
   loaded = true;
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<TradeSettings> | null;
-    const legacyQuick = localStorage.getItem(LEGACY_QUICK_KEY);
-    current = sanitize({ ...DEFAULT_SETTINGS, ...(legacyQuick && !raw?.quickBuy ? { quickBuy: legacyQuick } : {}), ...(raw ?? {}) });
+    if (raw) {
+      current = sanitize({ ...DEFAULT_SETTINGS, ...raw });
+    } else {
+      const v1 = JSON.parse(localStorage.getItem(V1_KEY) ?? 'null') as Partial<TradeSettings> | null;
+      const legacyQuick = localStorage.getItem(LEGACY_QUICK_KEY);
+      current = sanitize({
+        ...DEFAULT_SETTINGS,
+        ...(v1?.buyPresets ? { buyPresets: v1.buyPresets } : {}),
+        ...(v1?.sellPresets ? { sellPresets: v1.sellPresets } : {}),
+        ...(v1?.quickBuy || legacyQuick ? { quickBuy: (v1?.quickBuy ?? legacyQuick)! } : {}),
+      });
+    }
   } catch {
     // storage unavailable: defaults for this visit
   }
@@ -59,12 +79,19 @@ const ethStr = (v: unknown, fallback: string) => {
   return /^\d*\.?\d+$/.test(s) && Number(s) > 0 ? s : fallback;
 };
 
+/** 'auto', or a fixed percentage within bounds; anything unreadable falls back to 'auto'. */
+function slippageOf(v: unknown): TradeSettings['slippagePct'] {
+  if (v === 'auto' || v === null || v === undefined || v === '') return 'auto';
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(LIMITS.slippagePct[1], Math.max(LIMITS.slippagePct[0], n)) : 'auto';
+}
+
 export function sanitize(s: TradeSettings): TradeSettings {
   return {
     buyPresets: [0, 1, 2, 3].map((i) => ethStr(s.buyPresets?.[i], DEFAULT_SETTINGS.buyPresets[i]!)) as TradeSettings['buyPresets'],
     sellPresets: [0, 1, 2].map((i) => num(s.sellPresets?.[i], 1, 100, DEFAULT_SETTINGS.sellPresets[i]!)) as TradeSettings['sellPresets'],
     quickBuy: ethStr(s.quickBuy, DEFAULT_SETTINGS.quickBuy),
-    slippagePct: num(s.slippagePct, LIMITS.slippagePct[0], LIMITS.slippagePct[1], DEFAULT_SETTINGS.slippagePct),
+    slippagePct: slippageOf(s.slippagePct),
     maxTradeEth: num(s.maxTradeEth, LIMITS.maxTradeEth[0], LIMITS.maxTradeEth[1], DEFAULT_SETTINGS.maxTradeEth),
   };
 }
