@@ -33,10 +33,10 @@ const FLUSH_MS = 200;
 const POLL_MS = 2_000;
 /**
  * Most v3/v2 pool addresses on the live pair-swap subscription (env PAIR_SUB_MAX overrides). Measured
- * 2026-11-12: 276 pools ≈ 243 KB/min (≈10.5 GB/month) against an approved ~4.3 GB/month, so 150 by
- * default; the rest arrive by polling 2-4s later.
+ * 2026-11-12: 276 pools ≈ 243 KB/min (≈10.5 GB/month), 150 pools ≈ 161 KB/min (≈7.1 GB/month), against
+ * an approved ~4.3 GB/month, so 75 by default; the rest arrive by polling 2-4s later.
  */
-const PAIR_SUB_MAX = 150;
+const PAIR_SUB_MAX = 75;
 /** Recompute a token's signals at most this often while it's trading. */
 const SIGNAL_DEBOUNCE_MS = 15_000;
 
