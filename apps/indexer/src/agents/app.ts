@@ -3,6 +3,8 @@
 import { Hono } from 'hono';
 import { auth, body, db, errorResponse, flag, ip, type Ctx } from './http';
 import { members } from './members';
+import { social } from './social';
+export { adminV1 } from './admin';
 
 export const v1 = new Hono<Ctx>();
 
@@ -11,3 +13,4 @@ v1.notFound((c) => c.json({ error: { code: 'not_found', message: 'No such endpoi
 v1.use('*', flag('AGENTS_ENABLED', 'The members API'), db, ip, body, auth);
 
 v1.route('/', members);
+v1.route('/', social);

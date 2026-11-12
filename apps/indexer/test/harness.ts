@@ -3,7 +3,7 @@
 import { vi } from 'vitest';
 import { freshDb, pgAvailable } from '../../../packages/agents/test/pg';
 import { setPrivyKeys } from '../src/agents/privy';
-import { v1 } from '../src/agents/app';
+import { v1, adminV1 } from '../src/agents/app';
 
 export { pgAvailable };
 export const APP_ID = 'test-app';
@@ -69,8 +69,22 @@ export async function setup(name: string, envOverrides: Record<string, string> =
     return { status: res.status, headers: res.headers, json: (text ? JSON.parse(text) : null) as any };
   }
 
+  /** Sign a human up (no invite needed unless the env requires it). Returns { token, member }. */
+  async function signup(handle: string, wallet: string) {
+    const tok = await human(`did:privy:${handle}`, wallet);
+    const r = await call('POST', '/me', { auth: tok, body: { handle } });
+    if (r.status !== 201) throw new Error(`signup ${handle}: ${JSON.stringify(r.json)}`);
+    return { token: tok, member: r.json.member as { id: string; handle: string; wallet: string } };
+  }
+
+  async function admin(method: string, path: string, body?: unknown) {
+    const res = await adminV1.request(path, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) }, env);
+    const text = await res.text();
+    return { status: res.status, json: (text ? JSON.parse(text) : null) as any };
+  }
+
   return {
-    sql, env, token, human, call, privyUsers,
+    sql, env, token, human, call, signup, admin, privyUsers,
     teardown: async () => {
       vi.unstubAllGlobals();
       await setPrivyKeys(APP_ID, null);

@@ -1,6 +1,6 @@
 // Rate limits and pooled quotas. Fixed windows; the counters live in Postgres (api_usage).
 
-export type Bucket = 'read' | 'quote' | 'build' | 'nonce' | 'register' | 'link_code' | 'write';
+export type Bucket = 'read' | 'quote' | 'build' | 'nonce' | 'register' | 'link_code' | 'write' | 'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback';
 
 export interface Limit {
   bucket: Bucket;
@@ -52,3 +52,17 @@ export function windowStart(now: Date, windowSec: number): Date {
 export function retryAfter(now: Date, windowSec: number): number {
   return Math.max(1, Math.ceil((windowStart(now, windowSec).getTime() + windowSec * 1000 - now.getTime()) / 1000));
 }
+
+/** Social spam guard, per member, on top of the generic write limit. */
+export const SOCIAL_LIMITS: Record<'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback', Limit> = {
+  callout: { bucket: 'callout', max: 10, windowSec: 3600 },
+  callout_day: { bucket: 'callout_day', max: 30, windowSec: 86_400 },
+  comment: { bucket: 'comment', max: 30, windowSec: 3600 },
+  like: { bucket: 'like', max: 200, windowSec: 3600 },
+  follow: { bucket: 'follow', max: 100, windowSec: 3600 },
+  report: { bucket: 'report', max: 20, windowSec: 86_400 },
+  feedback: { bucket: 'feedback', max: 10, windowSec: 3600 },
+};
+
+/** Reports from this many distinct members hide a callout or comment until a moderator looks. */
+export const AUTO_HIDE_REPORTS = 3;
