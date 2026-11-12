@@ -7,6 +7,14 @@ import { httpCandidates } from '@rushr/core';
  */
 const MAX_BYTES = 4 * 1024 * 1024;
 const ALLOWED = /^image\/(png|jpe?g|gif|webp|avif)$/i;
+/** Some CDNs (e.g. cdn.anoncoin.it, behind most Doppler icons) answer 403 to requests without one. */
+const USER_AGENT = 'Mozilla/5.0 (compatible; RushrBot/1.0; +https://rushr.trade)';
+
+/**
+ * Workers allow 6 open connections per request: every response we don't use must have its body
+ * cancelled, or the next candidates queue behind it.
+ */
+const discard = (res: Response) => res.body?.cancel().catch(() => undefined);
 
 export async function GET(req: Request) {
   const u = new URL(req.url).searchParams.get('u');
@@ -16,14 +24,21 @@ export async function GET(req: Request) {
     // Public hosts only: no IP literals or local names.
     const host = new URL(url).hostname;
     if (/^[\d.]+$|^\[|localhost|\.local$|\.internal$/i.test(host)) continue;
+    let res: Response | undefined;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(6_000), headers: { accept: 'image/*' } });
+      res = await fetch(url, {
+        signal: AbortSignal.timeout(6_000),
+        headers: { accept: 'image/avif,image/webp,image/png,image/jpeg,image/gif,image/*;q=0.8', 'user-agent': USER_AGENT },
+      });
       const type = res.headers.get('content-type')?.split(';')[0]?.trim() ?? '';
-      if (!res.ok || !ALLOWED.test(type)) continue;
       const len = Number(res.headers.get('content-length') ?? 0);
-      if (len > MAX_BYTES) continue;
+      // Not OK, not a raster image (missing type included) or too big: drop it and try the next.
+      if (!res.ok || !ALLOWED.test(type) || len > MAX_BYTES) {
+        await discard(res);
+        continue;
+      }
       const body = await res.arrayBuffer();
-      if (body.byteLength > MAX_BYTES) continue;
+      if (body.byteLength > MAX_BYTES || body.byteLength === 0) continue;
       return new Response(body, {
         headers: {
           'content-type': type,
@@ -32,7 +47,8 @@ export async function GET(req: Request) {
         },
       });
     } catch {
-      // try the next source
+      // Timeout or network error; release the body if headers had arrived, then try the next source.
+      if (res && !res.bodyUsed) await discard(res);
     }
   }
   return new Response('not found', { status: 404, headers: { 'cache-control': 'public, max-age=300' } });
