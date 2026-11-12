@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Publish the open parts of this repo to their public GitHub repos:
 #   packages/core -> rushr-dev/rushr-core  (history kept via git subtree split)
+#   contracts     -> rushr-dev/contracts   (history kept via git subtree split)
 #   registry JSON -> rushr-dev/registry    (generated from packages/core)
 #   oss/profile   -> rushr-dev/rushr-dev   (account profile README)
 # Run after committing to main: pnpm publish:oss
@@ -19,6 +20,10 @@ remote() { echo "git@github.com:rushr-dev/$1.git"; }
 echo "== rushr-core"
 git subtree split --prefix packages/core -b core-mirror -q
 git push "$(remote rushr-core)" core-mirror:main
+
+echo "== contracts"
+git subtree split --prefix contracts -b contracts-mirror -q
+git push "$(remote contracts)" contracts-mirror:main
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

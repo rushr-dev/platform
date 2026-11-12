@@ -14,13 +14,16 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
+    "@privy-io/react-auth": "3.51.0",
     "@rushr/core": "workspace:*",
+    "@rushr/trade": "workspace:*",
     "d3-force": "^3.0.1",
     "lightweight-charts": "^5.2.1",
     "motion": "^14.11.1",
     "next": "^15.5.29",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "viem": "^2.57.17"
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "^1.20.16",

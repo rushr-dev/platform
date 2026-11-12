@@ -1,15 +1,21 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
-import { dbUrl, poller as pollerOf, type Env, type EnrichMessage } from './env';
+import { dbUrl, holderHistory, poolHistory, poller as pollerOf, type Env, type EnrichMessage } from './env';
 import { Rpc } from './rpc';
 import { recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
+import { GATEWAY_COUNT, gateway } from './gateway';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
 export { Backfiller } from './backfill';
+export { Gateway } from './gateway';
+export { TokenHydrator, RpcBudget } from './hydrator';
+
+/** Follow-up delays for launch metadata that wasn't loadable on the first try. */
+const METADATA_RETRY_S = [10, 60, 300, 1800];
 
 const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors());
@@ -73,6 +79,11 @@ app.post('/admin/poller/:action', async (c) => {
   const poller = pollerOf(c.env);
   if (c.req.param('action') === 'start') await poller.start();
   else if (c.req.param('action') === 'stop') await poller.stop();
+  else if (c.req.param('action') === 'restart') {
+    // After a deploy: make the running poller instance pick up the new code (alarm and cursor are kept).
+    await poller.restart().catch(() => undefined);
+    return c.json({ restarted: true });
+  }
   else if (c.req.param('action') === 'backfill-launches') return c.json({ tokens: await poller.backfillLaunches() });
   else return c.json({ error: 'unknown action' }, 400);
   return c.json(await poller.status());
@@ -106,19 +117,61 @@ app.get('/admin/backfill', async (c) => {
   return c.json(await job.status());
 });
 
+// Pool-history backfill (last 48h of swaps of newly discovered pools). POST ?token=<address> queues all its pools.
+app.get('/admin/pools', async (c) => c.json(await poolHistory(c.env).poolStatus()));
+app.post('/admin/pools/keys', async (c) => {
+  await poolHistory(c.env).fillKeys();
+  return c.json({ started: true });
+});
+app.post('/admin/pools/backfill', async (c) => {
+  const token = c.req.query('token')?.toLowerCase();
+  if (!token) return c.json({ error: 'token required' }, 400);
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const rows = await sql<{ id: string }[]>`select id from pools where token = ${token}`;
+    await poolHistory(c.env).enqueuePools(rows.map((r) => r.id));
+    return c.json({ queued: rows.length });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+// Full-history holder backfill. POST ?tokens=a,b,c, or ?top=N for the N tracked tokens with the most 24h volume.
+app.get('/admin/holders', async (c) => c.json(await holderHistory(c.env).holderStatus()));
+app.post('/admin/holders/backfill', async (c) => {
+  let tokens = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const top = Number(c.req.query('top') ?? 0);
+  if (top > 0) {
+    const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+    try {
+      const rows = await sql<{ address: string }[]>`select address from tokens order by volume_24h_usd desc nulls last limit ${Math.min(top, 200)}`;
+      tokens = [...tokens, ...rows.map((r) => r.address)];
+    } finally {
+      await sql.end({ timeout: 5 });
+    }
+  }
+  if (!tokens.length) return c.json({ error: 'tokens or top required' }, 400);
+  await holderHistory(c.env).enqueueHolders(tokens);
+  return c.json({ queued: tokens.length });
+});
+
 // Dev: resolve icon and socials for every token that hasn't been tried yet.
 app.post('/admin/metadata/all', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
     // ?missing=1 also retries tokens that were checked but still have no icon (e.g. a DexScreener profile appeared since).
     const missing = c.req.query('missing') === '1';
+    // ?full=1: re-read launchpad metadata too (not just DexScreener), e.g. after the resolver learned new sources.
+    const full = c.req.query('full') === '1';
+    const hours = Number(c.req.query('hours') ?? 0);
     const rows = await sql<{ address: string; tried: boolean }[]>`
       select address, metadata_at is not null as tried from tokens
-      where metadata_at is null ${missing ? sql`or image_url is null` : sql``}
+      where (metadata_at is null ${missing ? sql`or image_url is null` : sql``})
+        ${hours > 0 ? sql`and created_at > now() - make_interval(hours => ${hours})` : sql``}
       order by holders desc`;
     for (let i = 0; i < rows.length; i += 100) {
       await c.env.METADATA_QUEUE.sendBatch(
-        rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried } })),
+        rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-metadata' as const, token: r.address, dexOnly: r.tried && !full } })),
       );
     }
     return c.json({ queued: rows.length });
@@ -144,6 +197,17 @@ app.use('*', async (c, next) => {
 app.route('/', api);
 
 app.get('/ws', (c) => {
+  // v2 (docs/realtime.md): snapshot + sequenced deltas, spread over the gateways. v1: the original feed.
+  if (c.req.query('v') === '2') {
+    // Auth hook: an API key in Sec-WebSocket-Protocol ("rushr.v2, key.<key>") will be validated here and
+    // passed on as the principal. Not enforced yet: everyone is anonymous with public topics.
+    const principal = { kind: 'anon', id: null, scopes: [] as string[] };
+    const k = Math.floor(Math.random() * GATEWAY_COUNT);
+    const headers = new Headers(c.req.raw.headers);
+    headers.set('x-gateway-index', String(k));
+    headers.set('x-principal', JSON.stringify(principal));
+    return gateway(c.env, k).fetch(new Request(c.req.raw, { headers }));
+  }
   const feed = c.env.LIVE_FEED.get(c.env.LIVE_FEED.idFromName('global'));
   return feed.fetch(c.req.raw);
 });
@@ -153,6 +217,22 @@ export default {
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
     await pollerOf(env).start();
+    // Every 15 minutes: holder backfill for tokens that matter (>= 50 holders or >= $10K 24h volume)
+    // whose Transfer history we don't have from the start (discovered mid-life, history too big then).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 5) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const rows = await sql<{ address: string }[]>`
+          select t.address from tokens t
+          where (t.holders >= 50 or t.volume_24h_usd >= 10000)
+            and not exists (select 1 from indexer_state i where i.key = 'holders:' || t.address)
+            and coalesce((select min(x.block) from transfers x where x.token = t.address), 0) > t.created_block + 100
+          order by t.volume_24h_usd desc nulls last limit 20`;
+        if (rows.length) await holderHistory(env).enqueueHolders(rows.map((r) => r.address));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
     // Every 15 minutes: retry metadata for active tokens that still have no icon, and any never tried.
     if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 0) {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
@@ -187,10 +267,15 @@ export default {
       for (let i = 0; i < metadata.length; i += 2) {
         await Promise.all(
           metadata.slice(i, i + 2).map(async (msg) => {
-            const { token, dexOnly } = msg.body as { token: string; dexOnly?: boolean };
+            const { token, dexOnly, attempt = 0 } = msg.body as { token: string; dexOnly?: boolean; attempt?: number };
             try {
-              await resolveMetadata(sql, rpc, token, { dexOnly });
+              const r = await resolveMetadata(sql, rpc, token, { dexOnly });
               refreshed.add(token);
+              // Metadata that isn't loadable yet (IPFS still propagating, CDN upload lagging the tx):
+              // look again soon rather than at the 15-minute sweep.
+              if (r.retry && attempt < METADATA_RETRY_S.length) {
+                await env.METADATA_QUEUE.send({ kind: 'token-metadata', token, attempt: attempt + 1 }, { delaySeconds: METADATA_RETRY_S[attempt]! });
+              }
               msg.ack();
             } catch (err) {
               console.error('metadata failed', token, err);
@@ -221,6 +306,7 @@ export default {
       if (refreshed.size) {
         const cards = await tokenSummaries(sql, { addresses: [...refreshed] });
         const feed = env.LIVE_FEED.get(env.LIVE_FEED.idFromName('global'));
+        await pollerOf(env).publishCards(cards).catch((err) => console.error('v2 card publish failed', err));
         await feed.publish(cards.flatMap((card) => [
           { topic: 'trenches', type: 'token' as const, data: card },
           { topic: `token:${card.address}`, type: 'token' as const, data: card },

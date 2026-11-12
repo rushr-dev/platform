@@ -21,6 +21,8 @@ export interface Tx {
   usd: number | null;
   /** Whole tokens (already divided by decimals). */
   tokens: number | null;
+  /** Maker tags from the server (v2 trades), merged with the ones the page derives. */
+  tags?: string[];
 }
 
 /** Socket payload from the indexer's live path. */
@@ -33,6 +35,7 @@ export interface LiveTrade {
   tokenAmount?: string;
   priceUsd: number | null;
   usd: number | null;
+  tags?: string[];
 }
 
 export function toWhole(raw: string | null | undefined, decimals: number): number | null {
@@ -66,6 +69,7 @@ export const fromLive = (t: LiveTrade, decimals: number): Tx => ({
   priceUsd: t.priceUsd,
   usd: t.usd,
   tokens: toWhole(t.tokenAmount, decimals),
+  tags: t.tags?.length ? t.tags : undefined,
 });
 
 /** Merge newest-first lists without duplicates, keeping at most `cap` rows. */
@@ -186,9 +190,10 @@ export function holderContext(deployer: string, holders: HolderInfo[] | null): M
 const TAG_ORDER: MakerTag[] = ['dev', 'whale', 'top10', 'sniper', 'bundler', 'insider', 'fresh', 'airdrop'];
 
 /** Tags for a wallet: from the holder snapshot, plus dev and whale (big holder or a big trade). */
-export function makerTags(wallet: string, ctx: MakerContext, tradeUsd?: number | null): MakerTag[] {
+export function makerTags(wallet: string, ctx: MakerContext, tradeUsd?: number | null, serverTags?: string[]): MakerTag[] {
   const h = ctx.holders.get(wallet);
   const tags = new Set<MakerTag>();
+  for (const t of serverTags ?? []) if ((TAG_ORDER as string[]).includes(t)) tags.add(t as MakerTag);
   if (wallet === ctx.deployer) tags.add('dev');
   if ((h && h.pct >= WHALE_PCT) || (tradeUsd ?? 0) >= WHALE_USD) tags.add('whale');
   if (h && h.rank <= 10) tags.add('top10');

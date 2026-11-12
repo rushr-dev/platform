@@ -22,21 +22,49 @@ import { BubbleMap, type BubbleData } from './bubblemap';
 import { TableSkeleton } from './trades-table';
 import { TagChip, TagList } from './tags';
 
+/** Retry interval while the API answers 202 (it is still fetching the token from chain). */
+const PENDING_RETRY_MS = 5_000;
+const PENDING_MAX_TRIES = 36;
+
+/**
+ * GET JSON once per URL. A 202 means the API is still fetching the token from chain: `pending`
+ * is set and the request retries every few seconds instead of treating the body as data.
+ */
 export function useFetch<T>(url: string | null) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState(false);
+  const [pending, setPending] = useState(false);
   useEffect(() => {
     if (!url) return;
     const ctl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
     setError(false);
-    fetch(url, { signal: ctl.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<T>) : Promise.reject(new Error(String(r.status)))))
-      .then(setData)
-      .catch((e: Error) => e.name !== 'AbortError' && setError(true));
-    return () => ctl.abort();
+    const run = () =>
+      fetch(url, { signal: ctl.signal })
+        .then(async (r) => {
+          if (r.status === 202) {
+            await r.body?.cancel();
+            setPending(true);
+            if (++tries < PENDING_MAX_TRIES) timer = setTimeout(run, PENDING_RETRY_MS);
+            else setError(true);
+            return;
+          }
+          if (!r.ok) throw new Error(String(r.status));
+          setPending(false);
+          setData((await r.json()) as T);
+        })
+        .catch((e: Error) => e.name !== 'AbortError' && setError(true));
+    void run();
+    return () => {
+      clearTimeout(timer);
+      ctl.abort();
+    };
   }, [url]);
-  return { data, error };
+  return { data, error, pending };
 }
+
+const Fetching = () => <Empty text="Still fetching this token from chain…" sub="This fills in as soon as the first blocks are read." />;
 
 export function Empty({ text, sub }: { text: string; sub?: string }) {
   return (
@@ -79,6 +107,7 @@ export function HoldersTab({
   holders,
   total,
   error,
+  pending = false,
   ctx,
   priceUsd,
   decimals,
@@ -87,6 +116,8 @@ export function HoldersTab({
   holders: HolderInfo[] | null;
   total: number;
   error: boolean;
+  /** The API is still fetching this token from chain (202). */
+  pending?: boolean;
   ctx: MakerContext;
   priceUsd: number | null;
   decimals: number;
@@ -97,6 +128,7 @@ export function HoldersTab({
     () => (holders ?? []).map((h, i) => ({ h, rank: i + 1, tags: makerTags(h.wallet, ctx) })),
     [holders, ctx],
   );
+  if (pending) return <Fetching />;
   if (error) return <Empty text="Couldn't load holders." />;
   if (!holders) return <TableSkeleton />;
   if (!holders.length) return <Empty text="No holders yet." />;
@@ -375,8 +407,9 @@ export function EarlyBuyersTab({
 /* ------------------------------------------------------------------ dev tokens */
 
 export function DevTokensTab({ deployer, self, serverNow }: { deployer: string; self: string; serverNow: number }) {
-  const { data, error } = useFetch<{ tokens: TokenCard[] }>(`${API_URL}/dev/${deployer}`);
+  const { data, error, pending } = useFetch<{ tokens: TokenCard[] }>(deployer ? `${API_URL}/dev/${deployer}` : null);
   const now = useNow(serverNow);
+  if (!deployer || pending) return <Fetching />;
   if (error) return <Empty text="Couldn't load the dev's tokens." />;
   if (!data) return <TableSkeleton />;
   const list = data.tokens.filter(Boolean);
@@ -441,7 +474,8 @@ export function DevTokensTab({ deployer, self, serverNow }: { deployer: string; 
 /* ------------------------------------------------------------------ bubble map */
 
 export function BubblesTab({ address }: { address: string }) {
-  const { data, error } = useFetch<BubbleData>(`${API_URL}/tokens/${address}/bubblemap`);
+  const { data, error, pending } = useFetch<BubbleData>(`${API_URL}/tokens/${address}/bubblemap`);
+  if (pending) return <Fetching />;
   if (error) return <Empty text="Couldn't load the bubble map." />;
   if (!data) return <TableSkeleton />;
   if (!data.nodes.length) return <Empty text="No holders to map yet." />;

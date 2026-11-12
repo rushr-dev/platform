@@ -54,6 +54,35 @@ function scan(data: string, seen: Set<string>, out: string[]) {
   }
 }
 
+const URL_CHAR = /[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]/;
+
+/**
+ * URLs packed into calldata without ABI encoding, as launch bots and routers do (fury.bot, j7m and
+ * others calling the PONS launcher): each string is preceded by a one-byte length. Falls back to the
+ * longest run of URL characters when the byte before doesn't fit.
+ */
+export function harvestPackedUrls(hex: string): string[] {
+  const bytes = hexToBytes(hex.startsWith('0x') ? hex.slice(2) : hex);
+  const text = new TextDecoder('latin1').decode(bytes);
+  const out = new Set<string>();
+  for (const m of text.matchAll(/(https?|ipfs|ar):\/\//g)) {
+    const start = m.index!;
+    const len = start > 0 ? bytes[start - 1]! : 0;
+    let url = '';
+    if (len >= 12 && start + len <= text.length) {
+      const span = text.slice(start, start + len);
+      if ([...span].every((c) => URL_CHAR.test(c))) url = span;
+    }
+    if (!url) {
+      let end = start;
+      while (end < text.length && URL_CHAR.test(text[end]!)) end++;
+      url = text.slice(start, end);
+    }
+    if (url.length >= 12) out.add(url);
+  }
+  return [...out];
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const b = new Uint8Array(hex.length / 2);
   for (let i = 0; i < b.length; i++) b[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
@@ -62,6 +91,12 @@ function hexToBytes(hex: string): Uint8Array {
 
 const isUrl = (s: string) => /^(https?:\/\/|ipfs:\/\/|ar:\/\/)\S+$/i.test(s.trim());
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|avif)(\?|$)/i;
+/** Image URLs without a file extension: `/png?seed=` (dicebear), `?format=webp`, ... */
+const IMAGE_HINT = /\/(png|jpe?g|gif|webp|svg|avif)(\/|\?|$)|[?&](format|ext|type)=(png|jpe?g|gif|webp)/i;
+/** A bare IPFS CID (some tokenURIs omit the ipfs:// scheme). */
+const BARE_CID = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})(\/\S*)?$/;
+/** Content on IPFS behind any gateway: https://<gw>/ipfs/<cid>, https://<cid>.ipfs.<gw>, ipfs://<cid>. */
+const IPFS_HTTP = /^https?:\/\/([^/]+\/ipfs\/|[a-z0-9]+\.ipfs\.)/i;
 const TWITTER = /^https?:\/\/(www\.)?(x|twitter)\.com\//i;
 const TELEGRAM = /^https?:\/\/(www\.)?(t\.me|telegram\.(me|org))\//i;
 
@@ -75,13 +110,41 @@ export function metadataUris(strings: string[]): string[] {
 /** Public IPFS gateways that still serve content directly, fastest first (checked Nov 2026). */
 export const IPFS_GATEWAYS = ['https://4everland.io/ipfs/', 'https://gateway.pinata.cloud/ipfs/'];
 
-/** HTTP URLs to try for a link: ipfs:// and ar:// expand to gateways, http(s) passes through. */
+/**
+ * HTTP URLs to try for a link: ipfs:// (and bare CIDs, and other gateways' /ipfs/ links) expand to
+ * gateways, ar:// to arweave, http(s) passes through. CIDv1 goes to 4everland's subdomain gateway
+ * first (~1s; its path gateway redirects there, and Pinata takes 5-8s for uncached content).
+ */
 export function httpCandidates(url: string): string[] {
   const u = url.trim();
-  const cid = u.match(/^ipfs:\/\/(?:ipfs\/)?(.+)$/i)?.[1] ?? u.match(/^https?:\/\/[^/]+\/ipfs\/(.+)$/i)?.[1];
-  if (cid) return IPFS_GATEWAYS.map((g) => g + cid);
+  const path =
+    u.match(/^ipfs:\/\/(?:ipfs\/)?(.+)$/i)?.[1] ??
+    u.match(/^https?:\/\/[^/]+\/ipfs\/(.+)$/i)?.[1] ??
+    (BARE_CID.test(u) ? u : undefined);
+  if (path) {
+    const [cid, ...rest] = path.split('/');
+    const sub = /^b[a-z2-7]{58,}$/.test(cid!) ? [`https://${cid}.ipfs.4everland.io/${rest.join('/')}`] : [];
+    // Another gateway named in the link itself goes after ours (they're often slow or gone).
+    const own = /^https?:\/\//i.test(u) && !IPFS_GATEWAYS.some((g) => u.startsWith(g)) ? [u] : [];
+    return [...sub, ...IPFS_GATEWAYS.map((g) => g + path), ...own];
+  }
   if (/^ar:\/\//i.test(u)) return [`https://arweave.net/${u.slice(5)}`];
   return /^https?:\/\//i.test(u) ? [u] : [];
+}
+
+/**
+ * URLs whose kind (image or metadata JSON) can't be told from the text: IPFS content, API routes,
+ * extension-less image services. The resolver fetches these and goes by Content-Type.
+ */
+export function ambiguousUrls(strings: string[]): string[] {
+  return [
+    ...new Set(
+      strings
+        .map((s) => s.trim())
+        .filter((s) => (isUrl(s) || BARE_CID.test(s)) && !TWITTER.test(s) && !TELEGRAM.test(s) && !IMAGE_EXT.test(s))
+        .filter((s) => BARE_CID.test(s) || /^ipfs:\/\//i.test(s) || IPFS_HTTP.test(s) || /\/api\//i.test(s) || IMAGE_HINT.test(s)),
+    ),
+  ];
 }
 
 function str(v: unknown): string | null {
@@ -92,7 +155,7 @@ function str(v: unknown): string | null {
 function fromJson(j: Record<string, unknown>): Partial<TokenLinks> & { links: string[] } {
   const ext = (j.extensions ?? j.properties ?? {}) as Record<string, unknown>;
   const links: string[] = [];
-  for (const key of ['social_links', 'socials', 'links']) {
+  for (const key of ['social_links', 'socials', 'links', 'socialMediaUrls']) {
     const v = j[key];
     if (Array.isArray(v)) for (const x of v) links.push(str((x as { url?: unknown })?.url) ?? str(x) ?? '');
     else if (v && typeof v === 'object') for (const x of Object.values(v)) links.push(str(x) ?? '');
@@ -120,8 +183,15 @@ function normaliseSocial(v: string | null, kind: 'twitter' | 'telegram'): string
  * Combine harvested strings and any fetched metadata JSON into one set of links.
  * JSON fields win; harvested strings fill the gaps.
  */
-export function classifyLinks(strings: string[], docs: Record<string, unknown>[], meta: { name: string; symbol: string }): TokenLinks {
+export function classifyLinks(
+  strings: string[],
+  docs: Record<string, unknown>[],
+  meta: { name: string; symbol: string },
+  /** URLs fetched and found to be images (by Content-Type), and ones that turned out to be JSON documents. */
+  probed: { images?: string[]; documents?: string[] } = {},
+): TokenLinks {
   const out: TokenLinks = { image: null, website: null, twitter: null, telegram: null, description: null };
+  const probedAway = new Set([...(probed.images ?? []), ...(probed.documents ?? [])]);
   const loose: string[] = [];
   for (const d of docs) {
     const j = fromJson(d);
@@ -132,13 +202,16 @@ export function classifyLinks(strings: string[], docs: Record<string, unknown>[]
     out.description ??= j.description ?? null;
     loose.push(...j.links);
   }
+  // A URL confirmed to serve an image beats guessing from the text.
+  out.image ??= probed.images?.[0] ?? null;
   const metaUris = new Set(metadataUris(strings));
   for (const s of [...loose, ...strings].map((x) => x.trim())) {
-    if (!isUrl(s) || metaUris.has(s)) continue;
+    if (!isUrl(s) || metaUris.has(s) || probed.documents?.includes(s)) continue;
     if (TWITTER.test(s)) out.twitter ??= s;
     else if (TELEGRAM.test(s)) out.telegram ??= s;
-    else if (/^ipfs:\/\//i.test(s) || IMAGE_EXT.test(s) || /\/images?\//i.test(s)) out.image ??= s;
-    else if (/^https?:\/\//i.test(s)) out.website ??= s;
+    else if (/^ipfs:\/\//i.test(s) || IMAGE_EXT.test(s) || IMAGE_HINT.test(s) || /\/images?\//i.test(s)) out.image ??= s;
+    // IPFS content and probed URLs are never a project's website.
+    else if (/^https?:\/\//i.test(s) && !IPFS_HTTP.test(s) && !probedAway.has(s)) out.website ??= s;
   }
   // A free-text string that isn't the name or symbol is most likely the description.
   if (!out.description) {

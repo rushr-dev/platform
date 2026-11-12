@@ -38,6 +38,13 @@
       "breakpoints": true
     },
     {
+      "idx": 5,
+      "version": "7",
+      "when": 1794462879340,
+      "tag": "0005_multi_dex",
+      "breakpoints": true
+    },
+    {
       "idx": 7,
       "version": "7",
       "when": 1794480000000,
