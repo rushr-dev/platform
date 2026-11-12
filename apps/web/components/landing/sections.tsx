@@ -1,5 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
+import { preload } from 'react-dom';
 import { ArrowRight, BellRinging, Robot, Trophy, UsersThree, XLogo } from '@phosphor-icons/react/dist/ssr';
 import type { RiskLevel, Stats, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
@@ -60,7 +61,7 @@ export function Nav() {
       <nav className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
         <div className="flex items-center gap-10">
           <Link href="/" className="flex items-center gap-2" aria-label="Rushr home">
-            <Image src="/logo-mark.png" alt="" width={26} height={26} priority />
+            <Image src="/logo-mark-64.png" alt="" width={26} height={26} priority />
             <span className="text-xl font-semibold tracking-[-0.04em]">rushr</span>
           </Link>
           <div className="hidden items-center gap-7 text-sm text-muted md:flex">
@@ -94,7 +95,12 @@ export function Nav() {
 
 /* ---------------------------------------------------------------- hero */
 
+/** The hero still: AVIF widths, also preloaded so the LCP image starts with the HTML. */
+const HERO_AVIF = [768, 1024, 1280, 2048].map((w) => `/art/hero-${w}.avif ${w}w`).join(', ');
+const HERO_SIZES = '(min-width: 768px) 1351px, (min-width: 640px) 100vw, 134vw';
+
 export function Hero() {
+  preload('/art/hero-1280.avif', { as: 'image', type: 'image/avif', imageSrcSet: HERO_AVIF, imageSizes: HERO_SIZES, fetchPriority: 'high' });
   return (
     <section className="relative isolate overflow-hidden md:h-[min(84svh,760px)] md:min-h-[600px]">
       <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-[clamp(2.5rem,6vh,4.5rem)]">
@@ -135,11 +141,11 @@ export function Hero() {
         <div className="absolute inset-0 md:inset-auto md:bottom-0 md:left-1/2 md:aspect-[16/9] md:h-full md:-translate-x-1/2 md:[mask-image:linear-gradient(to_right,transparent,black_7%,black_93%,transparent)]">
           <Art
             name="hero"
-            widths={[768, 1280, 2048]}
+            widths={[768, 1024, 1280, 2048]}
             avif
             alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
             priority
-            sizes="(min-width: 768px) 1351px, (min-width: 640px) 100vw, 134vw"
+            sizes={HERO_SIZES}
             className="object-cover object-bottom"
           />
           <HeroLoop poster="/art/hero-1280.webp" className="object-cover object-bottom" />
@@ -202,6 +208,50 @@ function CandleChart({ trades }: { trades: Trade[] }) {
   );
 }
 
+/** Heading of the product section; also rendered alone while the live data streams in. */
+function ProductHeading({ stats }: { stats: Stats | null }) {
+  return (
+    <Reveal className="text-center">
+      <p className="inline-flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand-deep">
+        <span className="relative flex size-2">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
+          <span className="relative inline-flex size-2 rounded-full bg-go" />
+        </span>
+        {stats ? (
+          <span>
+            {nf.format(stats.launches_24h)} launches today<span className="hidden sm:inline"> on Robinhood Chain</span>
+          </span>
+        ) : (
+          'Live on Robinhood Chain'
+        )}
+      </p>
+      <h2 className="mx-auto mt-4 max-w-[15ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">
+        every launch. before everyone else.
+      </h2>
+      <p className="mx-auto mt-4 max-w-[46ch] text-muted md:text-lg">
+        New pairs stream in the second they hit the chain, with a safety verdict already on the card.
+      </p>
+    </Reveal>
+  );
+}
+
+/**
+ * Stand-in for the product shot and the safety section while their data loads: the same heading,
+ * then roughly the same height, so nothing on screen moves when they arrive.
+ */
+export function LiveSectionsFallback() {
+  return (
+    <div aria-busy className="min-h-[2450px] md:min-h-[2200px]">
+      <section className="relative pt-6 md:pt-4">
+        <div className="mx-auto max-w-7xl px-4 md:px-8">
+          <ProductHeading stats={null} />
+          <div className="theme-terminal mt-14 h-[480px] rounded-2xl border border-black/10 bg-surface md:mt-16 md:h-[560px]" />
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export function ProductShot({
   stats,
   trending,
@@ -220,28 +270,14 @@ export function ProductShot({
   return (
     <section id="trenches" className="relative scroll-mt-16 pt-6 md:pt-4">
       <div className="mx-auto max-w-7xl px-4 md:px-8">
-        <Reveal className="text-center">
-          <p className="inline-flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand">
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
-              <span className="relative inline-flex size-2 rounded-full bg-go" />
-            </span>
-            {stats ? `${nf.format(stats.launches_24h)} launches today on Robinhood Chain` : 'Live on Robinhood Chain'}
-          </p>
-          <h2 className="mx-auto mt-4 max-w-[15ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">
-            every launch. before everyone else.
-          </h2>
-          <p className="mx-auto mt-4 max-w-[46ch] text-muted md:text-lg">
-            New pairs stream in the second they hit the chain, with a safety verdict already on the card.
-          </p>
-        </Reveal>
+        <ProductHeading stats={stats} />
 
         <Reveal delay={0.1} className="relative mt-14 md:mt-16">
           {/* Desktop terminal: trending tokens, a live chart and the fakes we caught */}
           <div className="theme-terminal overflow-hidden rounded-2xl border border-black/10 bg-surface shadow-[0_50px_100px_-40px_rgba(24,32,26,0.55),0_0_0_6px_rgba(24,32,26,0.04)]">
             <div className="flex items-center gap-6 border-b border-white/5 px-4 py-3">
               <span className="flex items-center gap-1.5 text-sm font-semibold tracking-[-0.03em]">
-                <Image src="/logo-mark.png" alt="" width={16} height={16} />
+                <Image src="/logo-mark-64.png" alt="" width={16} height={16} />
                 rushr
               </span>
               <div className="hidden gap-5 text-xs text-muted md:flex">
@@ -453,7 +489,7 @@ function Card({
       id={id}
       className={`relative flex h-full scroll-mt-24 flex-col overflow-hidden rounded-3xl border border-line bg-surface p-7 shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)] md:p-8 ${className}`}
     >
-      <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand">{eyebrow}</p>
+      <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">{eyebrow}</p>
       <h3 className="mt-3 max-w-[20ch] text-[28px] font-semibold leading-[1.08] tracking-[-0.035em]">{title}</h3>
       <div className="relative mt-auto pt-8">{children}</div>
     </div>
@@ -513,7 +549,7 @@ export function Social({ original, clone, cloneCount }: { original: DexToken; cl
                     <TokenAvatar t={original} size={24} /> ${original.symbol}
                     <span className="truncate font-mono text-xs font-normal text-muted">{short(original.address)}</span>
                   </span>
-                  <span className="shrink-0 rounded-[4px] bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">original</span>
+                  <span className="shrink-0 rounded-[4px] bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand-deep">original</span>
                 </div>
                 <p className="mt-2 text-sm text-muted">The original contract, with the real holders and liquidity.</p>
               </div>
@@ -567,7 +603,7 @@ export function Social({ original, clone, cloneCount }: { original: DexToken; cl
             />
           </div>
           <div className="p-7 md:p-8">
-            <p className="flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand">
+            <p className="flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">
               Coming next <span className="rounded bg-ink/[0.07] px-1.5 py-px text-[10px] tracking-wider text-muted">soon</span>
             </p>
             <h3 className="mt-3 max-w-[22ch] text-[28px] font-semibold leading-[1.08] tracking-[-0.035em]">
@@ -634,7 +670,7 @@ export function Footer() {
       <div className="mx-auto grid max-w-7xl gap-10 px-4 py-14 md:grid-cols-[1.6fr_1fr_1fr] md:px-8">
         <div>
           <div className="flex items-center gap-2">
-            <Image src="/logo-mark.png" alt="" width={24} height={24} />
+            <Image src="/logo-mark-64.png" alt="" width={24} height={24} />
             <span className="text-lg font-semibold tracking-[-0.04em]">rushr</span>
           </div>
           <p className="mt-3 text-sm text-muted">trade the rush. together.</p>

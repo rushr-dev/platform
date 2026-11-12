@@ -31,6 +31,25 @@ interface Pair {
   info?: { imageUrl?: string; websites?: { url: string }[]; socials?: { url: string; type: string }[] };
 }
 
+/**
+ * DexScreener serves token icons at 800px by default; ask its CDN for a small square instead,
+ * since we only ever draw them as avatars.
+ */
+function iconUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    if (u.hostname !== 'cdn.dexscreener.com') return url;
+    u.searchParams.set('width', '128');
+    u.searchParams.set('height', '128');
+    u.searchParams.set('quality', '90');
+    u.searchParams.set('format', 'auto');
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 /** All pairs for up to 30 tokens, folded into one row per token (volume and liquidity summed over pairs). */
 export async function getDexTokens(addresses: string[], revalidate = 60): Promise<Record<string, DexToken>> {
   const out: Record<string, DexToken> = {};
@@ -68,7 +87,7 @@ export async function getDexTokens(addresses: string[], revalidate = 60): Promis
     });
     row.volume_24h_usd += p.volume?.h24 ?? 0;
     row.liquidity_usd += p.liquidity?.usd ?? 0;
-    row.image_url ??= p.info?.imageUrl ?? null;
+    row.image_url ??= iconUrl(p.info?.imageUrl);
     row.website ??= p.info?.websites?.[0]?.url ?? null;
     row.twitter ??= p.info?.socials?.find((s) => s.type === 'twitter')?.url ?? null;
     row.telegram ??= p.info?.socials?.find((s) => s.type === 'telegram')?.url ?? null;

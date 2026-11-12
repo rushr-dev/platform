@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
-import { Closing, Footer, Hero, Nav, ProductShot, Social } from '@/components/landing/sections';
+import { Suspense } from 'react';
+import { Closing, Footer, Hero, LiveSectionsFallback, Nav, ProductShot, Social } from '@/components/landing/sections';
 import { API_URL, getColumn, getStats, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 
@@ -27,7 +28,7 @@ const TRENDING = [PONS, CASHCAT, PRIORS];
 const FALLBACK: Record<string, DexToken> = {
   [PONS]: {
     address: PONS, symbol: 'PONS', name: 'Pons', price_usd: 0.1536, market_cap_usd: 102_968_248, volume_24h_usd: 6_766_915,
-    liquidity_usd: 5_229_649, change_24h: -1.6, image_url: 'https://cdn.dexscreener.com/cms/images/dkmXs8KYMyMXjuU1?width=800&height=800&quality=95&format=auto',
+    liquidity_usd: 5_229_649, change_24h: -1.6, image_url: 'https://cdn.dexscreener.com/cms/images/dkmXs8KYMyMXjuU1?width=128&height=128&quality=90&format=auto',
     website: 'https://ponsfamily.com/launchpad', twitter: 'https://x.com/ponsdotfamily', telegram: null,
   },
   [CASHCAT]: {
@@ -61,7 +62,24 @@ async function getClones(symbol: string, original: string): Promise<TokenCard[]>
   }
 }
 
-export default async function Home() {
+export default function Home() {
+  return (
+    <div className="theme-paper min-h-dvh">
+      <Nav />
+      <main>
+        <Hero />
+        {/* Stream the hero first; the sections below wait on the API and DexScreener. */}
+        <Suspense fallback={<LiveSectionsFallback />}>
+          <LiveSections />
+        </Suspense>
+        <Closing />
+      </main>
+      <Footer />
+    </div>
+  );
+}
+
+async function LiveSections() {
   const [stats, dex, fresh, trades, clones] = await Promise.all([
     getStats(),
     getDexTokens(TRENDING),
@@ -71,15 +89,9 @@ export default async function Home() {
   ]);
   const trending = TRENDING.map((a) => dex[a] ?? FALLBACK[a]!);
   return (
-    <div className="theme-paper min-h-dvh">
-      <Nav />
-      <main>
-        <Hero />
-        <ProductShot stats={stats} trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
-        <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
-        <Closing />
-      </main>
-      <Footer />
-    </div>
+    <>
+      <ProductShot stats={stats} trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
+      <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
+    </>
   );
 }
