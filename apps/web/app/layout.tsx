@@ -10,16 +10,16 @@ export const metadata: Metadata = {
   title: { default: 'Rushr: Trade the rush. Together.', template: '%s · Rushr' },
   description:
     'Agentic social trading. Follow the traders who win, run AI agents inside limits you set, and see a safety check on every token.',
-  icons: { icon: '/logo.png', apple: '/apple-touch-icon.png' },
+  icons: { icon: [{ url: '/favicon.ico', sizes: 'any' }, { url: '/logo.png', type: 'image/png' }], apple: '/apple-touch-icon.png' },
   openGraph: {
     title: 'Rushr: Trade the rush. Together.',
     description: 'Agentic social trading on Robinhood Chain, with a safety check on every token.',
     url: 'https://rushr.trade',
     siteName: 'Rushr',
-    images: [{ url: '/art/banner.jpg', width: 2400, height: 800, alt: 'Traders gathered in a classical forum around the Rushr banner' }],
+    images: [{ url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: traders gathered in a classical forum around the green Rushr banner' }],
     type: 'website',
   },
-  twitter: { card: 'summary_large_image', images: ['/art/banner.jpg'] },
+  twitter: { card: 'summary_large_image', site: '@rushrtrade', images: ['/og.jpg'] },
 };
 
 export const viewport: Viewport = { themeColor: '#050706' };
