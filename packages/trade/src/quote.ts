@@ -4,10 +4,11 @@ import { v3PoolAbi, v3QuoterV2Abi, v4QuoterAbi, v4StateViewAbi } from './abis';
 import type { TradeConfig } from './config';
 import { TradeError, revertDataOf, sanitizeRpcMessage } from './errors';
 import { decodeRevert } from './revert';
-import { minOut, priceImpactBps, sellMinimums, splitBuyInput, splitSellOutput, type FeeBreakdown } from './fees';
-import { ponsBuyOut, ponsSellOut, ponsSpotBuyOut, v2AmountOut, v2SpotOut } from './math';
+import { BPS, minOut, priceImpactBps, sellMinimums, splitBuyInput, splitSellOutput, type FeeBreakdown } from './fees';
+import { ponsBuyCapped, ponsSellOut, ponsSpotBuyOut, v2AmountOut, v2SpotOut } from './math';
 import { discoverPools, type DiscoverOptions } from './pools';
 import type { Pool, Quote, SwapRequest } from './types';
+import { effectiveFeeBps, referralDiscount, referrerAccrual } from './referral';
 
 const Q192 = 1n << 192n;
 
@@ -30,6 +31,8 @@ export function feeTokenFor(pool: Pool): Address {
 
 interface VenueQuote {
   out: bigint;
+  /** PONS buys capped at graduation: input the venue actually keeps (the rest is refunded). */
+  used?: bigint;
   spotOut: bigint | null;
   gas: bigint | null;
 }
@@ -45,8 +48,10 @@ export async function quoteVenue(client: PublicClient, pool: Pool, side: SwapReq
       }
       case 'pons-curve': {
         if (pool.graduated) throw new TradeError('CURVE_GRADUATED', 'This PONS token has graduated; trade it on its Uniswap v4 pool');
-        if (side === 'buy')
-          return { out: ponsBuyOut(amountIn, pool.quoteReserve, pool.tokenReserve, pool.feeBps, pool.creatorTaxBps), spotOut: ponsSpotBuyOut(amountIn, pool.quoteReserve, pool.tokenReserve), gas: null };
+        if (side === 'buy') {
+          const b = ponsBuyCapped(amountIn, pool);
+          return { out: b.out, used: b.capped ? b.used : undefined, spotOut: ponsSpotBuyOut(b.used, pool.quoteReserve, pool.tokenReserve), gas: null };
+        }
         return {
           out: ponsSellOut(amountIn, pool.quoteReserve, pool.tokenReserve, pool.feeBps, pool.creatorTaxBps),
           spotOut: pool.tokenReserve > 0n ? (amountIn * pool.quoteReserve) / pool.tokenReserve : null,
@@ -95,11 +100,16 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
   const slippageBps = req.slippageBps ?? cfg.defaultSlippageBps;
   const warnings: string[] = [];
   const feeToken = feeTokenFor(pool);
-  const fee = (amount: bigint): FeeBreakdown => ({
+  const feeBps = effectiveFeeBps(cfg, req.referral);
+  /** `basis`: what the fee rate applies to (spent input on buys, gross output on sells). */
+  const fee = (amount: bigint, basis: bigint): FeeBreakdown => ({
     side: req.side,
     feeToken,
-    feeBps: cfg.feeBps,
+    feeBps,
+    baseFeeBps: cfg.feeBps,
     feeAmount: amount,
+    referralDiscountAmount: req.referral ? referralDiscount(basis, cfg, feeBps) : 0n,
+    referrerAccrual: referrerAccrual(amount, cfg, req.referral),
     venueFeeBps: pool.venueFeeBps,
     venueFeeLabel: pool.venueFeeLabel,
   });
@@ -111,22 +121,31 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
   if (pool.venue === 'uniswap-v4' && pool.key.hooks !== zeroAddress) warnings.push('Hooked v4 pool: the hook may change fees or behaviour at swap time');
 
   if (req.side === 'buy') {
-    const { fee: feeAmount, swapAmount } = splitBuyInput(req.amountIn, cfg.feeBps);
+    let { fee: feeAmount, swapAmount } = splitBuyInput(req.amountIn, feeBps);
     const v = await quoteVenue(client, pool, 'buy', swapAmount);
     if (v.out === 0n) throw new TradeError('INSUFFICIENT_LIQUIDITY', 'Quote returned zero output', { pool: pool.id });
+    let expectedRefund = 0n;
+    if (v.used !== undefined && v.used < swapAmount) {
+      // Graduating PONS buy: the fee is charged on what is actually spent (same rule as RushrCurveRouter).
+      swapAmount = v.used;
+      feeAmount = (v.used * BigInt(feeBps)) / (BPS - BigInt(feeBps));
+      expectedRefund = req.amountIn - v.used - feeAmount;
+      warnings.push(`This buy completes the bonding curve: the token graduates and about ${expectedRefund} wei of unused input is refunded`);
+    }
     const impact = v.spotOut ? Math.max(0, priceImpactBps(v.spotOut, v.out) - pool.venueFeeBps) : null;
     if (impact !== null && impact > 500) warnings.push(`High price impact: ${(impact / 100).toFixed(1)}%`);
     return {
       request: req,
       pool,
       amountIn: req.amountIn,
+      expectedRefund,
       swapAmountIn: swapAmount,
       grossOut: v.out,
       amountOut: v.out,
       minAmountOut: minOut(v.out, slippageBps),
       minGrossOut: minOut(v.out, slippageBps),
       slippageBps,
-      fee: fee(feeAmount),
+      fee: fee(feeAmount, swapAmount + feeAmount),
       priceImpactBps: impact,
       gasEstimate: v.gas,
       warnings,
@@ -135,21 +154,22 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
 
   const v = await quoteVenue(client, pool, 'sell', req.amountIn);
   if (v.out === 0n) throw new TradeError('INSUFFICIENT_LIQUIDITY', 'Quote returned zero output', { pool: pool.id });
-  const { fee: feeAmount, netOut } = splitSellOutput(v.out, cfg.feeBps);
-  const { minGross, minNet } = sellMinimums(v.out, cfg.feeBps, slippageBps);
+  const { fee: feeAmount, netOut } = splitSellOutput(v.out, feeBps);
+  const { minGross, minNet } = sellMinimums(v.out, feeBps, slippageBps);
   const impact = v.spotOut ? Math.max(0, priceImpactBps(v.spotOut, v.out) - pool.venueFeeBps) : null;
   if (impact !== null && impact > 500) warnings.push(`High price impact: ${(impact / 100).toFixed(1)}%`);
   return {
     request: req,
     pool,
     amountIn: req.amountIn,
+    expectedRefund: 0n,
     swapAmountIn: req.amountIn,
     grossOut: v.out,
     amountOut: netOut,
     minAmountOut: minNet,
     minGrossOut: minGross,
     slippageBps,
-    fee: fee(feeAmount),
+    fee: fee(feeAmount, v.out),
     priceImpactBps: impact,
     gasEstimate: v.gas,
     warnings,
@@ -170,10 +190,15 @@ export function rankQuotes(quotes: Quote[]): Quote[] {
 }
 
 /** Discover pools, quote them all and pick the best single-pool route. */
-export async function findBestRoute(client: PublicClient, req: SwapRequest, cfg: TradeConfig, discover: Omit<DiscoverOptions, 'quoteAsset'> = {}): Promise<RouteResult> {
+export async function findBestRoute(
+  client: PublicClient,
+  req: SwapRequest,
+  cfg: TradeConfig,
+  discover: Omit<DiscoverOptions, 'quoteAsset'> & { /** Skip discovery and quote these pools (e.g. known from the Rushr API). */ pools?: Pool[] } = {},
+): Promise<RouteResult> {
   if (req.token.toLowerCase() === TRADE_ADDRESSES.weth || req.token.toLowerCase() === TRADE_ADDRESSES.usdg || req.token === zeroAddress)
     throw new TradeError('SAME_TOKEN', 'Pick a token other than the quote asset');
-  const pools = await discoverPools(client, req.token, { ...discover, quoteAsset: req.quoteAsset, trader: req.trader });
+  const pools = discover.pools ?? (await discoverPools(client, req.token, { ...discover, quoteAsset: req.quoteAsset, trader: req.trader }));
   const tradable = pools.filter((p) => !(p.venue === 'pons-curve' && p.graduated));
   if (!tradable.length) throw new TradeError('NO_ROUTE', 'No pool found for this token and quote asset', { token: req.token });
   const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, req, cfg)));

@@ -54,6 +54,8 @@ describe('config', () => {
   it('defaults to a placeholder treasury that cannot be signed against', () => {
     const cfg = resolveConfig();
     expect(cfg.feeBps).toBe(DEFAULT_TRADE_CONFIG.feeBps);
+    expect(cfg.feeBps).toBe(50); // founder decision: 0.5%
+    expect([cfg.referralDiscountBps, cfg.referrerShareBps]).toEqual([1_000, 2_000]);
     try {
       assertSignable(cfg);
       expect.unreachable();
@@ -73,6 +75,7 @@ describe('config', () => {
     expect(() => resolveConfig({ feeBps: 1.5 })).toThrow(/feeBps/);
     expect(() => resolveConfig({ feeRecipient: '0x0000000000000000000000000000000000000000' })).toThrow(/feeRecipient/);
     expect(() => resolveConfig({ feeRecipient: '0xnope' as `0x${string}` })).toThrow(/feeRecipient/);
+    expect(() => resolveConfig({ referrerShareBps: 10_001 })).toThrow(/referrerShareBps/);
   });
 
   it('never leaks RPC URLs in error text', () => {

@@ -41,6 +41,11 @@ export interface PonsPool extends PoolBase {
   tokenReserve: bigint;
   feeBps: number;
   creatorTaxBps: number;
+  /** Real (non-phantom) quote reserve and the graduation threshold: a buy past it is capped and refunded. */
+  realQuoteReserve: bigint;
+  graduationThreshold: bigint;
+  /** Tokens left on the curve (the cap for a graduating buy). */
+  sellableTokens: bigint;
   /** Snipe tax at quote time (bps); non-zero only in the first seconds after launch. */
   snipeTaxBps: number;
   graduated: boolean;
@@ -56,6 +61,23 @@ export interface SwapRequest {
   /** The wallet that signs; also the recipient. */
   trader: Address;
   slippageBps?: number;
+  /** Referral attribution (off-chain accounting): gives the referee the discounted fee rate. */
+  referral?: Referral | null;
+  /** Who initiated the trade, recorded for accounting (web UI, an agent, an API client). */
+  source?: TradeSource;
+}
+
+export interface Referral {
+  /** Referrer's payout wallet. */
+  referrer: Address;
+  /** Code the referee signed up with, if any. */
+  code?: string;
+}
+
+export interface TradeSource {
+  kind: 'web' | 'agent' | 'api';
+  /** Agent or API client id, when kind is not 'web'. */
+  id?: string;
 }
 
 export interface Quote {
@@ -77,6 +99,8 @@ export interface Quote {
   fee: FeeBreakdown;
   priceImpactBps: number | null;
   gasEstimate: bigint | null;
+  /** PONS curve buys that hit graduation: quote-asset amount the curve refunds (0 otherwise). */
+  expectedRefund: bigint;
   warnings: string[];
 }
 

@@ -51,6 +51,12 @@ contract MockCurve {
     uint256 public tokenReserve;
     uint256 public feeBps = 225;
     bool public graduated;
+    /// @dev PONS-style cap: when > 0, a buy stops at this real quote reserve, refunds the rest to
+    ///      msg.sender and graduates the curve.
+    uint256 public threshold;
+    uint256 public realQuote;
+    /// @dev When > 0, sells take at most this many tokens (to exercise unsold-token returns).
+    uint256 public maxSellTokens;
     bool public reenter;
     address public reenterTarget;
     bytes public reenterData;
@@ -65,6 +71,15 @@ contract MockCurve {
         graduated = g;
     }
 
+    function setThreshold(uint256 t, uint256 real) external {
+        threshold = t;
+        realQuote = real;
+    }
+
+    function setMaxSell(uint256 m) external {
+        maxSellTokens = m;
+    }
+
     function setReenter(address target, bytes calldata data) external {
         reenter = true;
         reenterTarget = target;
@@ -77,15 +92,27 @@ contract MockCurve {
             (bool ok, bytes memory ret) = reenterTarget.call(reenterData);
             if (!ok) assembly { revert(add(ret, 32), mload(ret)) }
         }
+        uint256 used = quoteIn;
         uint256 net = quoteIn - (quoteIn * feeBps) / 10_000;
+        if (threshold != 0 && realQuote + net > threshold) {
+            net = threshold - realQuote;
+            used = (net * 10_000 + (10_000 - feeBps) - 1) / (10_000 - feeBps);
+            graduated = true;
+        }
         out = (tokenReserve * net) / (quoteReserve + net);
         require(out >= minOut, "curve slippage");
         quoteReserve += net;
+        realQuote += net;
         tokenReserve -= out;
         token.transfer(recipient, out);
+        if (used < quoteIn) {
+            (bool ok,) = msg.sender.call{value: quoteIn - used}("");
+            require(ok, "refund");
+        }
     }
 
     function sell(uint256 tokensIn, uint256 minOut, address recipient) external returns (uint256 out) {
+        if (maxSellTokens != 0 && tokensIn > maxSellTokens) tokensIn = maxSellTokens;
         token.transferFrom(msg.sender, address(this), tokensIn);
         uint256 gross = (quoteReserve * tokensIn) / (tokenReserve + tokensIn);
         out = gross - (gross * feeBps) / 10_000;

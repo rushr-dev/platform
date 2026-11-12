@@ -58,8 +58,14 @@ export interface FeeBreakdown {
   side: Side;
   /** Quote asset (ETH/WETH/USDG) the fee is paid in. */
   feeToken: `0x${string}`;
+  /** Rate applied to this trade (after any referral discount). */
   feeBps: number;
+  /** Platform rate before discounts. */
+  baseFeeBps: number;
   feeAmount: bigint;
+  /** Referral: discount vs. the base rate, and the referrer's accrual (off-chain), both in feeToken. */
+  referralDiscountAmount: bigint;
+  referrerAccrual: bigint;
   /** Venue's own fees, informational (pool fee tier, PONS curve fee + creator tax). */
   venueFeeBps: number;
   venueFeeLabel: string;

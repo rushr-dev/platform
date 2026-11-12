@@ -1,25 +1,73 @@
 # Trading and the platform fee
 
-Status: research and recommendation (2026-11-12), plus the scaffold in `packages/trade`. Nothing here has been deployed or signed. Fee rate and treasury are placeholders until the founder decides.
+Status 2026-11-12: research done, founder decisions in (below), scaffold in `packages/trade`, `contracts/` and `/swap`. Nothing here has been deployed or signed. The treasury is still a placeholder.
 
-## Recommendation in one screen
+## Decisions (founder, 2026-11-12)
 
-| Question | Recommendation |
+| Question | Decision |
 | --- | --- |
-| **Rate** | **1%** of the trade, buys and sells. This matches GMGN, Maestro, Photon, BullX and Axiom, which on-chain takes about 1% on Robinhood Chain (see below). The alternative is **0.5%** to undercut fomo, which reportedly charges 0.5% on Robinhood Chain. |
-| **Which side** | Always the **quote side** (ETH, WETH or USDG). Buys: taken from the input before the swap. Sells: taken from the output after the swap. The treasury only ever receives ETH or USDG, never memecoins, and a token's own tax can't shrink or block the fee. |
-| **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and every other hooked v4 pool) | Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, then `PAY_PORTION(ETH, treasury, bps)`, then `SWEEP(ETH, user, minOut)`. This is the pattern the Uniswap interface used for its 0.15–0.25% fee. |
-| **Collection, PONS bonding curves** | The Universal Router can't call a PONS curve. We need a small fee router, **`contracts/src/RushrCurveRouter.sol`** (written and tested, **not deployed**). Until it's deployed and reviewed, curve trades are either unsupported or go straight to the curve with no Rushr fee. That's a founder decision. |
-| **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's own factories (verified in its bytecode). Phase 2, through the same fee router with a v3-callback adapter. Most memecoins live on v4 or the curve, so phase 1 covers them. |
-| **Referral** | Account for it off-chain: attribute trades by wallet and pay out periodically from the treasury. That keeps per-trade gas and calldata minimal and lets tiers change without touching contracts. If an on-chain split is wanted, the Universal Router can take two portions in one tx (treasury plus referrer), still without a contract. Suggested start: referee −10% (1% → 0.9%), referrer 20–25% of the fees of the wallets they refer, the market norm. |
-| **UI** | The fee is a line in every quote ("Rushr fee 1% · 0.00031 ETH") next to the venue's own fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page and the docs. |
+| **Rate** | **0.5%** of the trade, buys and sells: fomo parity, undercuts Axiom (~1%). It's config (`feeBps: 50`), not a constant. |
+| **Which side** | Always the **quote side** (ETH, WETH or USDG): taken from the input on buys, from the output on sells. The treasury only receives ETH or USDG, and a token's own tax can't shrink or block the fee. |
+| **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and other hooked v4 pools) | **Primary path.** Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, `PAY_PORTION(ETH, treasury, bps)`, `SWEEP(ETH, user, minOut)` (the pattern Uniswap's interface fee used). |
+| **Collection, PONS bonding curves** | `contracts/src/RushrCurveRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then, curve routes are quoted but not buildable. |
+| **Treasury** | Placeholder config (`0x…fee1`) until the founder provides a multisig. `assertSignable` / `prepareSwap({ forSigning: true })` refuse to produce signable transactions until it's set. |
+| **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee** (0.5% → **0.45%**, charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
+| **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's factories (verified in its bytecode). Phase 2. |
+| **Agents** | Agents trade through the same code: `packages/trade` is pure functions that return unsigned transactions (`prepareSwap`), usable from a server or agent runtime, not only from `/swap`. |
+| **UI** | The fee is a line in every quote ("Rushr fee 0.5% · 0.00005 ETH"; referred: "0.45%, 10% referral discount"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
 
-### Decisions the founder must make
-1. **Rate:** 1% (GMGN/Axiom parity) or 0.5% (fomo parity), or 1% with a launch promo.
-2. **Treasury address**, a multisig (for example Safe) the founder controls. It's configuration only (`feeRecipient` in `packages/trade/src/config.ts`), and stays a placeholder until then.
-3. **Referral split:** off-chain accounting (recommended) or on-chain split, plus the percentages.
-4. **PONS curves:** deploy `RushrCurveRouter` after an external review (the only new contract), or launch with curve trades fee-free or unsupported.
-5. **Universal Router deployment:** Uniswap's official list for chain 4663 has v2.1.2 at `0x204faca1…0498`. The registry's `0x8876…0904` is also a Universal Router (same factories embedded) and is busier on-chain. The scaffold defaults to the official one; both are config.
+Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x204faca1…0498` (the default). The core registry's `0x8876…0904` is also a Universal Router with the same factories embedded, and it's config.
+
+## Referral ledger (off-chain)
+
+How it works:
+- **At quote time:** a `SwapRequest` may carry `referral: { referrer, code? }` (resolved server-side from the trader's signup) and `source: { kind: 'web' | 'agent' | 'api', id? }`.
+- **Fee rate:** `effectiveFeeBps` = base − ⌈base × 10%⌉ = **45 bps** when referred. The Universal Router plan uses that rate (`TRANSFER` amount, `PAY_PORTION` bips). The curve router has an immutable `referralFeeBps` and a `referred` flag.
+- **Recording:** `draftTradeRecord(quote)` → store at submit. `confirmTradeRecord(record, receipt)` → status `confirmed`, with `feeAmount` = **fee actually received by the treasury** (from the receipt's transfers, same analysis as `analyzeSwapTransfers`) and `referrerAccrual` = 20% of that.
+- **Payouts (later):** sum confirmed `referrer_accrual` by referrer and fee token, minus what has been paid.
+
+Fields recorded per trade (`TradeRecord` in `packages/trade/src/referral.ts`). This is a proposed table; `packages/db` is owned by Data, so this is a request, not a migration:
+
+```sql
+create table trades_ledger (
+  id                  bigserial primary key,
+  chain_id            int not null default 4663,
+  status              text not null,              -- quoted | submitted | confirmed | failed
+  tx_hash             text unique,                -- null until submitted
+  block_number        bigint,
+  ts                  timestamptz not null,
+  trader              text not null,              -- lowercase address
+  source_kind         text not null,              -- web | agent | api
+  source_id           text,                       -- agent / API client id
+  side                text not null,              -- buy | sell
+  token               text not null,
+  quote_asset         text not null,              -- ETH | USDG
+  venue               text not null,              -- uniswap-v4 | uniswap-v3 | uniswap-v2 | pons-curve
+  pool_id             text not null,
+  router              text not null,
+  amount_in           numeric(78,0) not null,
+  amount_out          numeric(78,0) not null,     -- expected, then actual
+  fee_token           text not null,              -- 0x0 (ETH) or USDG
+  base_fee_bps        int not null,               -- 50
+  fee_bps             int not null,               -- 45 when referred
+  fee_amount          numeric(78,0) not null,     -- actual once confirmed (payout basis)
+  referrer            text,
+  referral_code       text,
+  referral_discount   numeric(78,0) not null default 0,
+  referrer_share_bps  int not null default 0,     -- 2000
+  referrer_accrual    numeric(78,0) not null default 0
+);
+create index on trades_ledger (referrer, status) where referrer is not null;
+create index on trades_ledger (trader, ts desc);
+create table referrals (                          -- who referred whom (first touch, immutable)
+  referee     text primary key,
+  referrer    text not null,
+  code        text,
+  created_at  timestamptz not null default now()
+);
+```
+
+The chain is the source of truth for the fee itself: the treasury's inflows can be reconciled against `sum(fee_amount)` per day.
 
 ## How others charge (researched 2026-11-12)
 
@@ -87,7 +135,7 @@ So Axiom takes ~1% from the input on buys, in the same tx, through its own route
 
 ## What we show the user (quote panel)
 - You pay / you receive (estimated), **min received** (after slippage, our fee, venue fees and measured tax)
-- **Rushr fee:** `1% · 0.00031 ETH`, always visible, never folded into "price impact"
+- **Rushr fee:** `0.5% · 0.00005 ETH` (referred: `0.45%`, with the discount shown), always visible, never folded into "price impact"
 - Venue: e.g. "Uniswap v4 · 1.01% pool fee" or "PONS curve · 1% fee + 1.5% creator tax"
 - Price impact, measured buy and sell tax, honeypot or snipe-tax warnings
 - Route: venue, pool and router address, linked to the explorer
@@ -101,7 +149,9 @@ Status 2026-11-12. Nothing is signed or broadcast anywhere: verification is unit
 | Module | What it does |
 | --- | --- |
 | `addresses.ts`, `chain.ts` | Trading contracts for 4663 from Uniswap's official list, the PONS factory, and a viem chain with multicall3 |
-| `config.ts` | `feeBps` (default 100, capped at 300), `feeRecipient` (**placeholder** `0x…fee1`), `universalRouter`, `curveRouter` (null until deployed). `assertSignable` refuses while the treasury is the placeholder |
+| `config.ts` | `feeBps` (default **50**, capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (**placeholder** `0x…fee1`), `universalRouter`, `curveRouter` (null until deployed). `assertSignable` refuses while the treasury is the placeholder |
+| `referral.ts` | Effective rate, referrer accrual and discount; `TradeRecord` draft and confirm for the off-chain ledger |
+| `agent.ts` | `prepareSwap(client, request, opts)` for servers and agents: best route → unsigned tx, approvals, command list, ledger record, optional simulation. `toJsonSafe` for tool and HTTP output. No browser globals, no keys |
 | `fees.ts` | Fee math: fee off the input on buys, off the gross output on sells (identical to `PAY_PORTION`), slippage minimums, tax-adjusted slippage |
 | `pools.ts` | Discovery: PONS curve via `getLaunchedToken`; Uniswap v3 (4 fee tiers) and v2 on WETH/USDG; v4 from the API's `main_pool` (PositionManager `poolKeys`, falling back to the `Initialize` event for hook-managed pools), indexer-supplied keys and standard hookless pools, checked with StateView |
 | `quote.ts` | V4Quoter, QuoterV2, v2 reserve math, PONS curve math (exact to the wei); price impact from spot; ranks by what the user receives and prefers routes we can build |
@@ -122,14 +172,65 @@ Fee command plans (Universal Router):
 | PONS curve | `RushrCurveRouter.buy/sell` (not deployed) |
 
 Verified live (`pnpm --filter @rushr/trade simulate`, about 20–40 RPC calls per token):
-- PONS buy and sell through Uniswap v3, v2 and v4 (ETH) and v4 (USDG), on both Universal Routers. Tokens received equal the quote to the wei, and the treasury receives exactly 1%.
+- PONS buy and sell through Uniswap v3, v2 and v4 (ETH) and v4 (USDG), on both Universal Routers. Tokens received equal the quote to the wei, and the treasury receives exactly 0.5% (also verified at 1% earlier, and 0.45% for a referred buy on the /swap page).
 - A lift.fun token (hooked v4 pool): buy is exact, and the buy→sell probe sells back. Its sell can't be quoted at current state, because the launch liquidity is one-sided until someone buys.
 - PONS curve quote equals the curve's own `buy()` output to the wei.
 
 Tests: `pnpm --filter @rushr/trade test` covers fee math, config guards, encodings (byte layouts matched to live txs), command plans for every venue and side, PONS math against on-chain values, transfer and tax analysis, and revert decoding (36 tests).
 
-### `contracts/RushrCurveRouter.sol` (not deployed)
-PONS curve buy and sell with the fee in ETH. Immutable factory, treasury and fee (≤3%); no owner and no arbitrary calls. `minOut` is checked on amounts actually received, ETH is accepted only mid-trade, and the curve approval is reset after each sell. Foundry has 14 unit and fuzz tests plus a fork test that buys and sells on a real PONS curve: 0.01 ETH in, the treasury gets exactly 1% each way, and nothing is left in the router. See `contracts/README.md`.
+### `contracts/RushrCurveRouter.sol` (not deployed; Uniswap routes stay the primary path)
+PONS curve buy and sell with the fee in ETH.
+- **Rates:** immutable `feeBps` (50) and `referralFeeBps` (45), with `referralFeeBps ≤ feeBps ≤ 300`. The caller picks the rate with `referred`. That is no weaker than today: anyone can always call the curve directly and pay no Rushr fee, so the fee is collected by our frontends and agents, not enforced against the user.
+- **Graduation refunds:** a buy that completes the curve gets the unused ETH back from PONS. The router then charges the fee only on ETH actually spent (`fee / (spent + fee) = bps`) and refunds the rest to `msg.sender` in the same tx. Found by simulation: without this, refunds would have been stranded in the router.
+- **Sells:** pulls tokens with `transferFrom` and measures what arrived (fee-on-transfer safe). Approves the curve for exactly that amount, then resets the approval to 0. Returns unsold tokens. Fee comes off the ETH output; `minQuoteOut` is checked on the net.
+- **Safety:** no owner, no upgrades, no arbitrary calls (only the immutable factory, the curve it reports for the token, the token and the treasury). Reentrancy lock. ETH accepted only mid-trade. Deadline.
+
+Tests (`cd contracts && forge test`): 20 unit and fuzz tests with mocks cover:
+- exact fee math at both rates
+- refund accounting at graduation, including a fuzz test that ETH is never stranded
+- slippage on buy, on sell net, and after a transfer tax
+- unsold-token return, unknown and graduated curves, deadline and zero-amount guards
+- reentrancy, a rejecting treasury, and stray ETH
+
+Plus 4 fork tests on a real PONS curve (`ROBINHOOD_RPC_URL=… forge test --match-contract Fork`):
+- 0.01 ETH buy and sell: exactly 0.5% each way, nothing left in the router
+- a referred buy pays 0.45%
+- slippage reverts at quote + 1
+- a 20 ETH buy that graduates the token: 3.79 ETH spent, the rest refunded, fee exactly 0.5% of what was paid
+
+#### Review checklist (before any deployment)
+An independent reviewer should confirm each item; deployment needs the founder's sign-off on all of them.
+1. **Target trust:** `getLaunchedToken` on the real PONS factory (`0x7ed5…ec7e`) can't be made to return an attacker-controlled curve for a token, and its return layout (token, curve as the first two words) is stable. Verify against PONS's source, or get the PONS team's confirmation.
+2. **Curve behaviour assumptions:**
+   - `buy` sends tokens to `recipient` and refunds only to `msg.sender`
+   - `sell` pulls exactly `tokensIn` (or less) via `transferFrom`
+   - `graduated()` is final
+   - no hidden callbacks to the caller
+
+   Re-check if PONS upgrades the curve implementation.
+3. **Fee math:** buy fee = `floor(value·bps/1e4)`, and after a refund `floor(spent·bps/(1e4−bps))`; sell fee = `floor(gross·bps/1e4)`. No path charges more than `MAX_FEE_BPS`; rounding favours the user.
+4. **ETH accounting:** `ethBefore = balance − msg.value` is correct even if ETH was force-sent (selfdestruct). Force-sent ETH can only be swept to the next buyer's refund, never block a trade. Decide whether that's acceptable or add an explicit rule.
+5. **Reentrancy:** the lock covers `buy`, `sell` and `receive`. Treasury and user ETH sends happen after state-relevant reads. A malicious token or recipient can't reenter to drain anything (the router holds nothing between txs).
+6. **Token weirdness:** fee-on-transfer, no-return-value ERC20s (handled by `_call`), tokens that revert on `approve(0)`, and blacklisting tokens.
+7. **Slippage and MEV:** `minTokensOut` is checked on what the recipient received, `minQuoteOut` on the net, and the deadline is enforced. Robinhood Chain has a sequencer, so confirm whether Timeboost or an express lane is enabled.
+8. **Immutables:** constructor arguments = the founder's treasury multisig, 50 and 45. Verify the deployed bytecode and arguments on Blockscout. There's no admin key to rotate, so a mistake means redeploying.
+9. **Compiler and settings:** solc 0.8.26, optimizer 10k runs, `evm_version = shanghai` (confirm Robinhood Chain's ArbOS supports `PUSH0`).
+10. **Tests:** reviewer re-runs `forge test` and the fork suite at a fresh block, and adds their own cases.
+
+### Using it from a server or agent
+```ts
+import { createPublicClient, http } from 'viem';
+import { prepareSwap, robinhoodChain, toJsonSafe } from '@rushr/trade';
+
+const client = createPublicClient({ chain: robinhoodChain, transport: http(RPC_URL), batch: { multicall: true } });
+const prepared = await prepareSwap(client, {
+  side: 'buy', token, quoteAsset: 'ETH', amountIn: 10n ** 16n, trader: agentWallet, slippageBps: 100,
+  referral: referrerOf(agentOwner), source: { kind: 'agent', id: agentId },
+}, { config: { feeRecipient: TREASURY }, simulate: true, forSigning: true });
+// prepared.approvals (if any), then prepared.tx: signed by the agent's own wallet/signer, never by this package.
+// Store prepared.record (status 'submitted' + txHash), confirm it from the receipt.
+return toJsonSafe(prepared);
+```
 
 ### `/swap` test page
 `apps/web/app/(app)/swap` with `components/trade/*`:
@@ -142,7 +243,9 @@ PONS curve buy and sell with the fee in ETH. Immutable factory, treasury and fee
 Signing is disabled. Quotes use the **public** Robinhood RPC from the browser (it supports `eth_simulateV1` and CORS), so no secret ships and Alchemy isn't billed.
 
 ### Open items
-- Founder decisions (top of this doc). Then set `feeRecipient` and `feeBps`, and enable signing behind `assertSignable`.
+- Treasury multisig from the founder: set `feeRecipient` and enable signing behind `assertSignable`.
+- Referral payouts and the `trades_ledger` / `referrals` tables (Data owns `packages/db`).
+- Independent review of `RushrCurveRouter` against the checklist above.
 - Multi-hop routes (e.g. token → USDG → ETH) and split routes. Today it's the best single pool.
 - Ramses, Aero and the other v3 forks: adapter in the fee router (phase 2).
 - **Data request:** v4 pool keys (`currency0/1, fee, tickSpacing, hooks`) per pool in the API, so hooked pools (Doppler) resolve without a getLogs call.

@@ -47,14 +47,18 @@ export const ponsCurveAbi = parseAbi([
   'function token() view returns (address)',
   'function factory() view returns (address)',
   'function isNativeQuote() view returns (bool)',
+  'function realQuoteReserve() view returns (uint256)',
+  'function graduationThreshold() view returns (uint256)',
+  'function sellableTokens() view returns (uint256)',
 ]);
 export const ponsFactoryAbi = parseAbi(['function getLaunchedToken(address token) view returns (address token_, address curve)']);
 
 /** RushrCurveRouter (contracts/src/RushrCurveRouter.sol). Not deployed. */
 export const rushrCurveRouterAbi = parseAbi([
-  'function buy(address token, uint256 minTokensOut, address recipient, uint256 deadline) payable returns (uint256 tokensOut)',
-  'function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline) returns (uint256 quoteOut)',
+  'function buy(address token, uint256 minTokensOut, address recipient, uint256 deadline, bool referred) payable returns (uint256 tokensOut)',
+  'function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline, bool referred) returns (uint256 quoteOut)',
   'function feeBps() view returns (uint16)',
+  'function referralFeeBps() view returns (uint16)',
   'function treasury() view returns (address)',
 ]);
 

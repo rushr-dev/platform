@@ -33,7 +33,7 @@ function rpcUrl(): string {
 const client = createPublicClient({ chain: robinhoodChain, transport: http(rpcUrl(), { batch: false }), batch: { multicall: true } }) as PublicClient;
 // Simulated trader: a fresh address with no history; balances are overridden in the simulation only.
 const simTrader: Address = '0x00000000000000000000000000000000c0ffee01';
-const cfg = resolveConfig({ feeBps: 100 });
+const cfg = resolveConfig(); // defaults: 0.5% to the placeholder treasury
 let createdBlock: bigint | undefined;
 
 const DEFAULT_TOKENS: { address: Address; mainPool?: `0x${string}` }[] = [
@@ -107,7 +107,7 @@ async function run(token: Address, mainPool?: `0x${string}`, quoteAsset: 'ETH' |
   const both = await simulateCalls(client, calls, { fund });
   const sellIdx = calls.length - 1;
   const sellA = analyzeSwapTransfers(sellQ, both.transfers.filter((t) => t.callIndex === sellIdx), cfg.feeRecipient);
-  console.log(`  sell sim: ${both.ok ? 'OK' : 'REVERT ' + both.calls.find((c) => !c.ok)?.error}  gas ${both.calls[sellIdx]!.gasUsed}  received ${fmtQ(sellQ, sellA.received)} (min ${fmtQ(sellQ, sellQ.minAmountOut)})  fee ${fmtQ(sellQ, sellA.feePaid)} (~1% of gross)  tax ${sellA.tokenTaxBps}bps`);
+  console.log(`  sell sim: ${both.ok ? 'OK' : 'REVERT ' + both.calls.find((c) => !c.ok)?.error}  gas ${both.calls[sellIdx]!.gasUsed}  received ${fmtQ(sellQ, sellA.received)} (min ${fmtQ(sellQ, sellQ.minAmountOut)})  fee ${fmtQ(sellQ, sellA.feePaid)} (feeBps of gross)  tax ${sellA.tokenTaxBps}bps`);
   }
 
   if (quoteAsset !== 'ETH') return;

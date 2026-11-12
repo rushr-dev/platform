@@ -65,6 +65,8 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
   const [quoteAsset, setQuoteAsset] = useState<QuoteAsset>('ETH');
   const [amount, setAmount] = useState('0.01');
   const [slippage, setSlippage] = useState('1');
+  /** Test-bed stand-in for the referral the server would resolve from the trader's signup. */
+  const [referrer, setReferrer] = useState('');
 
   const [token, setToken] = useState<TokenInfo | null>(null);
   const [route, setRoute] = useState<RouteResult | null>(null);
@@ -117,7 +119,16 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
     try {
       const r = await findBestRoute(
         client,
-        { side, token: tokenAddress, quoteAsset, amountIn, trader, slippageBps: Number.isFinite(slippageBps) ? slippageBps : cfg.defaultSlippageBps },
+        {
+          side,
+          token: tokenAddress,
+          quoteAsset,
+          amountIn,
+          trader,
+          slippageBps: Number.isFinite(slippageBps) ? slippageBps : cfg.defaultSlippageBps,
+          referral: isAddress(referrer) ? { referrer: referrer as Address } : null,
+          source: { kind: 'web' },
+        },
         cfg,
         { mainPool: token.main_pool ?? null, createdBlock: token.created_block ? BigInt(token.created_block) : undefined },
       );
@@ -129,7 +140,7 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
     } finally {
       setQuoting(false);
     }
-  }, [tokenAddress, amountIn, token, side, quoteAsset, trader, slippageBps]);
+  }, [tokenAddress, amountIn, token, side, quoteAsset, trader, slippageBps, referrer]);
 
   const quote = route?.quotes[selected] ?? null;
   const buildable = quote ? isBuildable(quote.pool, cfg) : false;
@@ -287,6 +298,19 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
           <span>%</span>
           <span className="ml-auto">Trader: {account ? short(account.address) : 'simulated wallet'}</span>
         </div>
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+          <label htmlFor="swap-referrer" className="shrink-0">
+            Referred by
+          </label>
+          <input
+            id="swap-referrer"
+            value={referrer}
+            onChange={(e) => setReferrer(e.target.value.trim())}
+            spellCheck={false}
+            placeholder="referrer address (optional, test only)"
+            className="min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1 font-mono text-ink outline-none"
+          />
+        </div>
 
         <button
           type="button"
@@ -344,10 +368,20 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
                 value={`${fmt(quote.fee.feeAmount, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`}
                 strong
               />
+              {quote.fee.feeBps < quote.fee.baseFeeBps && (
+                <Row
+                  label={`Referral discount (${bps(quote.fee.baseFeeBps)} → ${bps(quote.fee.feeBps)})`}
+                  value={`−${fmt(quote.fee.referralDiscountAmount, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`}
+                />
+              )}
+              {quote.fee.referrerAccrual > 0n && (
+                <Row label={`Referrer accrues (${bps(cfg.referrerShareBps)} of fee, off-chain)`} value={`${fmt(quote.fee.referrerAccrual, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`} />
+              )}
               <Row label="Venue fees (paid to the pool or curve)" value={quote.pool.venueFeeLabel.split(' · ').slice(1).join(' · ') || bps(quote.fee.venueFeeBps)} />
               <Row label="Price impact" value={bps(quote.priceImpactBps)} />
               <Row label="You receive (estimated)" value={`${fmt(quote.amountOut, outDecimals)} ${outSymbol}`} strong />
               <Row label={`Minimum received (${bps(quote.slippageBps)} slippage)`} value={`${fmt(quote.minAmountOut, outDecimals)} ${outSymbol}`} />
+              {quote.expectedRefund > 0n && <Row label="Refunded (curve graduates)" value={`${fmt(quote.expectedRefund, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`} />}
               {quote.warnings.map((w) => (
                 <p key={w} className="rounded-lg bg-risk-medium/10 px-2.5 py-1.5 text-xs text-risk-medium">
                   {w}

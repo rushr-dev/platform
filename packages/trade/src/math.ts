@@ -25,6 +25,24 @@ export function ponsBuyOut(quoteIn: bigint, quoteReserve: bigint, tokenReserve: 
   return (tokenReserve * net) / (quoteReserve + net);
 }
 
+/**
+ * PONS curve buy with the graduation cap: once the real quote reserve would pass the threshold, the curve
+ * sells only its remaining tokens, graduates in the same tx, and refunds the unused quote to msg.sender
+ * (checked with eth_simulateV1 on 2026-11-12: out = sellable tokens, real reserve lands on the threshold).
+ * `used` is the gross quote the curve keeps (estimate within a few wei when capped).
+ */
+export function ponsBuyCapped(
+  quoteIn: bigint,
+  c: { quoteReserve: bigint; tokenReserve: bigint; feeBps: number; creatorTaxBps: number; realQuoteReserve: bigint; graduationThreshold: bigint; sellableTokens: bigint },
+): { out: bigint; used: bigint; capped: boolean } {
+  const keepBps = BPS - BigInt(c.feeBps) - BigInt(c.creatorTaxBps);
+  const room = c.graduationThreshold > c.realQuoteReserve ? c.graduationThreshold - c.realQuoteReserve : 0n;
+  const net = quoteIn - (quoteIn * BigInt(c.feeBps)) / BPS - (quoteIn * BigInt(c.creatorTaxBps)) / BPS;
+  if (c.graduationThreshold === 0n || net <= room) return { out: ponsBuyOut(quoteIn, c.quoteReserve, c.tokenReserve, c.feeBps, c.creatorTaxBps), used: quoteIn, capped: false };
+  const used = (room * BPS + keepBps - 1n) / keepBps;
+  return { out: c.sellableTokens, used: used < quoteIn ? used : quoteIn, capped: true };
+}
+
 /** PONS curve sell: constant product, fees taken from the quote output (checked by simulation, see scripts/simulate.ts). */
 export function ponsSellOut(tokensIn: bigint, quoteReserve: bigint, tokenReserve: bigint, feeBps: number, creatorTaxBps: number): bigint {
   if (tokensIn <= 0n) return 0n;

@@ -7,6 +7,8 @@ export * from './errors';
 export * from './fees';
 export * from './math';
 export * from './permit2';
+export * from './referral';
+export * from './agent';
 export * from './pools';
 export * from './quote';
 export * from './simulate';

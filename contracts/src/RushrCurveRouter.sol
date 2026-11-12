@@ -18,11 +18,14 @@ interface IERC20Min {
     function balanceOf(address) external view returns (uint256);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
     function approve(address spender, uint256 amount) external returns (bool);
+    function transfer(address to, uint256 amount) external returns (bool);
 }
 
 /// @title RushrCurveRouter
 /// @notice Buys and sells PONS bonding-curve tokens with the Rushr platform fee, in one transaction.
-///         The fee is always taken in ETH: from the input on buys, from the output on sells.
+///         The fee is always taken in ETH: from the ETH actually spent on buys, from the output on sells.
+///         Two immutable rates: `feeBps` and the discounted `referralFeeBps` for referred traders
+///         (referral attribution and the referrer's share are accounted off-chain).
 /// @dev Non-custodial and stateless between transactions. No owner, no upgradeability, no arbitrary
 ///      calls: the only external targets are the immutable PONS factory, the curve it reports for the
 ///      token, the token itself and the immutable treasury. NOT DEPLOYED; review before any deployment.
@@ -32,6 +35,7 @@ contract RushrCurveRouter {
     IPonsFactory public immutable factory;
     address public immutable treasury;
     uint16 public immutable feeBps;
+    uint16 public immutable referralFeeBps;
 
     uint256 private _lock = 1;
 
@@ -40,9 +44,11 @@ contract RushrCurveRouter {
         address indexed token,
         address indexed recipient,
         bool isBuy,
+        bool referred,
         uint256 quoteAmount,
         uint256 tokenAmount,
-        uint256 fee
+        uint256 fee,
+        uint256 refund
     );
 
     error ZeroAddress();
@@ -69,17 +75,22 @@ contract RushrCurveRouter {
         _;
     }
 
-    constructor(IPonsFactory factory_, address treasury_, uint16 feeBps_) {
+    constructor(IPonsFactory factory_, address treasury_, uint16 feeBps_, uint16 referralFeeBps_) {
         if (address(factory_) == address(0) || treasury_ == address(0)) revert ZeroAddress();
-        if (feeBps_ > MAX_FEE_BPS) revert FeeTooHigh();
+        if (feeBps_ > MAX_FEE_BPS || referralFeeBps_ > feeBps_) revert FeeTooHigh();
         factory = factory_;
         treasury = treasury_;
         feeBps = feeBps_;
+        referralFeeBps = referralFeeBps_;
     }
 
-    /// @notice Buy `token` on its PONS curve with msg.value ETH; the fee is taken from msg.value first.
+    /// @notice Buy `token` on its PONS curve with msg.value ETH; the fee is taken from the input.
+    /// @dev If the buy completes the curve, PONS keeps only what reaches the graduation threshold and
+    ///      refunds the rest to this router; we then charge the fee only on the ETH actually spent and
+    ///      refund the remainder to msg.sender.
     /// @param minTokensOut Minimum tokens `recipient` must actually receive (after any transfer tax).
-    function buy(address token, uint256 minTokensOut, address recipient, uint256 deadline)
+    /// @param referred Trader was referred: charge `referralFeeBps` instead of `feeBps`.
+    function buy(address token, uint256 minTokensOut, address recipient, uint256 deadline, bool referred)
         external
         payable
         nonReentrant
@@ -88,24 +99,23 @@ contract RushrCurveRouter {
     {
         if (msg.value == 0) revert ZeroAmount();
         if (recipient == address(0)) revert ZeroAddress();
-        IPonsCurve curve = _curveOf(token);
+        uint256 bps = referred ? referralFeeBps : feeBps;
+        uint256 fee = (msg.value * bps) / 10_000;
+        uint256 ethBefore = address(this).balance - msg.value;
 
-        uint256 fee = (msg.value * feeBps) / 10_000;
-        uint256 amount = msg.value - fee;
+        tokensOut = _buyOnCurve(_curveOf(token), token, msg.value - fee, minTokensOut, recipient);
 
-        uint256 before = IERC20Min(token).balanceOf(recipient);
-        curve.buy{value: amount}(amount, minTokensOut, recipient);
-        tokensOut = IERC20Min(token).balanceOf(recipient) - before;
-        if (tokensOut < minTokensOut) revert SlippageExceeded(tokensOut, minTokensOut);
-
+        uint256 refund;
+        (fee, refund) = _settleRefund(msg.value, fee, ethBefore, bps);
         _sendEth(treasury, fee);
-        emit Trade(msg.sender, token, recipient, true, msg.value, tokensOut, fee);
+        _sendEth(msg.sender, refund);
+        emit Trade(msg.sender, token, recipient, true, referred, msg.value - refund, tokensOut, fee, refund);
     }
 
     /// @notice Sell `tokensIn` of `token` (pulled from msg.sender, which must approve this router) on its
     ///         PONS curve; the fee is taken from the ETH output.
     /// @param minQuoteOut Minimum ETH `recipient` receives, after the fee.
-    function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline)
+    function sell(address token, uint256 tokensIn, uint256 minQuoteOut, address recipient, uint256 deadline, bool referred)
         external
         nonReentrant
         beforeDeadline(deadline)
@@ -126,18 +136,47 @@ contract RushrCurveRouter {
         uint256 gross = address(this).balance - ethBefore;
         _call(token, abi.encodeCall(IERC20Min.approve, (address(curve), 0)));
 
-        uint256 fee = (gross * feeBps) / 10_000;
+        // Tokens the curve did not take go back to the seller.
+        uint256 unsold = IERC20Min(token).balanceOf(address(this)) - tokenBefore;
+        if (unsold != 0) _call(token, abi.encodeCall(IERC20Min.transfer, (msg.sender, unsold)));
+
+        uint256 fee = (gross * (referred ? referralFeeBps : feeBps)) / 10_000;
         quoteOut = gross - fee;
         if (quoteOut < minQuoteOut) revert SlippageExceeded(quoteOut, minQuoteOut);
 
         _sendEth(treasury, fee);
         _sendEth(recipient, quoteOut);
-        emit Trade(msg.sender, token, recipient, false, gross, received, fee);
+        emit Trade(msg.sender, token, recipient, false, referred, gross, received - unsold, fee, 0);
     }
 
     /// @dev ETH is only accepted mid-trade (curve paying out a sell); stray transfers revert.
     receive() external payable {
         if (_lock != 2) revert UnexpectedEth();
+    }
+
+    /// @dev Buys on the curve and checks what `recipient` actually received (transfer-tax safe).
+    function _buyOnCurve(IPonsCurve curve, address token, uint256 amount, uint256 minTokensOut, address recipient)
+        internal
+        returns (uint256 tokensOut)
+    {
+        uint256 before = IERC20Min(token).balanceOf(recipient);
+        curve.buy{value: amount}(amount, minTokensOut, recipient);
+        tokensOut = IERC20Min(token).balanceOf(recipient) - before;
+        if (tokensOut < minTokensOut) revert SlippageExceeded(tokensOut, minTokensOut);
+    }
+
+    /// @dev If the curve returned ETH (graduation cap), re-derive the fee on the ETH actually spent and
+    ///      the refund owed to the payer. Everything held above `ethBefore` is the withheld fee + returns.
+    function _settleRefund(uint256 value, uint256 fee, uint256 ethBefore, uint256 bps)
+        internal
+        view
+        returns (uint256 finalFee, uint256 refund)
+    {
+        uint256 returned = address(this).balance - ethBefore - fee;
+        if (returned == 0) return (fee, 0);
+        uint256 spent = value - fee - returned;
+        finalFee = (spent * bps) / (10_000 - bps); // finalFee / (spent + finalFee) == bps / 10_000, rounded down
+        refund = value - spent - finalFee;
     }
 
     function _curveOf(address token) internal view returns (IPonsCurve curve) {
