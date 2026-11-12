@@ -166,6 +166,46 @@ Sources were checked on 2026-11-12. "Unverified" marks claims we couldn't confir
    - The first sell of a token also needs a one-time `approve(RushrRouter)`, also within policy.
 4. **Revoke and export:** a Permissions page with "Revoke 1-click trading" (`removeSigners`) and "Export key" (Privy HPKE export) needs the user's passkey. Expiry auto-lapses the grant.
 
+## 4. Option: server-side "one-click mode" on the Universal Router, before the RushrRouter audit
+
+For the founder to decide; **not built**. Asked on 2026-11-12 because client-side signing still waits for Privy's signing round trip (~380 ms from Asia), while GMGN signs server-side.
+
+**What it would be:**
+- The user opts in once (user present) to a Privy **session signer**: Rushr's quick-trade key quorum is added to their embedded wallet with a user-owned policy.
+- A click goes to our Worker, which builds the trade (prebuilt as today), signs it via Privy's REST `eth_signTransaction` with the authorization key from KMS, and broadcasts with `eth_sendRawTransactionSync`.
+- It's revocable from settings (remove the signer; tested live on the dev app) and expires after 30 days.
+
+**Policy (default deny):**
+- `chain_id == 4663`, `to == Universal Router` (v2.1.2), `execute(bytes,bytes[],uint256)` only (calldata rule with a single-function ABI)
+- `value ≤ 0.25 ETH` per tx, and a rolling 24 h sum ≤ 1 ETH (stateful aggregation by wallet; it can race under concurrent requests, so the Worker also serialises per wallet)
+- `execute.commands` **exactly one of our command strings** (one per venue and side: e.g. v4 buy, v3 buy, v2 buy, and the sells; to confirm on the dev app that an `in` condition works on a `bytes` argument). This removes `PERMIT2_TRANSFER_FROM`, `PERMIT2_PERMIT` and arbitrary command chains.
+- approvals for sells: `approve(spender == Permit2)` on any token, and `Permit2.approve(spender == Universal Router)`
+- no `personal_sign`, typed data, 7702 or plain transfers
+
+**What the policy can't enforce.** Privy decodes only the top-level arguments, and UR's real parameters are ABI-encoded inside `inputs: bytes[]`, so the policy can't see:
+- **who receives the output** (the `recipient` of the swap, `SWEEP` and `TRANSFER` targets)
+- **the Rushr fee** (amount or treasury); a forged call could simply skip it
+- **which token or pool**, and **minOut** (slippage)
+
+**What that means if Rushr's key or Worker is compromised** (Privy itself being honest):
+- **Buys:** the attacker can route up to 0.25 ETH per tx and 1 ETH per day per user to themselves, via `SWEEP`/`TRANSFER` with an allowlisted command string.
+- **Sells: unbounded by the caps** (sells carry `value = 0`). The same command strings with the attacker as recipient sell every pre-approved token and send the ETH to them. Pre-approval at buy time (the fast path) makes every bought token exposed.
+- **Many users at once:** with 1,000 opted-in users, a day's exposure is ~1,000 ETH plus all their token holdings.
+- **RushrRouter, by contrast,** forces `recipient = msg.sender` and the fee in the contract. That leaves only "bad but valid trades" (sandwiching a `minOut = 0` trade, bounded by the caps).
+
+**Safer variant if it's wanted before the audit:** one-click **buys only**. Sells stay client-side, and no Permit2 rules go in the policy. Even then, the loss bound for a compromised key is 1 ETH per day per opted-in user, plus skipped fees. Keep the cap low (e.g. 0.1 ETH/tx, 0.5/day), add an anomaly alert on any swap whose output doesn't reach the signer's own wallet (checkable from receipts within a block), and keep a kill switch (stop signing). It's also more custodial in substance: the terms and risk disclosure need to say Rushr can trade for the user within the caps.
+
+**Expected latency:**
+- Today (client-side, after the fast path): click → submitted ≈ 0.4 s from Asia (Privy ~380 ms); confirmed ≈ +0.4–0.5 s.
+- Server-side: a click reaches the Worker in ~20–50 ms; Privy signs in ~100 ms co-located (vendor figure; unmeasured from Workers); broadcast from the Worker; inclusion ~100 ms. That gives ≈ 150–300 ms to submitted and ≈ 0.3–0.5 s to confirmed, if the Worker runs near Privy and the RPC (Smart Placement). Measure from a Worker before deciding.
+- The gain over today is ~0.1–0.25 s, not seconds. Most of the old slowness (quoting at click time, Privy fetching nonce and fees, 4 s receipt polling) is gone client-side.
+
+**Recommendation:**
+- Don't ship server-side signing on the Universal Router.
+- Ship the client-side fast path. Read the real timings from the founder's next trades (`window.__rushrTradeTimings`).
+- If it still feels slow, go for RushrRouter's audit (recipient and fee enforced on-chain), then one-click via session signers on RushrRouter, as section 3 describes.
+- If an earlier step is needed anyway, use buys-only with low caps, as above.
+
 ---
 
 ## Agents

@@ -176,6 +176,21 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
   };
 }
 
+/**
+ * The same quote at another slippage, without asking the chain again: slippage only changes the
+ * on-chain minimums, never the venue output (saves one RPC round trip per trade).
+ */
+export function withSlippage(q: Quote, slippageBps: number): Quote {
+  if (q.slippageBps === slippageBps) return q;
+  const request = { ...q.request, slippageBps };
+  if (q.request.side === 'buy') {
+    const m = minOut(q.grossOut, slippageBps);
+    return { ...q, request, slippageBps, minAmountOut: m, minGrossOut: m };
+  }
+  const { minGross, minNet } = sellMinimums(q.grossOut, q.fee.feeBps, slippageBps);
+  return { ...q, request, slippageBps, minAmountOut: minNet, minGrossOut: minGross };
+}
+
 export interface RouteResult {
   best: Quote;
   /** All successful quotes, best first. */

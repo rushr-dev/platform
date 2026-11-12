@@ -35,6 +35,18 @@ export interface TxRequest {
   gas?: bigint;
 }
 
+/** A fully specified EIP-1559 transaction to SIGN only (quick trades broadcast it themselves). */
+export interface SignTxRequest {
+  chainId: number;
+  nonce: number;
+  to: `0x${string}`;
+  data: `0x${string}`;
+  value: bigint;
+  gas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+}
+
 /** What the Privy bridge implements. */
 export interface AuthActions {
   login(): void;
@@ -42,6 +54,8 @@ export interface AuthActions {
   exportWallet(): Promise<void>;
   /** Sign and send from the embedded wallet with Privy's confirmation UI off. Resolves with the hash. */
   sendTransaction(tx: TxRequest): Promise<`0x${string}`>;
+  /** Sign (never send) from the embedded wallet, UI off. Resolves with the serialized signed tx. */
+  signTransaction(tx: SignTxRequest): Promise<`0x${string}`>;
   getAccessToken(): Promise<string | null>;
 }
 
@@ -92,6 +106,11 @@ export const auth = {
   logout: () => actions?.logout() ?? Promise.resolve(),
   exportWallet: () => (actions ? actions.exportWallet() : Promise.reject(notReady())),
   sendTransaction: (tx: TxRequest) => (actions ? actions.sendTransaction(tx) : Promise.reject(notReady())),
+  signTransaction: (tx: SignTxRequest) => (actions ? actions.signTransaction(tx) : Promise.reject(notReady())),
+  /** Load the SDK now (e.g. a trade button is on screen) instead of after the idle delay. */
+  preload() {
+    if (state.enabled && !actions) loaders.forEach((l) => l());
+  },
   getAccessToken: () => (actions ? actions.getAccessToken() : Promise.resolve(null)),
 };
 

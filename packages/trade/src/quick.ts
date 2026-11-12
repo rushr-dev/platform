@@ -6,7 +6,7 @@ import { resolveConfig, type TradeConfig } from './config';
 import { TradeError, isTradeError, sanitizeRpcMessage } from './errors';
 import { readAllowances } from './permit2';
 import { discoverPools, type DiscoverOptions } from './pools';
-import { quotePool, rankQuotes } from './quote';
+import { quotePool, rankQuotes, withSlippage } from './quote';
 import { draftTradeRecord, type TradeRecord } from './referral';
 import { simulateCalls, type SimCall } from './simulate';
 import type { Pool, Quote, Referral } from './types';
@@ -148,6 +148,8 @@ export interface QuickTrade {
   /** Other quoted pools, best first. */
   alternatives: Quote[];
   calls: WalletCall[];
+  /** Buys: approvals a later sell will need (send after the buy so sells are one tx). Empty if already set. */
+  sellApprovals: WalletCall[];
   slippageBps: number;
   gasCostWei: bigint;
   /** ms since epoch; refresh the quote after `expiresAt`. */
@@ -179,6 +181,30 @@ export interface QuickTradeOptions {
 }
 
 const FALLBACK_GAS = { approve: 80_000n, permit2: 80_000n, swap: 450_000n };
+/** Generous fixed swap gas limits per venue (measured: a v4 buy uses ~146k; unused gas is refunded). */
+export const SWAP_GAS_FLOOR: Partial<Record<Pool['venue'], bigint>> = { 'uniswap-v2': 250_000n, 'uniswap-v3': 320_000n, 'uniswap-v4': 380_000n };
+/** Buys pre-approve when the token allowance is below this (approvals are max/30 days anyway). */
+const PREAPPROVE_MIN = 1n << 128n;
+const bigMax = (a: bigint, b: bigint) => (a > b ? a : b);
+
+/** ERC-20 → Permit2 (max) and Permit2 → Universal Router (max uint160, 30 days) when missing for `amount`. */
+export function quickApprovalCalls(token: Address, a: { erc20ToPermit2: bigint; permit2Amount: bigint; permit2Expiration: number } | null, amount: bigint, nowS: number, cfg: TradeConfig): WalletCall[] {
+  if (!a) return [];
+  const out: WalletCall[] = [];
+  if (a.erc20ToPermit2 < amount)
+    out.push({ label: 'approve token for Permit2', chainId: 4663, to: token, value: 0n, gas: FALLBACK_GAS.approve, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [TRADE_ADDRESSES.permit2, maxUint256] }) });
+  // Renew a day early so a pre-approval made at buy time is still valid when the user sells.
+  if (a.permit2Amount < amount || a.permit2Expiration <= nowS + 86_400)
+    out.push({
+      label: 'allow Universal Router in Permit2',
+      chainId: 4663,
+      to: TRADE_ADDRESSES.permit2,
+      value: 0n,
+      gas: FALLBACK_GAS.permit2,
+      data: encodeFunctionData({ abi: permit2Abi, functionName: 'approve', args: [token, cfg.universalRouter, (1n << 160n) - 1n, nowS + 30 * 86_400] }),
+    });
+  return out;
+}
 
 
 /**
@@ -191,7 +217,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   const cfg = resolveConfig(opts.config);
   const now = opts.now?.() ?? Date.now();
   const empty = (blockers: Guard[], warnings: string[] = []): QuickTrade => ({
-    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null,
+    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null,
   });
   if (req.amountIn <= 0n) throw new TradeError('INVALID_AMOUNT', 'amount must be > 0');
 
@@ -209,56 +235,58 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
         : { code: 'NO_ROUTE', message: 'No Uniswap pool with ETH liquidity for this token yet.' },
     ]);
 
-  // 2. Quote every pool once at a provisional slippage, pick the best, then fix slippage and re-quote it.
-  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, source: { kind: 'web' as const } };
-  const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, { ...base, slippageBps: 500 }, cfg)));
-  const quotes = rankQuotes(settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : [])));
-  if (!quotes.length) return empty([{ code: 'NO_ROUTE', message: 'Every pool failed to quote (no liquidity in range).' }]);
-  const best0 = quotes[0]!;
-  const tax = req.side === 'buy' ? opts.risk?.buyTaxBps : opts.risk?.sellTaxBps;
-  const slippageBps = settings.slippageBps ?? autoSlippageBps({ side: req.side, ageMinutes: opts.risk?.ageMinutes, priceChange5mPct: opts.risk?.priceChange5mPct, priceImpactBps: best0.priceImpactBps, taxBps: tax });
-  const quote = await quotePool(client, best0.pool, { ...base, slippageBps }, cfg);
-
-  // 3. Calls: approvals (sells) + Universal Router swap.
-  const calls: WalletCall[] = [];
-  const built = buildSwap(quote, cfg, { now: Math.floor(now / 1000) });
-  if (req.side === 'sell') {
-    const a = opts.assume
-      ? { erc20ToPermit2: 0n, permit2Amount: 0n, permit2Expiration: 0, permit2Nonce: 0 }
-      : await readAllowances(client, req.trader, req.token, cfg.universalRouter);
-    if (a.erc20ToPermit2 < req.amountIn)
-      calls.push({ label: 'approve token for Permit2', chainId: 4663, to: req.token, value: 0n, gas: FALLBACK_GAS.approve, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [TRADE_ADDRESSES.permit2, maxUint256] }) });
-    const nowS = Math.floor(now / 1000);
-    if (a.permit2Amount < req.amountIn || a.permit2Expiration <= nowS + 60)
-      calls.push({
-        label: 'allow Universal Router in Permit2',
-        chainId: 4663,
-        to: TRADE_ADDRESSES.permit2,
-        value: 0n,
-        gas: FALLBACK_GAS.permit2,
-        data: encodeFunctionData({ abi: permit2Abi, functionName: 'approve', args: [req.token, cfg.universalRouter, (1n << 160n) - 1n, nowS + 30 * 86_400] }),
-      });
-  }
-  calls.push({ label: 'swap', chainId: 4663, to: built.tx.to, data: built.tx.data, value: built.tx.value, gas: FALLBACK_GAS.swap });
-
-  // 4. Balances, gas, guards.
-  const [ethBal, tokenBal, gasPrice] = await Promise.all([
+  // Chain facts the guards need, fetched while the pools quote (one round trip instead of two in a row).
+  const facts = Promise.all([
     opts.assume?.ethWei ?? client.getBalance({ address: req.trader }),
     req.side === 'sell' ? (opts.assume?.tokenWei ?? client.readContract({ address: req.token, abi: erc20Abi, functionName: 'balanceOf', args: [req.trader] })) : Promise.resolve(0n),
     client.getGasPrice().catch(() => 100_000_000n),
-  ]);
-  const gasCostWei = (calls.reduce((s, c) => s + c.gas, 0n) * gasPrice * 15n) / 10n;
+    opts.assume
+      ? Promise.resolve({ erc20ToPermit2: 0n, permit2Amount: 0n, permit2Expiration: 0, permit2Nonce: 0 })
+      : req.side === 'sell'
+        ? readAllowances(client, req.trader, req.token, cfg.universalRouter)
+        : readAllowances(client, req.trader, req.token, cfg.universalRouter).catch(() => null), // buys: only for pre-approval
+  ] as const);
+
+  // 2. Quote every pool once, pick the best, then apply the final slippage locally (no re-quote).
+  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, source: { kind: 'web' as const } };
+  const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, { ...base, slippageBps: 500 }, cfg)));
+  const quotes = rankQuotes(settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : [])));
+  if (!quotes.length) {
+    void facts.catch(() => undefined);
+    return empty([{ code: 'NO_ROUTE', message: 'Every pool failed to quote (no liquidity in range).' }]);
+  }
+  const best0 = quotes[0]!;
+  const tax = req.side === 'buy' ? opts.risk?.buyTaxBps : opts.risk?.sellTaxBps;
+  const slippageBps = settings.slippageBps ?? autoSlippageBps({ side: req.side, ageMinutes: opts.risk?.ageMinutes, priceChange5mPct: opts.risk?.priceChange5mPct, priceImpactBps: best0.priceImpactBps, taxBps: tax });
+  const quote = withSlippage(best0, slippageBps);
+  const [ethBal, tokenBal, gasPrice, allowances] = await facts;
+
+  // 3. Calls: approvals (sells) + Universal Router swap. Buys also return the approvals a later sell
+  // needs (`sellApprovals`) so the app can send them right after the buy and every sell is one tx.
+  const nowS = Math.floor(now / 1000);
+  const calls: WalletCall[] = [];
+  const built = buildSwap(quote, cfg, { now: nowS });
+  const approvals = quickApprovalCalls(req.token, allowances, req.side === 'sell' ? req.amountIn : PREAPPROVE_MIN, nowS, cfg);
+  if (req.side === 'sell') calls.push(...approvals);
+  calls.push({ label: 'swap', chainId: 4663, to: built.tx.to, data: built.tx.data, value: built.tx.value, gas: SWAP_GAS_FLOOR[quote.pool.venue] ?? FALLBACK_GAS.swap });
+  const sellApprovals = req.side === 'buy' && allowances ? approvals : [];
+
+  // 4. Guards.
+  // 2x the gas price: the fast sender caps fees at 2x the base fee, and the wallet must cover gas x cap.
+  const gasCostWei = calls.reduce((s, c) => s + c.gas, 0n) * gasPrice * 2n;
   const { blockers, warnings } = evaluateGuards({ quote, settings, risk: opts.risk, acknowledgedHighRisk: !!opts.acknowledgedHighRisk, ethBalanceWei: ethBal, tokenBalanceWei: tokenBal, gasCostWei });
   if (quote.pool.venueFeeBps > WARN_VENUE_FEE_BPS) warnings.push(`High pool fee: ${quote.pool.venueFeeLabel}`);
 
   // 5. Pre-send simulation of exactly these calls from the trader (catches reverts before signing).
+  // Gas limit = the larger of simulated use + 30% and a generous per-venue floor, so a quote built a
+  // few seconds early still has room and nothing is estimated at click time.
   if (!blockers.length && opts.simulate !== false) {
     const simCalls: SimCall[] = calls.map((c) => ({ from: req.trader, to: c.to, data: c.data, value: c.value, label: c.label }));
     try {
       const sim = await simulateCalls(client, simCalls, opts.assume?.ethWei ? { fund: { [req.trader]: opts.assume.ethWei } } : {});
       const bad = sim.calls.find((c) => !c.ok);
       if (bad) blockers.push({ code: 'SIMULATION_REVERTED', message: `Would fail on-chain (${bad.label}): ${bad.error}` });
-      else sim.calls.forEach((c, i) => (calls[i]!.gas = (c.gasUsed * 13n) / 10n + 20_000n));
+      else sim.calls.forEach((c, i) => (calls[i]!.gas = bigMax(calls[i]!.gas, (c.gasUsed * 13n) / 10n + 20_000n)));
     } catch (e) {
       warnings.push(`Pre-send simulation unavailable: ${isTradeError(e) ? e.message : sanitizeRpcMessage(e)}`);
     }
@@ -271,6 +299,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     quote,
     alternatives: quotes.slice(1),
     calls,
+    sellApprovals,
     slippageBps,
     gasCostWei,
     quotedAt: now,

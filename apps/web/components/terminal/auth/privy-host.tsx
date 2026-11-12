@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
-import { PrivyProvider, useExportWallet, usePrivy, useSendTransaction, useWallets } from '@privy-io/react-auth';
+import { useEffect, useRef } from 'react';
+import { PrivyProvider, useExportWallet, usePrivy, useSendTransaction, useSignTransaction, useWallets } from '@privy-io/react-auth';
 import { robinhoodChain } from '@rushr/trade';
 import { privyAppId, setAuthActions, setAuthState, type AuthUser } from '@/lib/auth';
 
@@ -43,8 +43,19 @@ function Bridge() {
   const { wallets } = useWallets();
   const { exportWallet } = useExportWallet();
   const { sendTransaction } = useSendTransaction();
+  const { signTransaction } = useSignTransaction();
 
   const embedded = wallets.find((w) => w.walletClientType === 'privy');
+
+  // Warm the wallet as soon as it exists, so the first quick trade isn't cold: a fresh access token
+  // (signing needs one) and the embedded wallet's provider. Nothing is signed.
+  const warmed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!ready || !authenticated || !embedded || warmed.current === embedded.address) return;
+    warmed.current = embedded.address;
+    void getAccessToken().catch(() => null);
+    void embedded.getEthereumProvider().catch(() => null);
+  }, [ready, authenticated, embedded, getAccessToken]);
 
   useEffect(() => {
     const u: AuthUser | null = user
@@ -72,10 +83,30 @@ function Bridge() {
         );
         return hash;
       },
+      // Quick trades: sign only, with every field given (Privy then fetches nothing), and broadcast
+      // from the trade UI to the chain's RPC (components/trade/fast-send). Privy's UI stays off.
+      async signTransaction(tx) {
+        if (!embedded) throw new Error('No embedded wallet yet');
+        const { signature } = await signTransaction(
+          {
+            type: 2,
+            chainId: tx.chainId,
+            nonce: tx.nonce,
+            to: tx.to,
+            data: tx.data,
+            value: tx.value,
+            gasLimit: tx.gas,
+            maxFeePerGas: tx.maxFeePerGas,
+            maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+          },
+          { address: embedded.address, uiOptions: { showWalletUIs: false } },
+        );
+        return signature;
+      },
       getAccessToken,
     });
     return () => setAuthActions(null);
-  }, [login, logout, exportWallet, sendTransaction, getAccessToken, embedded]);
+  }, [login, logout, exportWallet, sendTransaction, signTransaction, getAccessToken, embedded]);
 
   return null;
 }
