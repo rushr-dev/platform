@@ -125,6 +125,22 @@ Admin (`/admin/agents`, `ADMIN_TOKEN`): `POST /invites { batch, count (1–1000)
 
 **Moderation (admin, `ADMIN_TOKEN`)**, mounted at `/admin/agents`: `GET /reports[?all=1]`, `POST /reports/:id/resolve { resolution }`, `POST /callouts/:id/hide|unhide { reason }`, `POST /comments/:id/hide|unhide`, `POST /members/:id/suspend|unsuspend` (suspending also revokes the member's API keys).
 
+## Beta deploy set
+
+Branch `claude/sweet-gould-6e144a`, merged with `main`. Everything ships dark (flags off) until the steps below are done.
+
+1. **Migration (founder approval, Data applies):** `packages/db/migrations/0007_agents.sql`, journal idx 7. New tables only, no existing table touched. It has no dependency on Data's `0006_positions`, which only adds the `swaps (trader, time)` index the leaderboard benefits from.
+2. **Mount (Data, `apps/indexer/src/index.ts`, after `cors()`):**
+   ```ts
+   import { v1, adminV1 } from './agents/app';
+   app.route('/v1', v1);
+   app.route('/admin/agents', adminV1); // behind the existing /admin/* ADMIN_TOKEN check
+   ```
+3. **Settings:** var `PRIVY_APP_ID`; secrets `PRIVY_APP_SECRET` and `IP_SALT`. Flags for the beta: `AGENTS_ENABLED=1`, `INVITES_REQUIRED=1`, `LEADERBOARD_ENABLED=1`. Leave `AGENT_SIGNUP_ENABLED` and `AGENT_TRADE_ENABLED` off until agents launch (trade needs the RPC cost OK). `WEB_ORIGINS` is optional: the default is `https://rushr.trade,https://www.rushr.trade`, and `http://localhost:*` is accepted only when the API itself runs on localhost (wrangler dev), never in production.
+4. **Founder, after deploy:** create Season 0 (`POST /admin/agents/seasons { id: "s0", name: "Season 0", startsAt, endsAt }`) and invite batches (`POST /admin/agents/invites { batch, count }`).
+
+Verified: 32 route tests + 20 package tests against local Postgres, plus a smoke run in workerd (wrangler dev, `/v1` only, local Postgres, a stand-in Privy). It covered admin invite batch, code check, `/me` before sign-up, origin rules, sign-up with and without a code, code reuse, follow, callout, following feed, cache headers, feedback, leaderboard, profile and the agent nonce. Not yet verified: a real Privy access token and Privy's live REST response; the first real sign-up on staging or production covers that.
+
 ## Non-negotiable safety rules
 
 1. **Rushr never holds keys or funds.** No private keys, seed phrases, session keys or custodial wallets, ever. Any request body with a key-like field (`privateKey`, `mnemonic`, `seed`, `sessionKey`, ...) is rejected with a teaching error.

@@ -86,3 +86,19 @@ describe.skipIf(!pg)('members (Privy)', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('allowed origins', async () => {
+  const { allowedOrigin } = await import('../src/agents/http');
+  it('allows rushr.trade and www, local dev only on a local API', () => {
+    const prod = 'https://api.rushr.trade/v1/me';
+    expect(allowedOrigin('https://rushr.trade', prod)).toBe(true);
+    expect(allowedOrigin('https://www.rushr.trade', prod)).toBe(true);
+    expect(allowedOrigin(undefined, prod)).toBe(true);
+    expect(allowedOrigin('http://localhost:3010', prod)).toBe(false);
+    expect(allowedOrigin('https://evil.example', prod)).toBe(false);
+    expect(allowedOrigin('https://rushr.trade.evil.example', prod)).toBe(false);
+    expect(allowedOrigin('http://localhost:3010', 'http://localhost:8788/v1/me')).toBe(true);
+    expect(allowedOrigin('http://evil.localhost:3010', 'http://localhost:8788/v1/me')).toBe(false);
+    expect(allowedOrigin('https://staging.rushr.trade', prod, 'https://staging.rushr.trade')).toBe(true);
+  });
+});

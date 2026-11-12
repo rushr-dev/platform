@@ -106,12 +106,21 @@ export const ip: MiddlewareHandler<Ctx> = async (c, next) => {
   await next();
 };
 
-/** Browser calls with a Privy token must come from the web app (CSRF and token-theft hygiene). */
-function allowedOrigin(c: C): boolean {
-  const origin = c.req.header('origin');
+/** Production web origins. `WEB_ORIGINS` (comma separated) replaces this list when set. */
+export const DEFAULT_WEB_ORIGINS = ['https://rushr.trade', 'https://www.rushr.trade'];
+
+/**
+ * Browser calls with a Privy token must come from the web app (CSRF and token-theft hygiene).
+ * Local web dev servers (http://localhost:*) are allowed only when the API itself runs on localhost
+ * (wrangler dev), never in production.
+ */
+export function allowedOrigin(origin: string | undefined, requestUrl: string, configured?: string): boolean {
   if (!origin) return true; // server-to-server or curl: the bearer token is the proof
-  const allowed = (c.env.WEB_ORIGINS ?? 'https://rushr.trade').split(',').map((s) => s.trim());
-  return allowed.includes(origin);
+  const allowed = configured ? configured.split(',').map((s) => s.trim()).filter(Boolean) : DEFAULT_WEB_ORIGINS;
+  if (allowed.includes(origin)) return true;
+  const apiHost = new URL(requestUrl).hostname;
+  const local = apiHost === 'localhost' || apiHost === '127.0.0.1';
+  return local && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
 const MEMBER_COLUMNS = 'id, kind, origin, handle, wallet, privy_did, owner_id, display_name, bio, avatar_url, x_username, x_verified, followers, following, status, created_at';
@@ -141,7 +150,7 @@ export const auth: MiddlewareHandler<Ctx> = async (c, next) => {
   }
   const appId = c.env.PRIVY_APP_ID;
   if (!appId) throw fail(503, 'auth_unavailable', 'Sign-in is not configured.');
-  if (!allowedOrigin(c)) throw fail(403, 'bad_origin', 'Requests with a session must come from the Rushr web app.');
+  if (!allowedOrigin(c.req.header('origin'), c.req.url, c.env.WEB_ORIGINS)) throw fail(403, 'bad_origin', 'Requests with a session must come from the Rushr web app.');
   const r = await verifyPrivyToken(token, appId);
   if (!r.ok) throw fail(401, r.error, 'Invalid or expired session. Sign in again.');
   viewer.privyDid = r.claims.did;
