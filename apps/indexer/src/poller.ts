@@ -321,6 +321,7 @@ export class ChainPoller extends DurableObject<Env> {
       stage: (await this.ctx.storage.get('stage')) ?? null,
       alarmAt: await this.ctx.storage.getAlarm(),
       lastError: (await this.ctx.storage.get('lastError')) ?? null,
+      previousError: (await this.ctx.storage.get('previousError')) ?? null,
     };
   }
 
@@ -389,6 +390,12 @@ export class ChainPoller extends DurableObject<Env> {
       return;
     }
     if (caughtUp) await this.tickStats();
+    // /health shows the last error until 15 error-free minutes have passed; then it moves to previousError.
+    const lastError = await this.ctx.storage.get<{ at: string; message: string }>('lastError');
+    if (lastError && Date.now() - Date.parse(lastError.at) > 15 * 60_000) {
+      await this.ctx.storage.put('previousError', lastError);
+      await this.ctx.storage.delete('lastError');
+    }
     await this.ctx.storage.setAlarm(Date.now() + (caughtUp ? POLL_MS : 10));
   }
 

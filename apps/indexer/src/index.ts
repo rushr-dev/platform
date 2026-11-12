@@ -47,6 +47,7 @@ app.get('/health', async (c) => {
     stage: status.stage,
     alarmAt: status.alarmAt,
     lastError: status.lastError,
+    previousError: status.previousError,
   });
 });
 
