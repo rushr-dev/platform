@@ -27,6 +27,8 @@ export default function PrivyHost() {
           walletChainType: 'ethereum-only',
         },
         embeddedWallets: { ethereum: { createOnLogin: 'all-users' }, showWalletUIs: false },
+        // Privy's modal links Terms and Privacy; the Risk disclosure is linked in our own sign-up step.
+        legal: { termsAndConditionsUrl: `${window.location.origin}/terms`, privacyPolicyUrl: `${window.location.origin}/privacy` },
         defaultChain: robinhoodChain,
         supportedChains: [robinhoodChain],
       }}

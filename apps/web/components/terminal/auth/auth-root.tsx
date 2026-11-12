@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { onAuthLoadRequest, privyAppId, setAuthState } from '@/lib/auth';
+import { MemberGate } from './onboarding';
 
 const PrivyHost = dynamic(() => import('./privy-host'), { ssr: false });
 
@@ -29,5 +30,10 @@ export function AuthRoot() {
       window.clearTimeout(t);
     };
   }, []);
-  return load ? <PrivyHost /> : null;
+  return (
+    <>
+      {load && <PrivyHost />}
+      <MemberGate />
+    </>
+  );
 }
