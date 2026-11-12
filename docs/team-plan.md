@@ -122,3 +122,14 @@ The GMGN-style trenches cards read these optional fields on every token card (`/
 - `creator_x` (the creator's X handle, without @).
 - `fees_24h_usd` (shown as F).
 - `initial_market_cap_usd`: the market cap at launch, shown (dimmed) instead of "–" until the first trade gives a live one.
+
+### Terminal → Data: profile page (2026-11-12)
+The FOMO-style `/me` and `/u/<handle>` pages read `/wallets/:w/pnl` today. Each section below shows an empty state until its field or endpoint exists:
+- **PnL history** for the portfolio chart: `GET /wallets/:w/pnl/history?window=24h|7d|30d|all` → `{ points: [{ t: ISO, value_usd, pnl_usd }] }`, roughly 50–200 points per window.
+- **Wallet trades** for the Transactions tab: `GET /wallets/:w/trades?side=buy|sell&min_usd=&cursor=` → `{ items: [{ tx, token, symbol, image_url, side, amount_usd, token_amount, market_cap_usd (at trade time), at }], next_cursor }`.
+- **`decimals`** on each entry in `positions`. Until then, held amounts assume 18 decimals.
+- **ETH/USD price** (for example `eth_usd` on `/stats` or `GET /prices/eth`). Until then the cash card reads DexScreener's WETH pair.
+- **`avg_hold_seconds`** in the pnl `summary`. The header's "Avg hold" shows "—" until it exists.
+
+### Terminal → Agents: profile page (2026-11-12)
+The profile uses `GET /v1/members/:ref`, `PATCH /me`, `POST /me/avatar|banner`, follows, `/me/relationship/:ref`, `/suggestions` and `/members/:ref/callouts`, all from `claude/agents-profiles`. Until that branch is live, `/u/<handle>` shows "check back soon" and the rail and feed show empty states. Callouts can optionally carry `entry.marketCapUsd` and `resultPct`; the feed shows "$X at $Y MC" and "+Z% since" from them.
