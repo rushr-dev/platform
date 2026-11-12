@@ -63,7 +63,7 @@ const BY: Record<Exclude<SortKey, 'default'>, (a: TokenCard, b: TokenCard) => nu
   mcap: (a, b) => (b.market_cap_usd ?? b.initial_market_cap_usd ?? 0) - (a.market_cap_usd ?? a.initial_market_cap_usd ?? 0),
   volume: (a, b) => (b.volume_24h_usd ?? 0) - (a.volume_24h_usd ?? 0),
   holders: (a, b) => b.holders - a.holders,
-  txns: (a, b) => (b.buys_24h ?? 0) + (b.sells_24h ?? 0) - ((a.buys_24h ?? 0) + (a.sells_24h ?? 0)),
+  txns: (a, b) => ((b.buys_24h ?? 0) + (b.sells_24h ?? 0) || (b.trades_24h ?? 0)) - ((a.buys_24h ?? 0) + (a.sells_24h ?? 0) || (a.trades_24h ?? 0)),
 };
 const SORTS_KEY = 'rushr.trenches.sort';
 
@@ -574,7 +574,12 @@ function slideIn(el: HTMLLIElement | null) {
 
 /** Market cap to show: live, else the launch market cap (never "–" when the API knows one). */
 const mcapOf = (t: TokenCard) => t.market_cap_usd ?? t.initial_market_cap_usd ?? null;
-const taxOf = (t: TokenCard) => t.tax_pct ?? (t.buy_tax_pct != null || t.sell_tax_pct != null ? Math.max(t.buy_tax_pct ?? 0, t.sell_tax_pct ?? 0) : null);
+const taxOf = (t: TokenCard) => {
+  if (t.tax_pct != null) return t.tax_pct;
+  if (t.buy_tax_bps != null || t.sell_tax_bps != null) return Math.max(t.buy_tax_bps ?? 0, t.sell_tax_bps ?? 0) / 100;
+  if (t.buy_tax_pct != null || t.sell_tax_pct != null) return Math.max(t.buy_tax_pct ?? 0, t.sell_tax_pct ?? 0);
+  return null;
+};
 
 /** Bordered stat pill (GMGN-style); turns red past the point where it usually means trouble. */
 function Pill({ icon: Icon, value, bad, title }: { icon: typeof Users; value: number | null; bad: number; title: string }) {
@@ -622,7 +627,11 @@ const Row = memo(function Row({
   const quote = quoteText.startsWith('0x') ? null : quoteText;
   const buys = t.buys_24h ?? null;
   const sells = t.sells_24h ?? null;
-  const txns = buys != null || sells != null ? (buys ?? 0) + (sells ?? 0) : null;
+  // A buy/sell split draws the ratio bar; a plain 24h count (Data's trades_24h) shows the number only.
+  const split = buys != null || sells != null;
+  const txns = split ? (buys ?? 0) + (sells ?? 0) : (t.trades_24h ?? null);
+  const fees = t.fees_24h_usd ?? t.fees_paid_usd ?? null;
+  const handle = t.creator_x ?? t.twitter_handle ?? null;
   const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
   return (
     <li ref={ref} className="relative overflow-hidden border-b border-white/[0.04]">
@@ -673,16 +682,16 @@ const Row = memo(function Row({
                 </span>
               )}
             </div>
-            {t.creator_x && (
+            {handle && (
               <a
-                href={`https://x.com/${t.creator_x}`}
+                href={`https://x.com/${handle}`}
                 target="_blank"
                 rel="noreferrer noopener"
                 onClick={(e) => e.stopPropagation()}
                 className="relative z-10 mt-0.5 block truncate text-[11px] text-muted hover:text-ink"
                 title="Creator on X"
               >
-                @{t.creator_x}
+                @{handle}
               </a>
             )}
           </div>
@@ -695,19 +704,21 @@ const Row = memo(function Row({
               <span className="text-muted">V </span>
               {usd(t.volume_24h_usd)}
             </div>
-            {t.fees_24h_usd != null && (
-              <div title="Fees paid, 24h">
+            {fees != null && (
+              <div title="Fees paid">
                 <span className="text-muted">F </span>
-                {usd(t.fees_24h_usd)}
+                {usd(fees)}
               </div>
             )}
             {txns != null && (
-              <div title={`${buys ?? 0} buys / ${sells ?? 0} sells, 24h`}>
+              <div title={split ? `${buys ?? 0} buys / ${sells ?? 0} sells, 24h` : 'Trades, 24h'}>
                 <span className="text-muted">TX </span>
-                {compact(txns)}
-                <span className="mt-0.5 flex h-[3px] w-14 overflow-hidden rounded-full bg-risk-high/70">
-                  <span className="h-full bg-brand" style={{ width: `${txns ? ((buys ?? 0) / txns) * 100 : 50}%` }} />
-                </span>
+                {txns < 1000 ? txns : compact(txns)}
+                {split && (
+                  <span className="mt-0.5 flex h-[3px] w-14 overflow-hidden rounded-full bg-risk-high/70">
+                    <span className="h-full bg-brand" style={{ width: `${txns ? ((buys ?? 0) / txns) * 100 : 50}%` }} />
+                  </span>
+                )}
               </div>
             )}
           </div>

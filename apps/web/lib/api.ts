@@ -54,6 +54,12 @@ export interface TokenCard {
   fees_24h_usd?: number | null;
   /** Market cap at launch: shown until the first trade gives a live one. */
   initial_market_cap_usd?: number | null;
+  // Data's names (1863313): taxes in basis points, fees paid, 24h trade count, the token's X handle.
+  buy_tax_bps?: number | null;
+  sell_tax_bps?: number | null;
+  fees_paid_usd?: number | null;
+  trades_24h?: number | null;
+  twitter_handle?: string | null;
   /** Rushr quote token address (0x0 = native ETH). */
   quote?: string | null;
   /** Block time (unix seconds) of the trade that triggered a live update. */
