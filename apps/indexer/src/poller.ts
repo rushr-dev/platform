@@ -5,6 +5,7 @@ import { dbUrl, poolHistory, type Env } from './env';
 import { Pipeline, type BatchStats, type RangeStats } from './pipeline';
 import { tokenSummaries } from './api';
 import { columnOf, tokenStats, type Column } from './data';
+import { updateCurveProgress } from './curves';
 import { GATEWAY_COUNT, gateway, type DeltaEvent } from './gateway';
 import type { FeedEvent } from './feed';
 import { Rpc } from './rpc';
@@ -282,6 +283,18 @@ export class ChainPoller extends DurableObject<Env> {
     await this.sendV2(this.cardDeltas(cards, new Set()));
   }
 
+  /** Every ~15s: bonding progress of PONS curves that traded recently, from their reserves. */
+  private curvesAt = 0;
+  private async tickCurves() {
+    if (Date.now() - this.curvesAt < 15_000 || !this.sql) return;
+    this.curvesAt = Date.now();
+    try {
+      await updateCurveProgress(this.sql, new Rpc(this.env.RPC_URL), { activeSeconds: 30 });
+    } catch (err) {
+      console.error('curve progress failed', err);
+    }
+  }
+
   private watchedTokens(): string[] {
     const out = new Set<string>();
     for (const set of this.registry.values()) for (const t of set) if (t.startsWith('token:')) out.add(t.slice(6));
@@ -397,6 +410,7 @@ export class ChainPoller extends DurableObject<Env> {
       return;
     }
     if (caughtUp) await this.tickStats();
+    if (caughtUp) await this.tickCurves();
     // /health shows the last error until 15 error-free minutes have passed; then it moves to previousError.
     const lastError = await this.ctx.storage.get<{ at: string; message: string }>('lastError');
     if (lastError && Date.now() - Date.parse(lastError.at) > 15 * 60_000) {

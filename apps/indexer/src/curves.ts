@@ -14,6 +14,7 @@ const GRADUATED = toFunctionSelector('graduated()');
 const DEFAULT_THRESHOLD = 4_200_000_000_000_000_000n;
 /** Progress is capped here until graduated() confirms the curve finished. */
 const MAX_UNCONFIRMED = 0.999;
+const NATIVE = '0x0000000000000000000000000000000000000000';
 
 /** Thresholds never change, so they're cached for the life of the isolate. */
 const thresholds = new Map<string, bigint>();
@@ -33,23 +34,53 @@ export async function curveThresholds(rpc: Rpc, curves: string[]): Promise<Map<s
 }
 
 /**
- * Recompute bonding progress of PONS tokens still on their curve (all of them, or `tokens`):
- * net quote paid into the curve (raw units) / the curve's threshold (same units).
+ * Bonding progress of PONS tokens still on their curve (all of them, or `opts.tokens`, or only those
+ * traded in the last `opts.activeSeconds`): the curve's actual reserve (its ETH balance, or its balance
+ * of the quote token) over its own threshold. Summing trades over-counted (fees never reach the reserve:
+ * QZO read 86% with 2.16 of 4.2 ETH in the curve).
  */
-export async function updateCurveProgress(sql: Sql | TransactionSql, rpc: Rpc, tokens?: string[]): Promise<number> {
-  const rows = await sql<{ address: string; main_pool: string }[]>`
-    select address, main_pool from tokens
+export async function updateCurveProgress(
+  sql: Sql | TransactionSql,
+  rpc: Rpc,
+  opts: { tokens?: string[]; activeSeconds?: number } = {},
+): Promise<number> {
+  const rows = await sql<{ address: string; main_pool: string; quote: string | null }[]>`
+    select address, main_pool, quote from tokens
     where launchpad = 'pons' and status <> 'migrated' and length(main_pool) = 42
-      ${tokens ? sql`and address = any(${tokens})` : sql``}`;
+      ${opts.tokens ? sql`and address = any(${opts.tokens})` : sql``}
+      ${opts.activeSeconds ? sql`and price_at > now() - ${opts.activeSeconds} * interval '1 second'` : sql``}`;
   if (!rows.length) return 0;
   const th = await curveThresholds(rpc, rows.map((r) => r.main_pool));
-  const r = await sql`
-    update tokens t set bonding_progress = least(${MAX_UNCONFIRMED}, greatest(0,
-        (select coalesce(sum(case when s.side = 'buy' then s.quote_amount else -s.quote_amount end), 0)
-         from swaps s where s.token = t.address and s.pool = t.main_pool) / v.th))
-    from unnest(${rows.map((x) => x.address)}::text[], ${rows.map((x) => th.get(x.main_pool)!.toString())}::numeric[]) v(addr, th)
+  const reserves: (Hex | null)[] = [];
+  for (let i = 0; i < rows.length; i += 100) {
+    const chunk = rows.slice(i, i + 100);
+    reserves.push(
+      ...(await rpc.batch<Hex>(
+        chunk.map((r) => {
+          const quote = (r.quote ?? NATIVE).toLowerCase();
+          return quote === NATIVE
+            ? { method: 'eth_getBalance', params: [r.main_pool, 'latest'] }
+            : { method: 'eth_call', params: [{ to: quote, data: `0x70a08231${r.main_pool.slice(2).padStart(64, '0')}` }, 'latest'] };
+        }),
+      )),
+    );
+  }
+  const addrs: string[] = [];
+  const progress: number[] = [];
+  rows.forEach((r, i) => {
+    const raw = reserves[i];
+    if (!raw || raw === '0x') return;
+    const bal = BigInt(raw.length > 66 ? raw.slice(0, 66) : raw);
+    const t = th.get(r.main_pool)!;
+    addrs.push(r.address);
+    progress.push(Math.min(MAX_UNCONFIRMED, Number((bal * 1_000_000n) / t) / 1_000_000));
+  });
+  if (!addrs.length) return 0;
+  const res = await sql`
+    update tokens t set bonding_progress = v.p
+    from unnest(${addrs}::text[], ${progress}::float8[]) v(addr, p)
     where t.address = v.addr and t.status <> 'migrated'`;
-  return r.count;
+  return res.count;
 }
 
 /**

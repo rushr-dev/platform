@@ -20,7 +20,6 @@ import {
   type PoolInfo,
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
-import { updateCurveProgress } from './curves';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
 const ZERO = NATIVE_ETH;
@@ -928,9 +927,7 @@ export class Pipeline {
                  ath_market_cap_usd = greatest(coalesce(ath_market_cap_usd, 0), ${mcap}::numeric), updated_at = now()
                where address = ${token}`;
     }
-    // PONS curves: progress against each curve's own graduationThreshold(), in its own quote (curves.ts).
-    const curveTokens = touched.filter((t) => this.tokens.has(t));
-    if (curveTokens.length) await updateCurveProgress(tx, this.rpc, curveTokens);
+    // PONS curve progress is read from the curves' reserves by the poller every ~15s (curves.ts).
     await tx`update tokens t set
         holders = (select count(*) from balances b where b.token = t.address and b.amount > 0),
         volume_24h_usd = (select coalesce(sum(usd), 0) from swaps s where s.token = t.address and s.time > now() - interval '24 hours')
