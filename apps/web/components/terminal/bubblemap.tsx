@@ -19,6 +19,7 @@ const CLUSTER_COLORS = ['#ff6b5b', '#ffb547', '#b58cff', '#5ec8ff', '#ff7ab6', '
 /** Top holders as bubbles sized by share; linked when they share a funder, funded each other or traded tokens. */
 export function BubbleMap({ data }: { data: BubbleData }) {
   const [hover, setHover] = useState<Node | null>(null);
+  const [focus, setFocus] = useState<number | null>(null);
   const { nodes, links } = useMemo(() => {
     const clusterOf = new Map<string, number>();
     data.clusters.forEach((c, i) => c.wallets.forEach((w) => clusterOf.set(w, i)));
@@ -44,6 +45,9 @@ export function BubbleMap({ data }: { data: BubbleData }) {
     return { nodes, links: links as unknown as { source: Node; target: Node; kind: string }[] };
   }, [data]);
 
+  // Hovering a cluster (or one of its bubbles) dims everything else.
+  const active = focus ?? (hover && hover.cluster >= 0 ? hover.cluster : null);
+  const dim = (n: Node) => active != null && n.cluster !== active;
   const color = (n: Node) =>
     n.cluster >= 0 ? CLUSTER_COLORS[n.cluster % CLUSTER_COLORS.length]! : n.tags.includes('dev') ? '#ffffff' : '#36d42a';
 
@@ -60,6 +64,7 @@ export function BubbleMap({ data }: { data: BubbleData }) {
               y2={l.target.y}
               stroke={l.kind === 'transfer' ? 'rgba(94,200,255,0.4)' : 'rgba(255,255,255,0.18)'}
               strokeDasharray={l.kind === 'transfer' ? '3 3' : undefined}
+              opacity={active != null && (l.source.cluster !== active || l.target.cluster !== active) ? 0.15 : 1}
             />
           ))}
           {nodes.map((n) => (
@@ -69,13 +74,17 @@ export function BubbleMap({ data }: { data: BubbleData }) {
               cy={n.y}
               r={n.r}
               fill={color(n)}
-              fillOpacity={hover?.wallet === n.wallet ? 0.55 : 0.22}
+              fillOpacity={hover?.wallet === n.wallet ? 0.55 : dim(n) ? 0.05 : 0.22}
               stroke={color(n)}
-              strokeWidth={1.2}
+              strokeOpacity={dim(n) ? 0.25 : 1}
+              strokeWidth={n.tags.includes('dev') ? 2.4 : 1.2}
               onMouseEnter={() => setHover(n)}
               onMouseLeave={() => setHover(null)}
-              className="cursor-pointer"
-            />
+              onClick={() => window.open(`https://robinhoodchain.blockscout.com/address/${n.wallet}`, '_blank', 'noopener')}
+              className="cursor-pointer transition-[fill-opacity,stroke-opacity] duration-150"
+            >
+              <title>{`${n.wallet} · ${pct(n.pct, 2)}`}</title>
+            </circle>
           ))}
         </svg>
         {hover && (
@@ -93,7 +102,12 @@ export function BubbleMap({ data }: { data: BubbleData }) {
         <div className="font-semibold">Clusters</div>
         {data.clusters.length === 0 && <p className="text-muted">No linked wallets among the top holders.</p>}
         {data.clusters.slice(0, 6).map((c, i) => (
-          <div key={c.funder} className="flex items-center gap-2 rounded-lg bg-white/[0.03] px-2.5 py-2">
+          <div
+            key={c.funder}
+            onMouseEnter={() => setFocus(i)}
+            onMouseLeave={() => setFocus(null)}
+            className={`flex cursor-default items-center gap-2 rounded-lg px-2.5 py-2 transition-colors ${focus === i ? 'bg-white/[0.08]' : 'bg-white/[0.03]'}`}
+          >
             <span className="size-2.5 rounded-full" style={{ background: CLUSTER_COLORS[i % CLUSTER_COLORS.length] }} />
             <span className="flex-1">
               {c.wallets.length} wallets, one funder
@@ -102,8 +116,19 @@ export function BubbleMap({ data }: { data: BubbleData }) {
             <span className={`font-mono ${c.pct >= 10 ? 'text-risk-high' : ''}`}>{pct(c.pct)}</span>
           </div>
         ))}
-        <p className="pt-2 leading-relaxed text-muted">
-          Lines join wallets that share a funder or funded each other. Dashed blue lines are token transfers between them.
+        <div className="flex flex-wrap gap-x-3 gap-y-1 pt-2 text-[11px] text-muted">
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full border border-white bg-white/20" /> Dev
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full bg-brand/60" /> Unlinked
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="size-2 rounded-full bg-risk-high/70" /> Cluster
+          </span>
+        </div>
+        <p className="leading-relaxed text-muted">
+          Bubble size is share of supply. Lines join wallets that share a funder or funded each other; dashed blue lines are token transfers between them. Click a bubble to open the wallet.
         </p>
       </div>
     </div>

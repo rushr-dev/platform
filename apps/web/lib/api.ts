@@ -58,6 +58,9 @@ export interface TokenDetail extends TokenCard {
   } | null;
   dev: { launches: number; launches_7d: number; rugs: number; migrated: number; best_peak_mcap_usd: string | null } | null;
   trades_24h: number;
+  /** v4 pool id (bytes32) or pool/curve address. */
+  main_pool?: string | null;
+  quote?: string | null;
 }
 
 export interface Candle {
@@ -67,6 +70,7 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  trades?: number;
 }
 
 export interface Stats {
@@ -77,9 +81,10 @@ export interface Stats {
   trades_24h: number;
 }
 
-async function get<T>(path: string, revalidate: number): Promise<T | null> {
+/** Server reads give up after `timeoutMs` so a slow API never holds the page hostage. */
+async function get<T>(path: string, revalidate: number, timeoutMs = 6_000): Promise<T | null> {
   try {
-    const res = await fetch(`${API_URL}${path}`, { next: { revalidate } });
+    const res = await fetch(`${API_URL}${path}`, { next: { revalidate }, signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
     return (await res.json()) as T;
   } catch {
@@ -98,6 +103,9 @@ export interface Trade {
   side: 'buy' | 'sell';
   price_usd: number | null;
   usd: number | null;
+  token_amount?: string;
+  quote?: string;
+  quote_amount?: string;
 }
 
 export const getColumn = async (column: 'new' | 'almost' | 'migrated', limit = 8, revalidate = 30, extra = '') =>

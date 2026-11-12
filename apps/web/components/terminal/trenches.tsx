@@ -18,6 +18,7 @@ import {
 import type { Column, TokenCard } from '@/lib/api';
 import { age, LAUNCHPAD_LABEL, pct, usd } from '@/lib/format';
 import { useLive, type LiveEvent } from '@/lib/live';
+import { useNow } from '@/lib/now';
 import { RiskTag, SocialLinks, TokenAvatar } from './bits';
 
 /* ------------------------------------------------------------------ column rules (mirror the API) */
@@ -54,35 +55,57 @@ const PER_COLUMN = 60;
 interface Filters {
   minMcap: number;
   maxMcap: number;
+  minVolume: number;
   minHolders: number;
   maxAgeMin: number;
+  maxTop10: number;
+  maxDev: number;
   hideHighRisk: boolean;
+  hideCopycat: boolean;
+  hasSocial: boolean;
   launchpad: string;
+  keyword: string;
 }
-const NO_FILTERS: Filters = { minMcap: 0, maxMcap: 0, minHolders: 0, maxAgeMin: 0, hideHighRisk: false, launchpad: '' };
+const NO_FILTERS: Filters = {
+  minMcap: 0, maxMcap: 0, minVolume: 0, minHolders: 0, maxAgeMin: 0, maxTop10: 0, maxDev: 0,
+  hideHighRisk: false, hideCopycat: false, hasSocial: false, launchpad: '', keyword: '',
+};
 const activeCount = (f: Filters) =>
-  [f.minMcap, f.maxMcap, f.minHolders, f.maxAgeMin, f.hideHighRisk, f.launchpad].filter(Boolean).length;
+  (Object.keys(NO_FILTERS) as (keyof Filters)[]).filter((k) => f[k] !== NO_FILTERS[k]).length;
 
 function passes(t: TokenCard, f: Filters, now: number) {
   const mc = t.market_cap_usd ?? 0;
   if (f.minMcap && mc < f.minMcap) return false;
   if (f.maxMcap && mc > f.maxMcap) return false;
+  if (f.minVolume && (t.volume_24h_usd ?? 0) < f.minVolume) return false;
   if (f.minHolders && t.holders < f.minHolders) return false;
   if (f.maxAgeMin && now - ts(t.created_at) > f.maxAgeMin * 60_000) return false;
+  // Unknown (not yet checked) passes the max filters; only measured values are held against a token.
+  if (f.maxTop10 && (t.top10_pct ?? 0) > f.maxTop10) return false;
+  if (f.maxDev && (t.dev_pct ?? 0) > f.maxDev) return false;
   if (f.hideHighRisk && t.risk === 'high') return false;
+  if (f.hideCopycat && t.copycat) return false;
+  if (f.hasSocial && !t.website && !t.twitter && !t.telegram) return false;
   if (f.launchpad && t.launchpad !== f.launchpad) return false;
+  if (f.keyword.trim()) {
+    const k = f.keyword.trim().toLowerCase();
+    if (!t.symbol.toLowerCase().includes(k) && !t.name.toLowerCase().includes(k) && !t.address.startsWith(k)) return false;
+  }
   return true;
 }
 
 function loadFilters(): Record<Column, Filters> {
   const base = { new: NO_FILTERS, almost: NO_FILTERS, migrated: NO_FILTERS };
   try {
-    const raw = localStorage.getItem('rushr.trenches.filters');
-    return raw ? { ...base, ...JSON.parse(raw) } : base;
+    const raw = JSON.parse(localStorage.getItem('rushr.trenches.filters') ?? '{}') as Partial<Record<Column, Partial<Filters>>>;
+    // Older saves lack the newer keys; fill them in.
+    return { new: { ...NO_FILTERS, ...raw.new }, almost: { ...NO_FILTERS, ...raw.almost }, migrated: { ...NO_FILTERS, ...raw.migrated } };
   } catch {
     return base;
   }
 }
+
+const QUICK_KEY = 'rushr.quickbuy';
 
 /* ------------------------------------------------------------------ main */
 
@@ -100,10 +123,30 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   const [mobileCol, setMobileCol] = useState<Column>('new');
   const [showSpam, setShowSpam] = useState(false);
   const [showPlain, setShowPlain] = useState(false);
+  const [quick, setQuick] = useState('0.1');
+  // Tokens present on first paint don't animate in; later arrivals slide in.
+  const initialSet = useRef(new Set(initial.map((t) => t.address)));
 
-  useEffect(() => setFilters(loadFilters()), []);
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
+    setFilters(loadFilters());
+    try {
+      const q = localStorage.getItem(QUICK_KEY);
+      if (q) setQuick(q);
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+  const changeQuick = useCallback((v: string) => {
+    setQuick(v);
+    try {
+      localStorage.setItem(QUICK_KEY, v);
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+  useEffect(() => {
+    // Only the max-age filter needs this; row ages tick on their own clock.
+    const id = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -156,7 +199,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar showSpam={showSpam} onShowSpam={setShowSpam} showPlain={showPlain} onShowPlain={setShowPlain} />
+      <Toolbar showSpam={showSpam} onShowSpam={setShowSpam} showPlain={showPlain} onShowPlain={setShowPlain} quick={quick} onQuick={changeQuick} />
       {/* Mobile: one column at a time */}
       <div className="flex gap-1 px-2 pb-2 md:hidden">
         {COLUMNS.map((c) => (
@@ -187,8 +230,10 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
               total={live.length}
               waiting={waiting}
               paused={!!frozen}
-              now={now}
               flashed={flashed.current}
+              initialSet={initialSet.current}
+              serverNow={serverNow}
+              quick={quick}
               filters={f}
               onFilters={(next) => setColFilters(c.id, next)}
               onPause={(on) =>
@@ -210,15 +255,18 @@ function Toolbar({
   onShowSpam,
   showPlain,
   onShowPlain,
+  quick,
+  onQuick,
 }: {
   showSpam: boolean;
   onShowSpam: (v: boolean) => void;
   showPlain: boolean;
   onShowPlain: (v: boolean) => void;
+  quick: string;
+  onQuick: (v: string) => void;
 }) {
-  const [amount, setAmount] = useState('0.1');
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
       <h1 className="text-lg font-semibold tracking-[-0.03em]">Trenches</h1>
       <span className="rounded-md bg-white/[0.06] px-2 py-0.5 text-xs text-muted">Robinhood Chain</span>
       <label
@@ -236,19 +284,31 @@ function Toolbar({
         Plain pools
       </label>
       <div
-        className="ml-auto flex items-center gap-2 rounded-xl border border-white/[0.06] bg-surface px-3 py-1.5 text-xs"
-        title="Quick buy opens with trading, soon"
+        className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface py-1 pl-3 pr-1 text-xs"
+        title="Sets the amount on every Buy button. Trading opens soon."
       >
-        <span className="text-muted">Quick buy</span>
         <Lightning size={14} weight="fill" className="text-brand" />
+        <span className="hidden text-muted sm:inline">Quick buy</span>
         <input
-          value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+          value={quick}
+          onChange={(e) => onQuick(e.target.value.replace(/[^0-9.]/g, '').slice(0, 8))}
           className="w-12 bg-transparent text-right font-mono text-sm text-ink outline-none"
           inputMode="decimal"
           aria-label="Quick buy amount in ETH"
         />
         <span className="font-mono text-muted">ETH</span>
+        <span className="ml-1 hidden gap-0.5 sm:flex">
+          {['0.05', '0.1', '0.5', '1'].map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onQuick(v)}
+              className={`rounded-lg px-1.5 py-1 font-mono text-[11px] ${quick === v ? 'bg-white/[0.1] text-ink' : 'text-muted hover:text-ink'}`}
+            >
+              {v}
+            </button>
+          ))}
+        </span>
       </div>
     </div>
   );
@@ -262,8 +322,10 @@ function ColumnPanel({
   total,
   waiting,
   paused,
-  now,
   flashed,
+  initialSet,
+  serverNow,
+  quick,
   filters,
   onFilters,
   onPause,
@@ -274,8 +336,10 @@ function ColumnPanel({
   total: number;
   waiting: number;
   paused: boolean;
-  now: number;
   flashed: Map<string, number>;
+  initialSet: Set<string>;
+  serverNow: number;
+  quick: string;
   filters: Filters;
   onFilters: (f: Filters) => void;
   onPause: (on: boolean) => void;
@@ -318,7 +382,15 @@ function ColumnPanel({
         onMouseLeave={() => onPause(false)}
       >
         {tokens.map((t) => (
-          <Row key={t.address} t={t} col={col.id} now={now} flashAt={flashed.get(t.address) ?? 0} />
+          <Row
+            key={t.address}
+            t={t}
+            col={col.id}
+            serverNow={serverNow}
+            flashAt={flashed.get(t.address) ?? 0}
+            enter={!initialSet.has(t.address)}
+            quick={quick}
+          />
         ))}
         {!tokens.length && (
           <li className="grid h-40 place-items-center px-6 text-center text-sm text-muted">
@@ -331,6 +403,12 @@ function ColumnPanel({
 }
 
 function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters) => void }) {
+  const toggle = (k: 'hideHighRisk' | 'hideCopycat' | 'hasSocial', label: string) => (
+    <label className="flex items-center gap-2 text-xs">
+      <input type="checkbox" checked={value[k]} onChange={(e) => onChange({ ...value, [k]: e.target.checked })} className="accent-[var(--color-brand)]" />
+      {label}
+    </label>
+  );
   const num = (k: keyof Filters, label: string, placeholder: string) => (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] uppercase tracking-wider text-muted">{label}</span>
@@ -344,11 +422,23 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
     </label>
   );
   return (
-    <div className="grid grid-cols-2 gap-2 border-b border-white/[0.05] bg-surface-2/50 p-3 lg:grid-cols-4">
+    <div className="grid max-h-[55%] grid-cols-2 gap-2 overflow-y-auto border-b border-white/[0.05] bg-surface-2/50 p-3 lg:grid-cols-4">
+      <label className="col-span-2 flex flex-col gap-1 lg:col-span-4">
+        <span className="text-[10px] uppercase tracking-wider text-muted">Keyword</span>
+        <input
+          placeholder="Symbol, name or 0x…"
+          value={value.keyword}
+          onChange={(e) => onChange({ ...value, keyword: e.target.value.slice(0, 42) })}
+          className="w-full rounded-lg border border-white/[0.06] bg-bg px-2 py-1.5 text-xs outline-none focus:border-white/20"
+        />
+      </label>
       {num('minMcap', 'Min MC $', '0')}
       {num('maxMcap', 'Max MC $', 'any')}
+      {num('minVolume', 'Min 24h vol $', '0')}
       {num('minHolders', 'Min holders', '0')}
       {num('maxAgeMin', 'Max age (min)', 'any')}
+      {num('maxTop10', 'Max top 10 %', 'any')}
+      {num('maxDev', 'Max dev %', 'any')}
       <label className="col-span-2 flex flex-col gap-1">
         <span className="text-[10px] uppercase tracking-wider text-muted">Launchpad</span>
         <select
@@ -364,15 +454,11 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
           ))}
         </select>
       </label>
-      <label className="col-span-2 flex items-center gap-2 self-end pb-1.5 text-xs">
-        <input
-          type="checkbox"
-          checked={value.hideHighRisk}
-          onChange={(e) => onChange({ ...value, hideHighRisk: e.target.checked })}
-          className="accent-[var(--color-brand)]"
-        />
-        Hide high risk
-      </label>
+      <div className="col-span-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 lg:col-span-4">
+        {toggle('hideHighRisk', 'Hide high risk')}
+        {toggle('hideCopycat', 'Hide copycats')}
+        {toggle('hasSocial', 'Has socials')}
+      </div>
       <button type="button" onClick={() => onChange(NO_FILTERS)} className="col-span-2 text-left text-[11px] text-muted hover:text-ink lg:col-span-4">
         Reset filters
       </button>
@@ -393,15 +479,50 @@ function Metric({ icon: Icon, value, bad, title }: { icon: typeof Users; value: 
   );
 }
 
-const Row = memo(function Row({ t, col, now, flashAt }: { t: TokenCard; col: Column; now: number; flashAt: number }) {
+/** Ticks on its own clock so a row doesn't re-render every second. Green for the first minute. */
+function Age({ created, serverNow }: { created: number; serverNow: number }) {
+  const now = useNow(serverNow);
+  return <span className={`ml-auto shrink-0 font-mono text-xs ${now - created < 60_000 ? 'text-brand' : 'text-muted'}`}>{age(created, now)}</span>;
+}
+
+/** New arrivals grow into place instead of shoving the column down in one frame. */
+function slideIn(el: HTMLLIElement | null) {
+  if (!el || typeof el.animate !== 'function' || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const h = el.offsetHeight;
+  el.animate(
+    [
+      { maxHeight: '0px', opacity: 0, transform: 'translateY(-6px)' },
+      { maxHeight: `${h}px`, opacity: 1, transform: 'none' },
+    ],
+    { duration: 260, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' },
+  );
+}
+
+const Row = memo(function Row({
+  t,
+  col,
+  serverNow,
+  flashAt,
+  enter,
+  quick,
+}: {
+  t: TokenCard;
+  col: Column;
+  serverNow: number;
+  flashAt: number;
+  enter: boolean;
+  quick: string;
+}) {
   const created = ts(t.created_at);
-  const fresh = now - created < 60_000;
-  const flashing = now - flashAt < 1200;
   const bp = t.bonding_progress;
+  const ref = useRef<HTMLLIElement>(null);
+  useEffect(() => {
+    if (enter) slideIn(ref.current);
+  }, []); // mount only
   return (
-    <li className="relative border-b border-white/[0.04]">
-      {/* Remounts on each update so the flash replays. */}
-      {flashing && <span key={flashAt} className="row-flash pointer-events-none absolute inset-0" />}
+    <li ref={ref} className="relative overflow-hidden border-b border-white/[0.04]">
+      {/* Keyed by the update time, so the flash replays on each change and fades out on its own. */}
+      {flashAt > 0 && <span key={flashAt} className="row-flash pointer-events-none absolute inset-0" />}
       <div className="group relative flex gap-3 px-4 py-3 transition-colors hover:bg-white/[0.03]">
         {/* Whole-row link sits underneath; social icons sit above it so they stay clickable. */}
         <Link href={`/token/${t.address}`} aria-label={`${t.symbol} token page`} className="absolute inset-0" />
@@ -411,7 +532,7 @@ const Row = memo(function Row({ t, col, now, flashAt }: { t: TokenCard; col: Col
             <span className="truncate text-[15px] font-semibold">{t.symbol}</span>
             <span className="truncate text-xs text-muted">{t.name}</span>
             <SocialLinks t={t} size={12} className="relative z-10 shrink-0" />
-            <span className={`ml-auto shrink-0 font-mono text-xs ${fresh ? 'text-brand' : 'text-muted'}`}>{age(created, now)}</span>
+            <Age created={created} serverNow={serverNow} />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-mono text-[11px]">
             <span className="flex items-center gap-0.5 text-ink/80" title="Holders">
@@ -445,12 +566,14 @@ const Row = memo(function Row({ t, col, now, flashAt }: { t: TokenCard; col: Col
             <div className="font-mono text-[15px] font-semibold">{usd(t.market_cap_usd)}</div>
             <div className="font-mono text-[11px] text-muted">V {usd(t.volume_24h_usd)}</div>
           </div>
-          <span
-            title="Trading opens soon"
-            className="flex cursor-not-allowed items-center gap-1 rounded-lg bg-brand/15 px-2.5 py-1 text-[11px] font-semibold text-brand opacity-70"
+          <button
+            type="button"
+            disabled
+            title={`Quick buy ${quick || '0'} ETH of $${t.symbol}. Trading opens soon.`}
+            className="relative z-10 flex cursor-not-allowed items-center gap-1 rounded-lg bg-brand/15 px-2.5 py-1 font-mono text-[11px] font-semibold text-brand opacity-75"
           >
-            <Lightning size={11} weight="fill" /> Buy
-          </span>
+            <Lightning size={11} weight="fill" /> {quick || '0'}
+          </button>
         </div>
       </div>
     </li>
