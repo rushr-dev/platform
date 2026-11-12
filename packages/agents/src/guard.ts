@@ -27,8 +27,11 @@ const RAW_KEY = /^(0x)?[0-9a-fA-F]{64}$/;
  * one: the request is rejected (never_send_keys) and the value is never logged or stored.
  * Signatures (65 bytes) and addresses (20 bytes) don't match the 32-byte key pattern.
  */
-export function findKeyMaterial(body: unknown, path = '', depth = 0): string | null {
+export function findKeyMaterial(body: unknown, opts: { allow?: readonly string[] } = {}, path = '', depth = 0): string | null {
   if (depth > 6 || body === null || body === undefined) return null;
+  // Exact top-level paths a route has opted out for (a tx hash has a private key's shape). The route
+  // must then prove the value is what it claims (e.g. an on-chain tx from the member's wallet).
+  if (path && opts.allow?.includes(path)) return null;
   if (typeof body === 'string') {
     const s = body.trim();
     if (MNEMONIC.test(s.toLowerCase())) return path || '(body)';
@@ -37,7 +40,7 @@ export function findKeyMaterial(body: unknown, path = '', depth = 0): string | n
   }
   if (Array.isArray(body)) {
     for (let i = 0; i < Math.min(body.length, 100); i++) {
-      const hit = findKeyMaterial(body[i], `${path}[${i}]`, depth + 1);
+      const hit = findKeyMaterial(body[i], opts, `${path}[${i}]`, depth + 1);
       if (hit) return hit;
     }
     return null;
@@ -46,7 +49,7 @@ export function findKeyMaterial(body: unknown, path = '', depth = 0): string | n
     for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
       const p = path ? `${path}.${k}` : k;
       if (KEY_FIELD.test(k) && v !== null && v !== undefined && v !== '') return p;
-      const hit = findKeyMaterial(v, p, depth + 1);
+      const hit = findKeyMaterial(v, opts, p, depth + 1);
       if (hit) return hit;
     }
   }
