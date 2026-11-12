@@ -15,7 +15,7 @@ import {
   Sparkle,
   Users,
 } from '@phosphor-icons/react';
-import type { Column, TokenCard } from '@/lib/api';
+import { API_URL, type Column, type TokenCard } from '@/lib/api';
 import { age, LAUNCHPAD_LABEL, pct, usd } from '@/lib/format';
 import { useLive, type LiveEvent } from '@/lib/live';
 import { useNow } from '@/lib/now';
@@ -106,6 +106,8 @@ function loadFilters(): Record<Column, Filters> {
 }
 
 const QUICK_KEY = 'rushr.quickbuy';
+/** Rows per column fetched in the browser after the server-rendered first screen. */
+const BACKFILL = 80;
 
 /* ------------------------------------------------------------------ main */
 
@@ -148,6 +150,36 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
     // Only the max-age filter needs this; row ages tick on their own clock.
     const id = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(id);
+  }, []);
+
+  // The server sends only the top of each column to keep the HTML small; the rest (and the
+  // plain-pool slice) loads here, after the page is on screen.
+  useEffect(() => {
+    const ctl = new AbortController();
+    const urls = [
+      ...(['new', 'almost', 'migrated'] as const).map((c) => `/tokens?column=${c}&limit=${BACKFILL}`),
+      `/tokens?column=new&limit=60&plain=1`,
+    ];
+    Promise.all(
+      urls.map((u) =>
+        fetch(`${API_URL}${u}`, { signal: ctl.signal })
+          .then((r) => (r.ok ? (r.json() as Promise<{ tokens: (TokenCard | null)[] }>) : { tokens: [] }))
+          .then((d) => d.tokens.filter((t): t is TokenCard => t != null))
+          .catch(() => [] as TokenCard[]),
+      ),
+    ).then((lists) => {
+      if (ctl.signal.aborted) return;
+      let added = 0;
+      for (const t of lists.flat()) {
+        // Live updates may already be newer than this snapshot; never overwrite them.
+        if (tokens.current.has(t.address)) continue;
+        tokens.current.set(t.address, t);
+        initialSet.current.add(t.address);
+        added++;
+      }
+      if (added) setVersion((v) => v + 1);
+    });
+    return () => ctl.abort();
   }, []);
 
   // Batch socket events and apply them once per frame, so a burst of trades costs one render.
