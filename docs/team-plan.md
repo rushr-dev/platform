@@ -1,6 +1,6 @@
 # Rushr team plan
 
-Three parallel streams, each in its own Claude Code session and git worktree. The **planner** session coordinates: it owns this file, reviews finished work, merges to `main` and deploys the web app.
+Four parallel streams, each in its own Claude Code session and git worktree. The **planner** session coordinates: it owns this file, reviews finished work, merges to `main` and deploys the web app.
 
 Product: Rushr (rushr.trade), an agentic social trading terminal for Robinhood Chain (chain 4663). Live in production: landing + read-only terminal at `rushr.trade`, API at `api.rushr.trade`. The bar is GMGN-level data and speed with a fomo-style look.
 
@@ -13,6 +13,7 @@ Only touch the paths you own. If you need a change elsewhere, write it under **R
 | **Data** | `apps/indexer/**`, `packages/core/**`, `packages/db/**` | Data matches GMGN/DexScreener, fast and realtime |
 | **Terminal** | `apps/web/app/(app)/**`, `apps/web/components/terminal/**`, `apps/web/lib/**` (except `lib/dexscreener.ts`), `apps/web/app/api/**` | A terminal that feels like GMGN: features, UX, perceived speed |
 | **Landing** | `apps/web/app/(marketing)/**`, `apps/web/components/landing/**`, `apps/web/public/**`, `apps/web/lib/dexscreener.ts` | The marketing site at `rushr.trade` |
+| **Swap** | `packages/trade/**`, `contracts/**`, `apps/web/app/(app)/swap/**`, `apps/web/components/trade/**`, `docs/trading.md` | Non-custodial trading on Robinhood Chain, with a platform fee |
 | Shared (ask the planner) | `apps/web/app/globals.css`, `apps/web/app/layout.tsx`, root config, `docs/` | |
 
 The **API contract** between Data and Terminal is the HTTP API (`apps/indexer/src/api.ts`, owned by Data). Terminal asks for new fields or endpoints under Requests; until they land, Terminal builds against existing fields and degrades gracefully when a field is missing.
@@ -65,6 +66,13 @@ Compare with GMGN's token page and trenches (screenshots in the planner's notes;
 2. Real links (X and Telegram handles are placeholders), terms and privacy pages, OG/Twitter images, favicon set.
 3. Performance: Lighthouse 90+ on mobile, image sizes, no layout shift.
 4. Copy: agentic social trading on Robinhood Chain; "know before you ape" safety angle. Don't make the page look like it endorses specific tokens.
+
+### Swap: trading and fees
+1. **Research** how GMGN (and comparable terminals such as fomo, Axiom, Photon, BullX, Banana Gun, Maestro, Uniswap's own interface fee) take their trading fee on EVM chains: percentage, which side of the trade, how it's collected on-chain (router contract, Universal Router `PAY_PORTION`, fee wrapper, referral programs), how they handle fee-on-transfer and taxed tokens, and what they disclose. Write it up in `docs/trading.md` with sources and a recommended model for Rushr.
+2. **Scaffold** non-custodial swaps for Robinhood Chain: wallet connection, quoting and routing (Uniswap v4/v3/v2, other v3-style DEXes, PONS bonding curves, lift.fun and Doppler where possible), slippage, approvals (Permit2), building the transaction with the platform fee, simulation via `eth_call`, and clear errors. A standalone `/swap` page is the test bed; the terminal's trade box integrates it later.
+3. **Fee collection:** prefer existing audited routes (e.g. Universal Router `PAY_PORTION`) over a custom contract. If a contract is truly needed, write it with tests, but don't deploy it.
+
+**Safety:** never sign or send a transaction, never handle private keys or seed phrases, never move funds. Test with simulations (`eth_call`) and unit tests only. The fee recipient and fee percentage are configuration with placeholder values; the founder sets the real treasury address.
 
 ## Requests
 (Add cross-stream requests here: who needs what from whom.)
