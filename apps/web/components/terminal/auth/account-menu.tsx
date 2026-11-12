@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowSquareOut, Check, Copy, GearSix, SignOut, Wallet } from '@phosphor-icons/react';
 import { auth, displayName, useAuth } from '@/lib/auth';
 import { fmtUnits, useBalances } from '@/lib/balances';
+import { useMe } from '@/lib/members';
 import { EXPLORER, short } from '@/lib/format';
 import { GeneratedAvatar } from '../avatar';
 import { iconSrc } from '../bits';
@@ -13,6 +14,7 @@ import { WalletPanel } from './wallet-panel';
 /** Top-bar sign-in button, and the account menu once signed in. */
 export function AccountMenu() {
   const { enabled, authenticated, user } = useAuth();
+  const me = useMe();
   const [open, setOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -53,7 +55,7 @@ export function AccountMenu() {
     );
   }
 
-  const name = displayName(user);
+  const name = me?.status === 'registered' ? `@${me.member.handle}` : displayName(user);
   return (
     <div ref={box} className="relative">
       <button
