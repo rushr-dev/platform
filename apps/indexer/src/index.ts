@@ -8,6 +8,7 @@ import { ensureFunding, recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
 import { GATEWAY_COUNT, gateway } from './gateway';
+import { v1, adminV1 } from './agents/app';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
@@ -208,6 +209,12 @@ app.use('*', async (c, next) => {
     c.executionCtx.waitUntil(cache.put(key, c.res.clone()));
   }
 });
+
+// Members, social, leaderboard and agents (Agents stream). Off unless AGENTS_ENABLED=1; after the edge
+// cache so public /v1 responses with s-maxage are cached; authenticated ones are private, no-store.
+app.route('/v1', v1);
+// Agents' admin endpoints, behind the /admin/* ADMIN_TOKEN check above.
+app.route('/admin/agents', adminV1);
 
 app.route('/', api);
 
