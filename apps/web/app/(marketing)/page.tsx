@@ -74,8 +74,8 @@ export default async function Home() {
     <div className="theme-paper min-h-dvh">
       <Nav />
       <main>
-        <Hero stats={stats} />
-        <ProductShot trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
+        <Hero />
+        <ProductShot stats={stats} trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
         <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
         <Closing />
       </main>

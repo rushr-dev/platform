@@ -94,11 +94,11 @@ export function Nav() {
 
 /* ---------------------------------------------------------------- hero */
 
-export function Hero({ stats }: { stats: Stats | null }) {
+export function Hero() {
   return (
     <section className="relative isolate overflow-hidden md:h-[min(84svh,760px)] md:min-h-[600px]">
-      <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-[clamp(3rem,8vh,5.5rem)]">
-        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[128px] md:text-[136px]">
+      <div className="relative z-10 mx-auto flex max-w-7xl flex-col items-center px-4 pt-14 text-center md:px-8 md:pt-[clamp(2.5rem,6vh,4.5rem)]">
+        <h1 className="rise text-[96px] font-semibold leading-[0.9] tracking-[-0.07em] sm:text-[120px]">
           rushr
         </h1>
         <p className="rise mt-3 text-2xl font-medium tracking-[-0.03em] md:text-4xl" style={{ animationDelay: '0.06s' }}>
@@ -124,38 +124,31 @@ export function Hero({ stats }: { stats: Stats | null }) {
             Follow on X
           </a>
         </div>
-        {stats && (
-          <p
-            className="rise mt-6 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted md:rounded-full md:bg-bg/85 md:px-3 md:py-1.5 md:text-ink/65 md:backdrop-blur-sm"
-            style={{ animationDelay: '0.24s' }}
-          >
-            <span className="relative flex size-2">
-              <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
-              <span className="relative inline-flex size-2 rounded-full bg-go" />
-            </span>
-            {nf.format(stats.launches_24h)} launches today on Robinhood Chain
-          </p>
-        )}
       </div>
 
       {/*
-        Key visual: the banner scene. On phones it sits under the copy; from md up it is a full-bleed
-        background (with the optional living-sketch loop on top) and a soft paper scrim behind the text.
+        Key visual: the forum scene (16:9, open paper in its top half for the copy). From md up it is the
+        hero background, sized to the hero's height and anchored to the bottom so the paper always sits
+        under the copy; the living-sketch loop plays over it when ready. On phones it tucks under the buttons.
       */}
-      <div className="relative mt-8 aspect-[16/10] w-full [mask-image:linear-gradient(to_bottom,transparent,black_16%,black_76%,transparent)] sm:aspect-[2/1] md:absolute md:inset-0 md:-z-10 md:mt-0 md:aspect-auto md:[mask-image:linear-gradient(to_bottom,black_78%,transparent)]">
-        <Art
-          name="banner"
-          widths={[800, 1600, 2400]}
-          alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
-          priority
-          sizes="(min-width: 768px) 2280px, (min-width: 640px) 150vw, 188vw"
-          className="object-cover object-[50%_45%] mix-blend-multiply"
-        />
-        <HeroLoop poster="/art/banner-1600.webp" className="object-cover object-[50%_45%] mix-blend-multiply" />
+      <div className="relative -mt-16 aspect-[4/3] w-full sm:-mt-24 sm:aspect-[16/9] md:absolute md:inset-0 md:-z-10 md:mt-0 md:aspect-auto">
+        <div className="absolute inset-0 md:inset-auto md:bottom-0 md:left-1/2 md:aspect-[16/9] md:h-full md:-translate-x-1/2 md:[mask-image:linear-gradient(to_right,transparent,black_7%,black_93%,transparent)]">
+          <Art
+            name="hero"
+            widths={[768, 1280, 2048]}
+            avif
+            alt="Traders in togas gathered in a classical forum under the green Rushr banner, checking charts on tablets and phones"
+            priority
+            sizes="(min-width: 768px) 1351px, (min-width: 640px) 100vw, 134vw"
+            className="object-cover object-bottom"
+          />
+          <HeroLoop poster="/art/hero-1280.webp" className="object-cover object-bottom" />
+        </div>
         <div
           aria-hidden
-          className="absolute inset-0 hidden bg-[radial-gradient(ellipse_480px_62%_at_50%_33%,rgba(247,245,242,0.95)_0%,rgba(247,245,242,0.86)_55%,rgba(247,245,242,0)_100%)] md:block"
+          className="absolute inset-0 hidden bg-[radial-gradient(ellipse_520px_46%_at_50%_26%,rgba(247,245,242,0.9)_0%,rgba(247,245,242,0.7)_55%,rgba(247,245,242,0)_100%)] md:block"
         />
+        <div aria-hidden className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-bg to-transparent md:h-24" />
       </div>
     </section>
   );
@@ -210,12 +203,14 @@ function CandleChart({ trades }: { trades: Trade[] }) {
 }
 
 export function ProductShot({
+  stats,
   trending,
   fresh,
   focus,
   trades,
   clones,
 }: {
+  stats: Stats | null;
   trending: DexToken[];
   fresh: TokenCard[];
   focus: DexToken;
@@ -226,7 +221,13 @@ export function ProductShot({
     <section id="trenches" className="relative scroll-mt-16 pt-6 md:pt-4">
       <div className="mx-auto max-w-7xl px-4 md:px-8">
         <Reveal className="text-center">
-          <p className="font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand">Live on Robinhood Chain</p>
+          <p className="inline-flex items-center gap-2 font-mono text-xs font-medium uppercase tracking-[0.2em] text-brand">
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-go/60 motion-reduce:hidden" />
+              <span className="relative inline-flex size-2 rounded-full bg-go" />
+            </span>
+            {stats ? `${nf.format(stats.launches_24h)} launches today on Robinhood Chain` : 'Live on Robinhood Chain'}
+          </p>
           <h2 className="mx-auto mt-4 max-w-[15ch] text-4xl font-semibold leading-[1.02] tracking-[-0.045em] md:text-6xl">
             every launch. before everyone else.
           </h2>

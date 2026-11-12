@@ -1,9 +1,10 @@
 /* eslint-disable @next/next/no-img-element */
 
 /**
- * Sketch art from public/art, served from pre-sized WebP files (`<name>-<width>.webp`).
- * Images are unoptimized on Cloudflare, so the browser picks a width from this srcset instead.
- * Fills its positioned parent, like next/image's `fill`.
+ * Sketch art from public/art, served from pre-sized files (`<name>-<width>.webp`, plus
+ * `<name>-<width>.avif` when `avif` is set). Images are unoptimized on Cloudflare, so the
+ * browser picks a width from the srcset instead. By default it fills its positioned parent,
+ * like next/image's `fill`; pass `fill={false}` to position it yourself with `className`.
  */
 export function Art({
   name,
@@ -12,6 +13,8 @@ export function Art({
   alt,
   className = '',
   priority = false,
+  avif = false,
+  fill = true,
 }: {
   name: string;
   widths: number[];
@@ -19,17 +22,26 @@ export function Art({
   alt: string;
   className?: string;
   priority?: boolean;
+  avif?: boolean;
+  fill?: boolean;
 }) {
-  const src = (w: number) => `/art/${name}-${w}.webp`;
-  return (
+  const set = (ext: string) => widths.map((w) => `/art/${name}-${w}.${ext} ${w}w`).join(', ');
+  const img = (
     <img
-      src={src(widths[widths.length - 1]!)}
-      srcSet={widths.map((w) => `${src(w)} ${w}w`).join(', ')}
+      src={`/art/${name}-${widths[widths.length - 1]!}.webp`}
+      srcSet={set('webp')}
       sizes={sizes}
       alt={alt}
       loading={priority ? 'eager' : 'lazy'}
       decoding="async"
-      className={`absolute inset-0 size-full ${className}`}
+      className={`${fill ? 'absolute inset-0 size-full' : ''} ${className}`}
     />
+  );
+  if (!avif) return img;
+  return (
+    <picture>
+      <source type="image/avif" srcSet={set('avif')} sizes={sizes} />
+      {img}
+    </picture>
   );
 }

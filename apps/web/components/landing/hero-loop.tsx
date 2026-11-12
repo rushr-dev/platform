@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 
 /**
- * The "living sketch": a short, muted loop of the banner scene behind the hero.
+ * The "living sketch": a short, muted loop of the forum scene behind the hero.
  *
  * Slot: drop the clip in as public/art/hero-loop.webm and public/art/hero-loop.mp4
- * (under ~2 MB each), then set HERO_LOOP_READY to true. Until then, and whenever
- * it can't play, the static banner underneath stays the hero (and the LCP image).
+ * (16:9 like public/art/hero-*.webp, first frame matching it, under ~2 MB each), then
+ * set HERO_LOOP_READY to true. Until then, and whenever it can't play, the still
+ * underneath stays the hero (and the LCP image).
  */
 export const HERO_LOOP_READY = false;
 const WEBM = '/art/hero-loop.webm';
