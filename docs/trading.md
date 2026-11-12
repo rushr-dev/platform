@@ -17,7 +17,7 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
 | **One Privy setup** (Terminal's) | `components/terminal/auth/privy-host.tsx` loads Privy lazily (email and EVM wallet login; an embedded wallet for every user on chain 4663; wallet UIs off) and fills `lib/auth`. The trade UI uses only `useAuth()`, `auth.login()` and `auth.sendTransaction()`, so it imports no Privy and adds nothing to page bundles. Settings come from Terminal's `lib/settings` / `/settings`: buy and sell presets, quick-buy amount, slippage (auto or fixed), per-trade cap |
 | `apps/web/components/trade/trade-box.tsx` | `TradeBox` for the token page: buy/sell, presets, % sells, quote (receive, min, fee, route), warnings and blockers, the "I understand" toggle, a link to `/settings`, and tx status with an explorer link |
 | `apps/web/components/trade/quick-buy-button.tsx` | `QuickBuyButton` for trenches rows: one click (the `/settings` quick-buy amount), then quote, guards and a silent send |
-| `apps/web/components/trade/use-quick-trade.ts` | The hook: quote, honeypot/tax probe, guards, then `auth.sendTransaction` for each call in order and wait for each receipt. After a confirmed swap it calls `recordTrade(txHash)`: a best-effort `POST /v1/trades` (Data's ledger, Privy bearer token) |
+| `apps/web/components/trade/use-quick-trade.ts` | The hook: quote, honeypot/tax probe, guards, then `auth.sendTransaction` for each call in order and wait for each receipt. As soon as the swap is broadcast it calls `recordTrade(txHash)`: a best-effort `POST /v1/trades` (Data's ledger, Privy bearer token), retried once on `404 tx_not_found` |
 | `apps/web/components/trade/index.ts` | Exports `TradeBox`, `QuickBuyButton`, `isSwapEnabled`, `tradingAvailable` and `TradeToken` for Terminal to place. Everything renders nothing unless `NEXT_PUBLIC_SWAP_ENABLED=1` and a Privy app id are set |
 | `apps/web/components/trade/csp.ts` + `apps/web/middleware.ts` | Strict CSP with a per-request nonce on `/trenches`, `/token/*`, `/settings`, `/me`, `/u/*` and `/swap`. Privy is live on all of them, so all get the same CSP, and `/settings` is rendered per request so the nonce reaches its scripts |
 | `packages/trade/scripts/quick-sim.ts` | End-to-end simulation of the wallet calls on live state |
@@ -64,15 +64,23 @@ Status 2026-11-12: research done, founder decisions in (below), scaffold in `pac
   With the flag off, `/swap` is a 404 and no trade UI renders.
 
 ### Trade ledger (Data)
-Agreed API, built by Data, mounted in Agents' `/v1`:
-- `POST /v1/trades` (Privy bearer) with body `{ txHash, chainId: 4663, source, referralCode? }`.
-  - Returns 202 `{ id, status: 'submitted' }`, idempotent per `txHash`.
-  - 403 if the tx isn't from the member's wallet.
-  - A confirmation pass fills the record from the receipt. `fee_amount` is the ETH the treasury actually received (trace, or Universal Router calldata cross-checked with the treasury's balance delta). `fee_bps` is derived and mismatches are flagged.
-- `GET /v1/me/trades` and `GET /v1/me/referrals/accrued`.
-- Tables: `trades_ledger` follows the DDL above (Data, migration 0008); `referrals` (signup attribution) is proposed for Agents.
+Built on Data's branch (3e2f1c8). It is **not live yet**: it needs migration 0008 (founder approval, batched with 0006 and 0007), `AGENTS_ENABLED`, and a small change to Agents' key guard. It mounts in Agents' `/v1`.
+- `POST /v1/trades`
+  - Auth: Privy bearer, or an agent key with scope `trade`.
+  - Body: `{ txHash, chainId: 4663, source? }`.
+  - Returns 202 `{ id, status: 'submitted' }`, idempotent per hash.
+  - Errors: 404 `tx_not_found` until the node knows the tx (retry once), 403 `not_your_tx`, 400 `bad_tx_hash` / `bad_chain`.
+  - There is no referral code in the request: the referrer always comes from the member's signup attribution (Agents' `referrals`).
+- **Confirmation** (queue, ~10 min of retries) fills:
+  - status, side, token, pool, venue, quote asset
+  - amounts. Buy: input including the fee, tokens out. Sell: tokens in, quote out after the fee.
+  - `fee_amount` = what the treasury actually received (call trace for ETH, Transfer logs for ERC-20)
+  - `fee_bps` measured on the notional
+  - referral fields: 20% accrual
+  - `flags[]` when anything is off (e.g. `fee_bps_48.2_expected_45`, `no_fee`, `reverted`)
+- Reading: `GET /v1/me/trades?before=&limit=` and `GET /v1/me/referrals/accrued`.
 
-The web client already posts after each confirmed swap and ignores errors until the endpoint is live.
+The web client posts as soon as the swap is broadcast and ignores errors until the endpoint is live. A real end-to-end check needs the founder's first live trade.
 
 ### Founder to-dos in the Privy dashboard (app `cmwdhafq101190hjt99ym9pah`)
 1. **Allowed origins:**

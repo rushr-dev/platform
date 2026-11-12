@@ -59,23 +59,31 @@ export type TradeStatus =
   | { kind: 'failed'; message: string; hash?: Hex; url?: string };
 
 /**
- * Trade ledger (Data's POST /v1/trades, Privy access token). Fire-and-forget after a confirmed swap:
- * the server derives trader, amounts and the actual treasury fee from the chain, so only the hash and
- * attribution are sent. Until the endpoint ships, the 404 is ignored. Never blocks or fails a trade.
+ * Trade ledger (Data's POST /v1/trades, Privy access token). Sent as soon as the wallet returns the swap
+ * hash; the server derives trader, side, amounts and the treasury fee from the chain, and the referrer
+ * from the member's signup attribution, so only the hash goes up. 404 tx_not_found right after
+ * broadcast is retried once. Idempotent per hash. Errors are ignored: it never blocks or fails a trade.
  */
-export async function recordTrade(txHash: Hex, referralCode?: string | null): Promise<void> {
+export async function recordTrade(txHash: Hex): Promise<void> {
   try {
     const token = await auth.getAccessToken();
     if (!token) return;
-    const res = await fetch(`${API_URL}/v1/trades`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' }, ...(referralCode ? { referralCode } : {}) }),
-      keepalive: true,
-    });
-    await res.body?.cancel().catch(() => undefined);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(`${API_URL}/v1/trades`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' } }),
+        keepalive: true,
+      });
+      const body = res.status === 404 ? await res.text().catch(() => '') : (await res.body?.cancel().catch(() => undefined), '');
+      if (res.status === 404 && /tx_not_found/.test(body) && attempt === 0) {
+        await new Promise((r) => setTimeout(r, 1_500));
+        continue;
+      }
+      return;
+    }
   } catch {
-    /* best effort: the confirmation pass can also be backfilled from chain later */
+    /* best effort */
   }
 }
 
@@ -189,12 +197,13 @@ export function useQuickTrade(token: TradeToken) {
         setStatus({ kind: 'sending', step: i + 1, total, label: c.label });
         const hash = await auth.sendTransaction({ to: c.to, data: c.data, value: c.value, gas: c.gas });
         lastHash = hash;
+        // Ledger: record the swap as soon as it's broadcast (approval txs aren't trades).
+        if (c.label === 'swap') void recordTrade(hash);
         setStatus({ kind: 'pending', hash, step: i + 1, total });
         const receipt = await chainClient().waitForTransactionReceipt({ hash, timeout: 60_000 });
         if (receipt.status !== 'success') throw new Error(`${c.label} reverted on-chain`);
       }
       setStatus({ kind: 'success', hash: lastHash!, url: explorerTxUrl(lastHash!) });
-      void recordTrade(lastHash!);
       setTrade(null);
     } catch (e) {
       setStatus({ kind: 'failed', message: friendly(e), hash: lastHash, url: lastHash ? explorerTxUrl(lastHash) : undefined });
