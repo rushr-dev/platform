@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Suspense } from 'react';
 import { Closing, Footer, Hero, LiveSectionsFallback, Nav, ProductShot, Social } from '@/components/landing/sections';
-import { API_URL, getColumn, getStats, getTrades, type TokenCard } from '@/lib/api';
+import { API_URL, getColumn, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 
 export const revalidate = 30;
@@ -42,7 +42,7 @@ const FALLBACK: Record<string, DexToken> = {
 };
 
 /** Anyone can launch any name, so the marketing page only shows new pairs that look presentable. */
-const BLOCKED = /fag|nig+(a|er)|retard|rape|nazi|hitler|porn|sex|cum|dick|cock|pussy|fuck|shit|cunt|whore|slut|kike|spic/i;
+const BLOCKED = /fag|nig+(a|er)|retard|rape|nazi|hitler|porn|sex|cum|dick|dih|cock|pussy|fuck|shit|cunt|whore|slut|kike|spic/i;
 const presentable = (t: TokenCard) => !!t.image_url && t.risk !== 'high' && !BLOCKED.test(`${t.symbol} ${t.name}`);
 
 /** New pairs that already have a safety verdict come first, so the shot doesn't show a column of "checking". */
@@ -80,8 +80,7 @@ export default function Home() {
 }
 
 async function LiveSections() {
-  const [stats, dex, fresh, trades, clones] = await Promise.all([
-    getStats(),
+  const [dex, fresh, trades, clones] = await Promise.all([
     getDexTokens(TRENDING),
     getColumn('new', 60),
     getTrades(PONS, 200),
@@ -90,7 +89,7 @@ async function LiveSections() {
   const trending = TRENDING.map((a) => dex[a] ?? FALLBACK[a]!);
   return (
     <>
-      <ProductShot stats={stats} trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
+      <ProductShot trending={trending} fresh={withVerdictFirst(fresh.filter(presentable))} focus={trending[0]!} trades={trades} clones={clones} />
       <Social original={trending[0]!} clone={clones[0] ?? null} cloneCount={clones.length} />
     </>
   );
