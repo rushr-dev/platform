@@ -34,8 +34,12 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
 
 /** Launchpads whose tokens trade on a bonding curve before graduating. */
 export const CURVE_LAUNCHPADS = ['pons', 'liftfun'];
-/** Bonding progress at which a curve token moves from New to Almost bonded. */
-export const ALMOST_BONDED = 0.5;
+/**
+ * Bonding progress at which a curve token moves from New to Almost bonded. GMGN's Robinhood column
+ * (2026-11-12) started at ~23% once progress was read from real curve reserves (AME 72%, PIZZA 59%,
+ * TARMAC 32%, AGENTIX 29%, CHEEK 26%, FATHER 23%).
+ */
+export const ALMOST_BONDED = 0.2;
 
 export type Column = 'new' | 'almost' | 'migrated';
 export const COLUMNS: Column[] = ['new', 'almost', 'migrated'];
