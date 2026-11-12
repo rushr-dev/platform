@@ -54,6 +54,7 @@ api.get('/tokens', async (c) => {
     hideHighRisk: q('hideHighRisk') === '1',
     showSpam: q('showSpam') === '1',
     showPlain: q('plain') === '1',
+    showDust: q('dust') === '1',
   });
   return c.json({ column, tokens }, 200, cache(2));
 });

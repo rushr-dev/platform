@@ -5,6 +5,7 @@ import { dbUrl, poolHistory, type Env } from './env';
 import { Pipeline, type BatchStats, type RangeStats } from './pipeline';
 import { tokenSummaries } from './api';
 import { columnOf, tokenStats, type Column } from './data';
+import { updateCurveProgress } from './curves';
 import { GATEWAY_COUNT, gateway, type DeltaEvent } from './gateway';
 import type { FeedEvent } from './feed';
 import { Rpc } from './rpc';
@@ -82,6 +83,8 @@ export class ChainPoller extends DurableObject<Env> {
   private live: LiveStats = { connected: false, logs: 0, batches: 0, swaps: 0, launches: 0, lastLatencyMs: null, reconnects: 0 };
   private queue: Promise<unknown> = Promise.resolve();
   private signalQueuedAt = new Map<string, number>();
+  /** Tokens first seen in the batch being queued (their signals take the fast lane). */
+  private freshTokens = new Set<string>();
   /**
    * Address-filtered subscription for v3/v2 swaps of tracked pools (LIVE_PAIRS=1). `key` is the
    * address set it covers; a new set is subscribed first and the old one dropped once confirmed
@@ -280,6 +283,18 @@ export class ChainPoller extends DurableObject<Env> {
     await this.sendV2(this.cardDeltas(cards, new Set()));
   }
 
+  /** Every ~15s: bonding progress of PONS curves that traded recently, from their reserves. */
+  private curvesAt = 0;
+  private async tickCurves() {
+    if (Date.now() - this.curvesAt < 15_000 || !this.sql) return;
+    this.curvesAt = Date.now();
+    try {
+      await updateCurveProgress(this.sql, new Rpc(this.env.RPC_URL), { activeSeconds: 30 });
+    } catch (err) {
+      console.error('curve progress failed', err);
+    }
+  }
+
   private watchedTokens(): string[] {
     const out = new Set<string>();
     for (const set of this.registry.values()) for (const t of set) if (t.startsWith('token:')) out.add(t.slice(6));
@@ -371,6 +386,7 @@ export class ChainPoller extends DurableObject<Env> {
         await this.ctx.storage.put('range', range.toString());
         await this.ctx.storage.delete('attempt');
         cursor = to;
+        for (const t of stats.newTokens) this.freshTokens.add(t);
         await this.queueSignals([...stats.newTokens, ...stats.touched]);
         await this.queueMetadata(stats.newTokens);
         await this.handOffPools(pipeline);
@@ -394,6 +410,7 @@ export class ChainPoller extends DurableObject<Env> {
       return;
     }
     if (caughtUp) await this.tickStats();
+    if (caughtUp) await this.tickCurves();
     // /health shows the last error until 15 error-free minutes have passed; then it moves to previousError.
     const lastError = await this.ctx.storage.get<{ at: string; message: string }>('lastError');
     if (lastError && Date.now() - Date.parse(lastError.at) > 15 * 60_000) {
@@ -547,9 +564,16 @@ export class ChainPoller extends DurableObject<Env> {
     if (this.signalQueuedAt.size > 20_000) {
       for (const [t, at] of this.signalQueuedAt) if (now - at > 10 * 60_000) this.signalQueuedAt.delete(t);
     }
-    for (let i = 0; i < due.length; i += 100) {
-      await this.env.ENRICH_QUEUE.sendBatch(due.slice(i, i + 100).map((token) => ({ body: { kind: 'token-signals' as const, token } })));
+    // Brand-new tokens go through the metadata queue (small batches, ~1s): their safety badges should
+    // land within seconds, not behind recomputes of busy tokens. The consumer handles any kind on either.
+    const fresh = due.filter((t) => this.freshTokens.has(t));
+    const rest = due.filter((t) => !this.freshTokens.has(t));
+    for (const [queue, list] of [[this.env.METADATA_QUEUE, fresh], [this.env.ENRICH_QUEUE, rest]] as const) {
+      for (let i = 0; i < list.length; i += 100) {
+        await queue.sendBatch(list.slice(i, i + 100).map((token) => ({ body: { kind: 'token-signals' as const, token } })));
+      }
     }
+    this.freshTokens.clear();
   }
 
   private onMessage(data: string | ArrayBuffer) {
@@ -600,7 +624,8 @@ export class ChainPoller extends DurableObject<Env> {
     if (!logs.length) return;
     try {
       const stats = await this.liveSerial((p) => p.ingest(logs));
-      await this.queueSignals([...stats.newTokens, ...stats.touched]);
+      for (const t of stats.newTokens) this.freshTokens.add(t);
+        await this.queueSignals([...stats.newTokens, ...stats.touched]);
       await this.queueMetadata(stats.newTokens);
       await this.handOffPools(this.livePipeline!);
       await this.publish(stats, 'live');

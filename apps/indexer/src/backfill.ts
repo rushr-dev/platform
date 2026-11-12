@@ -176,6 +176,30 @@ export class Backfiller extends DurableObject<Env> {
     return { from: row.value.block };
   }
 
+  /**
+   * Find (wallet, token) pairs whose position disagrees with its swaps (trade count), plus pairs with
+   * swaps after `sinceBlock` (live during a rebuild), and recompute them in chain order.
+   */
+  async reconcilePositions(sinceBlock?: string, max = 2_000, after?: string): Promise<{ checked: number; changed: number; next: string | null }> {
+    const [aw, at] = (after ?? '|').split('|');
+    const { sql, rpc } = this.init();
+    const pairs = await sql<{ wallet: string; token: string }[]>`
+      with s as (
+        select trader as wallet, token, count(*)::int as n, max(block) as last_block from swaps
+        where usd is not null and token_amount > 0 group by 1, 2
+      )
+      select s.wallet, s.token from s left join positions p on p.wallet = s.wallet and p.token = s.token
+      where (p.wallet is null or p.buys + p.sells <> s.n or (${sinceBlock ?? null}::bigint is not null and s.last_block > ${sinceBlock ?? null}::bigint))
+        and (s.wallet, s.token) > (${aw ?? ''}, ${at ?? ''})
+      order by s.wallet, s.token
+      limit ${max}`;
+    const pipeline = new Pipeline(sql, rpc, { historical: true });
+    const changed = await pipeline.recomputePositions(pairs);
+    console.log(`positions reconcile: ${pairs.length} checked, ${changed} recomputed`);
+    const last = pairs.at(-1);
+    return { checked: pairs.length, changed, next: pairs.length === max && last ? `${last.wallet}|${last.token}` : null };
+  }
+
   async positionsStatus() {
     const { sql } = this.init();
     const rows = await sql<{ key: string; value: unknown }[]>`select key, value from indexer_state where key in ('positions_from', 'positions_cursor')`;

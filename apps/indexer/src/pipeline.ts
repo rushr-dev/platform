@@ -9,6 +9,7 @@ import {
   STOCK_QUOTES,
   acceptsPrice,
   applyTrade,
+  emptyPosition,
   decodeLogs,
   launchpadForHook,
   subscribedTopics,
@@ -31,8 +32,6 @@ const ORIGIN_GAP_S = 10 * 60;
 const HISTORY_BUDGET = { maxLogs: 20_000, maxMs: 10_000 };
 /** First ~66s after launch (0.11s blocks): enough for bundle (first blocks) and sniper (first 5s) signals. */
 const LAUNCH_WINDOW_BLOCKS = 600n;
-/** PONS curve graduation target (observed: ~4.2 ETH). */
-const PONS_GRADUATION_WEI = '4200000000000000000';
 const LAUNCHER_TO_PAD = new Map<string, PoolInfo['launchpad']>([
   ...LAUNCHPADS.filter((l) => l.launcher).map((l) => [l.launcher!, l.id] as const),
   ['0x1eef016f22a943abc7dd11422edee9d235942104', 'doppler'], // Doppler Airlock proxy
@@ -325,6 +324,18 @@ export class Pipeline {
       }
       // Register in memory now so swaps in this range price correctly.
       fresh.forEach((l, i) => this.tokens.set(l.token, { decimals: meta[i]!.decimals, totalSupply: meta[i]!.totalSupply }));
+      // A market cap from the launch itself (pool sqrtPrice or the creator's buy), so a new card isn't
+      // blank until its first trade. Real trades override it (price_at moves forward).
+      for (const [i, l] of fresh.entries()) {
+        if (!l.initialPrice) continue;
+        const q = this.quoteUsd(l.quote);
+        if (!q) continue;
+        const perToken = (Number(l.initialPrice.quoteRaw) / Number(l.initialPrice.tokenRaw)) * 10 ** (meta[i]!.decimals - q.decimals) * q.usd;
+        if (!(perToken > 0) || !Number.isFinite(perToken)) continue;
+        const mcap = perToken * (Number(meta[i]!.totalSupply) / 10 ** meta[i]!.decimals);
+        await tx`update tokens set price_usd = ${perToken}, market_cap_usd = ${mcap}, price_at = ${new Date(l.time * 1000)}
+                 where address = ${l.token} and price_usd is null`;
+      }
       for (const p of r.pools) this.pools.set(p.id, p);
 
       lap('tx:tokens+pools');
@@ -698,6 +709,14 @@ export class Pipeline {
     if (prices.length) this.ethUsd = prices[Math.floor(prices.length / 2)]!;
   }
 
+  /** Decimals and USD value of a quote asset (ETH/WETH/USDG, or a priced extra quote). */
+  private quoteUsd(quote: string): { decimals: number; usd: number } | null {
+    if (quote === QUOTES.USDG) return { decimals: 6, usd: 1 };
+    if (ETH_LIKE.has(quote)) return this.ethUsd ? { decimals: 18, usd: this.ethUsd } : null;
+    const extra = this.quotes.get(quote);
+    return extra?.usd ? { decimals: extra.decimals, usd: extra.usd } : null;
+  }
+
   private price(s: DecodedSwap): { priceUsd: string | null; usd: string | null } {
     const meta = this.tokens.get(s.token);
     if (!meta || s.tokenAmount === 0n) return { priceUsd: null, usd: null };
@@ -806,6 +825,51 @@ export class Pipeline {
     }
   }
 
+  /**
+   * Recompute positions from scratch, in chain order, for (wallet, token) pairs whose incremental state
+   * may be off: swaps inserted after the rebuild passed their block (pool-history backfills), or live
+   * swaps applied before older ones during the rebuild. Each pair is locked first, so a concurrent live
+   * update waits and then applies on top. Returns how many pairs changed.
+   */
+  async recomputePositions(pairs: { wallet: string; token: string }[]): Promise<number> {
+    let changed = 0;
+    for (const { wallet, token } of pairs) {
+      await this.sql.begin(async (tx) => {
+        await tx`select 1 from positions where wallet = ${wallet} and token = ${token} for update`;
+        const swaps = await tx<{ tx: string; log_index: number; side: 'buy' | 'sell'; token_amount: string; usd: string; time: Date }[]>`
+          select tx, log_index, side, token_amount::text, usd::text, time from swaps
+          where trader = ${wallet} and token = ${token} and usd is not null and token_amount > 0 order by block, log_index`;
+        if (!swaps.length) return;
+        const p = emptyPosition();
+        const realized: { tx: string; li: number; usd: number }[] = [];
+        for (const s of swaps) {
+          const r = applyTrade(p, s.side, BigInt(s.token_amount), Number(s.usd));
+          if (s.side === 'sell') realized.push({ tx: s.tx, li: s.log_index, usd: r });
+        }
+        const [old] = await tx<{ realized_usd: string; buys: number; sells: number }[]>`
+          select realized_usd::text, buys, sells from positions where wallet = ${wallet} and token = ${token}`;
+        if (old && old.buys === p.buys && old.sells === p.sells && Math.abs(Number(old.realized_usd) - p.realized) < 1e-6) return;
+        await tx`insert into positions ${tx({
+          wallet, token, bought_tokens: p.bought.toString(), bought_usd: String(p.boughtUsd), sold_tokens: p.sold.toString(),
+          sold_usd: String(p.soldUsd), buys: p.buys, sells: p.sells, held_tokens: p.held.toString(), cost_basis_usd: String(p.cost),
+          realized_usd: String(p.realized), unbacked_sold_tokens: p.unbacked.toString(), first_trade_at: swaps[0]!.time, last_trade_at: swaps.at(-1)!.time,
+        })}
+          on conflict (wallet, token) do update set bought_tokens = excluded.bought_tokens, bought_usd = excluded.bought_usd,
+            sold_tokens = excluded.sold_tokens, sold_usd = excluded.sold_usd, buys = excluded.buys, sells = excluded.sells,
+            held_tokens = excluded.held_tokens, cost_basis_usd = excluded.cost_basis_usd, realized_usd = excluded.realized_usd,
+            unbacked_sold_tokens = excluded.unbacked_sold_tokens, first_trade_at = excluded.first_trade_at, last_trade_at = excluded.last_trade_at`;
+        for (let i = 0; i < realized.length; i += 2000) {
+          const chunk = realized.slice(i, i + 2000);
+          await tx`update swaps s set realized_usd = v.usd
+            from unnest(${chunk.map((r) => r.tx)}::text[], ${chunk.map((r) => r.li)}::int[], ${chunk.map((r) => String(r.usd))}::numeric[]) v(tx, li, usd)
+            where s.tx = v.tx and s.log_index = v.li`;
+        }
+        changed++;
+      });
+    }
+    return changed;
+  }
+
   private positionsMarker: { at: number; block: bigint | null } = { at: 0, block: null };
   /** The positions_from marker (checked at most once a minute). */
   private async positionsFrom(): Promise<bigint | null> {
@@ -863,19 +927,7 @@ export class Pipeline {
                  ath_market_cap_usd = greatest(coalesce(ath_market_cap_usd, 0), ${mcap}::numeric), updated_at = now()
                where address = ${token}`;
     }
-    // PONS curves graduate at ~4.2 ETH: progress = net ETH in the curve. Curves priced in other tokens
-    // (USDG, stock tokens, ...) are measured in USD against the same target (an approximation until
-    // their exact targets are known).
-    const usdTarget = this.ethUsd ? 4.2 * this.ethUsd : null;
-    await tx`update tokens t set bonding_progress = least(1, greatest(0,
-        case when coalesce(t.quote, ${ZERO}) in (${ZERO}, ${QUOTES.WETH}) then
-          (select coalesce(sum(case when s.side = 'buy' then s.quote_amount else -s.quote_amount end), 0)
-           from swaps s where s.token = t.address and s.pool = t.main_pool) / ${PONS_GRADUATION_WEI}::numeric
-        else
-          (select coalesce(sum(case when s.side = 'buy' then s.usd else -s.usd end), 0)
-           from swaps s where s.token = t.address and s.pool = t.main_pool) / nullif(${usdTarget}::numeric, 0)
-        end))
-      where t.address = any(${touched}) and t.launchpad = 'pons' and t.status <> 'migrated' and length(t.main_pool) = 42`;
+    // PONS curve progress is read from the curves' reserves by the poller every ~15s (curves.ts).
     await tx`update tokens t set
         holders = (select count(*) from balances b where b.token = t.address and b.amount > 0),
         volume_24h_usd = (select coalesce(sum(usd), 0) from swaps s where s.token = t.address and s.time > now() - interval '24 hours')

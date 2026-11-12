@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import postgres from 'postgres';
 import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
 import { refreshWalletPnl } from './data';
+import { checkGraduations, updateCurveProgress } from './curves';
 import { Rpc } from './rpc';
 import { ensureFunding, recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
@@ -140,9 +141,25 @@ app.post('/admin/pools/backfill', async (c) => {
   }
 });
 
+// PONS curves: recompute every curve's progress from its own threshold, then confirm graduations.
+app.post('/admin/curves/refresh', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const rpc = new Rpc(c.env.RPC_URL);
+    const updated = await updateCurveProgress(sql, rpc);
+    const graduated = await checkGraduations(sql, rpc);
+    return c.json({ updated, graduated });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 // Wallet positions: rebuild from all swaps (once, after migration 0006), then live keeps them current.
 app.post('/admin/positions/rebuild', async (c) => c.json(await positionsJob(c.env).rebuildPositions()));
 app.get('/admin/positions', async (c) => c.json(await positionsJob(c.env).positionsStatus()));
+// Recompute positions that disagree with their swaps (and, with ?since=<block>, every pair traded after it).
+app.post('/admin/positions/reconcile', async (c) =>
+  c.json(await positionsJob(c.env).reconcilePositions(c.req.query('since') ?? undefined, Number(c.req.query('max') ?? 2000), c.req.query('after') ?? undefined)));
 app.post('/admin/wallet-pnl/refresh', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
@@ -243,6 +260,18 @@ export default {
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
     await pollerOf(env).start();
+    // Every 5 minutes: confirm PONS graduations near the threshold (events can be missed or new).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 1) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const done = await checkGraduations(sql, new Rpc(env.RPC_URL));
+        if (done.length) console.log(`graduated: ${done.join(', ')}`);
+      } catch (err) {
+        console.error('graduation check failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
     // Every 5 minutes: wallet PnL summaries (once positions exist).
     if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 2) {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
@@ -253,6 +282,14 @@ export default {
         console.error('wallet pnl refresh failed', err);
       } finally {
         await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 15 minutes: recompute positions that drifted (history inserted out of order by backfills).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 15 === 9) {
+      try {
+        await positionsJob(env).reconcilePositions(undefined, 500);
+      } catch (err) {
+        console.error('positions reconcile failed', err);
       }
     }
     // Every 15 minutes: holder backfill for tokens that matter (>= 50 holders or >= $10K 24h volume)

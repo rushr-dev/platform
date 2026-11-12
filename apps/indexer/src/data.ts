@@ -18,15 +18,28 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
       (s.data->>'bundledPct')::float8 as bundled_pct, (s.data->>'snipersPct')::float8 as snipers_pct,
       (s.data->>'insidersPct')::float8 as insiders_pct, (s.data->>'freshWalletsPct')::float8 as fresh_pct,
       (s.data->>'airdroppedHolders')::int as airdropped, (s.data->>'copycat')::bool as copycat,
-      (s.data->'dev'->>'serialLauncher')::bool as serial_launcher, coalesce((s.data->>'spam')::bool, false) as spam
+      (s.data->'dev'->>'serialLauncher')::bool as serial_launcher, coalesce((s.data->>'spam')::bool, false) as spam,
+      -- Quote asset as a symbol (ETH, WETH, USDG, stock tokens, other coins we track).
+      case t.quote when '0x0000000000000000000000000000000000000000' then 'ETH' when '0x0bd7d308f8e1639fab988df18a8011f41eacad73' then 'WETH'
+        when '0x5fc5360d0400a0fd4f2af552add042d716f1d168' then 'USDG' when '0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea' then 'SPCX'
+        when '0x5e81213613b6b86eab4c6c50d718d34359459786' then 'TTWO' when '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec' then 'NVDA'
+        else (select q.symbol from tokens q where q.address = t.quote) end as quote_symbol,
+      (select count(*)::int from swaps x where x.token = t.address and x.time > now() - interval '24 hours') as trades_24h,
+      coalesce(substring(t.twitter from '(?:x|twitter)\.com/([A-Za-z0-9_]{1,30})(?:[/?#]|$)'), null) as twitter_handle,
+      -- Not measured yet: transfer tax needs a simulated buy/sell; fees paid need gas data. Null until then.
+      t.tax_bps as buy_tax_bps, t.tax_bps as sell_tax_bps, null::float8 as fees_paid_usd
     from tokens t left join signals s on s.token = t.address
     where t.address = any(${where.addresses ?? []})`;
 }
 
 /** Launchpads whose tokens trade on a bonding curve before graduating. */
 export const CURVE_LAUNCHPADS = ['pons', 'liftfun'];
-/** Bonding progress at which a curve token moves from New to Almost bonded. */
-export const ALMOST_BONDED = 0.5;
+/**
+ * Bonding progress at which a curve token moves from New to Almost bonded. GMGN's Robinhood column
+ * (2026-11-12) started at ~23% once progress was read from real curve reserves (AME 72%, PIZZA 59%,
+ * TARMAC 32%, AGENTIX 29%, CHEEK 26%, FATHER 23%).
+ */
+export const ALMOST_BONDED = 0.2;
 
 export type Column = 'new' | 'almost' | 'migrated';
 export const COLUMNS: Column[] = ['new', 'almost', 'migrated'];
@@ -35,12 +48,25 @@ export const COLUMNS: Column[] = ['new', 'almost', 'migrated'];
  * Which trenches column a card belongs to (same rules as the list query), or null when the default
  * trenches hide it (plain-pool tokens and spam are opt-in).
  */
-export function columnOf(card: { status?: unknown; launchpad?: unknown; bonding_progress?: unknown; spam?: unknown }): Column | null {
-  if (card.launchpad === 'uniswap-v4' || card.spam === true) return null;
-  if (card.status === 'migrated') return 'migrated';
+export function columnOf(card: {
+  status?: unknown; launchpad?: unknown; bonding_progress?: unknown; spam?: unknown; market_cap_usd?: unknown; holders?: unknown; volume_24h_usd?: unknown;
+}): Column | null {
+  if (card.spam === true) return null;
+  // Launched straight onto a DEX pool (no curve): like GMGN, that's "migrated", unless it's dust.
+  if (card.launchpad === 'uniswap-v4') return isDust(card) ? null : 'migrated';
+  if (card.status === 'migrated') return isDust(card) ? null : 'migrated';
   const almost = CURVE_LAUNCHPADS.includes(String(card.launchpad)) && Number(card.bonding_progress ?? 0) >= ALMOST_BONDED;
   return almost ? 'almost' : 'new';
 }
+
+/** Migrated tokens hidden by default (GMGN-like): under $1K market cap, or no activity at all. */
+export const DUST = { minMcapUsd: 1_000, minHolders: 10, minVolume24hUsd: 1_000 };
+export function isDust(card: { market_cap_usd?: unknown; holders?: unknown; volume_24h_usd?: unknown }): boolean {
+  const mcap = Number(card.market_cap_usd ?? 0);
+  return mcap < DUST.minMcapUsd || (Number(card.holders ?? 0) < DUST.minHolders && Number(card.volume_24h_usd ?? 0) < DUST.minVolume24hUsd);
+}
+/** Almost bonded hides curves with no trade in this long (abandoned near the top). */
+const ALMOST_STALE = '24 hours';
 
 export interface TrenchesQuery {
   column: string;
@@ -52,8 +78,10 @@ export interface TrenchesQuery {
   launchpad: string | null;
   hideHighRisk: boolean;
   showSpam: boolean;
-  /** Like GMGN, the trenches list launchpad tokens; plain pools (where nearly all clones live) are opt-in. */
+  /** New/Almost list launchpad tokens; plain-pool launches only appear there when opted in. */
   showPlain: boolean;
+  /** Migrated: include dust (under $1K mcap, or no holders and no volume). */
+  showDust?: boolean;
 }
 
 export const TRENCHES_DEFAULTS: TrenchesQuery = {
@@ -66,17 +94,20 @@ export async function trenchesList(sql: Sql, q: TrenchesQuery) {
   // Almost bonded = launchpad tokens still on their bonding curve and at least halfway there,
   // like GMGN. Plain-pool tokens have no curve, so they never land here (whatever their market cap).
   const almost = sql`(t.launchpad = any(${CURVE_LAUNCHPADS}) and coalesce(t.bonding_progress, 0) >= ${ALMOST_BONDED})`;
+  // Migrated: graduated curve tokens plus tokens launched straight onto a DEX pool (GMGN shows both).
+  const notDust = sql`(coalesce(t.market_cap_usd, 0) >= ${DUST.minMcapUsd}
+    and (t.holders >= ${DUST.minHolders} or coalesce(t.volume_24h_usd, 0) >= ${DUST.minVolume24hUsd}))`;
   const columnWhere =
     q.column === 'migrated'
-      ? sql`t.status = 'migrated'`
+      ? sql`(t.status = 'migrated' or t.launchpad = 'uniswap-v4') and (${q.showDust ?? false} or ${notDust})`
       : q.column === 'almost'
-        ? sql`t.status <> 'migrated' and ${almost}`
+        ? sql`t.status <> 'migrated' and ${almost} and t.price_at > now() - ${ALMOST_STALE}::interval`
         : sql`t.status <> 'migrated' and not ${almost}`;
   const order =
     q.column === 'migrated'
       ? sql`coalesce(t.migrated_at, t.created_at) desc`
       : q.column === 'almost'
-        ? sql`t.bonding_progress desc nulls last, t.market_cap_usd desc nulls last`
+        ? sql`t.bonding_progress desc nulls last, t.created_at desc`
         : sql`t.created_at desc`;
   const rows = await sql<{ address: string }[]>`
     select t.address from tokens t left join signals s on s.token = t.address
@@ -87,7 +118,7 @@ export async function trenchesList(sql: Sql, q: TrenchesQuery) {
       and (${q.launchpad}::text is null or t.launchpad = ${q.launchpad})
       and (${!q.hideHighRisk} or coalesce(s.risk_level, 'unknown') <> 'high')
       and (${q.showSpam} or not coalesce((s.data->>'spam')::bool, false))
-      and (${q.showPlain} or t.launchpad <> 'uniswap-v4')
+      and (${q.showPlain} or ${q.column === 'migrated'} or t.launchpad <> 'uniswap-v4')
     order by ${order}
     limit ${q.limit}`;
   const summaries = await tokenSummaries(sql, { addresses: rows.map((r) => r.address) });
