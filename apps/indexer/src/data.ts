@@ -26,8 +26,10 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
         else (select q.symbol from tokens q where q.address = t.quote) end as quote_symbol,
       (select count(*)::int from swaps x where x.token = t.address and x.time > now() - interval '24 hours') as trades_24h,
       coalesce(substring(t.twitter from '(?:x|twitter)\.com/([A-Za-z0-9_]{1,30})(?:[/?#]|$)'), null) as twitter_handle,
-      -- Not measured yet: transfer tax needs a simulated buy/sell; fees paid need gas data. Null until then.
-      t.tax_bps as buy_tax_bps, t.tax_bps as sell_tax_bps, null::float8 as fees_paid_usd
+      -- Tax is measured from real trades (signals); null until a token has 2 buys / 2 sells. Fees: not tracked yet.
+      coalesce((s.data->>'buyTaxBps')::int, t.tax_bps) as buy_tax_bps, coalesce((s.data->>'sellTaxBps')::int, t.tax_bps) as sell_tax_bps,
+      coalesce((s.data->>'noSells')::bool, false) as no_sells, coalesce((s.data->'dev'->>'farm')::bool, false) as farm,
+      null::float8 as fees_paid_usd
     from tokens t left join signals s on s.token = t.address
     where t.address = any(${where.addresses ?? []})`;
 }

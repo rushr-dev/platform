@@ -36,7 +36,7 @@
       { "binding": "METADATA_QUEUE", "queue": "rushr-metadata" }
     ],
     "consumers": [
-      { "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 4 },
+      { "queue": "rushr-enrich", "max_batch_size": 50, "max_batch_timeout": 2, "max_concurrency": 8 },
       { "queue": "rushr-metadata", "max_batch_size": 10, "max_batch_timeout": 1, "max_concurrency": 4, "max_retries": 10 }
     ]
   },

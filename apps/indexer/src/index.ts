@@ -384,10 +384,26 @@ export default {
           msg.retry({ delaySeconds: 30 });
         }
       }
+      // Signals are re-queued on every trade (debounced 15s), so busy older tokens would swamp the queue.
+      // Skip tokens whose signals are fresh enough for their age: young tokens change fast, old ones don't.
+      const wanted = [...new Set(batch.messages.filter((m) => m.body.kind === 'token-signals').map((m) => (m.body as { token: string }).token))];
+      const fresh = new Set(
+        wanted.length
+          ? (
+              await sql<{ token: string }[]>`
+                select g.token from signals g join tokens t on t.address = g.token
+                where g.token = any(${wanted})
+                  and g.updated_at > now() - case
+                    when t.created_at > now() - interval '1 hour' then interval '15 seconds'
+                    when t.created_at > now() - interval '24 hours' then interval '2 minutes'
+                    else interval '10 minutes' end`
+            ).map((r) => r.token)
+          : [],
+      );
       for (const msg of batch.messages) {
         const body = msg.body;
         if (body.kind === 'token-metadata' || body.kind === 'wallet-funding' || body.kind === 'trade-confirm') continue;
-        if (body.kind !== 'token-signals' || done.has(body.token)) {
+        if (body.kind !== 'token-signals' || done.has(body.token) || fresh.has(body.token)) {
           msg.ack();
           continue;
         }
