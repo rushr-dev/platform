@@ -6,6 +6,7 @@
     "studio": "remotion studio src/index.ts",
     "render:x-banner": "remotion still src/index.ts XBanner out/x-banner.png",
     "render:og": "remotion still src/index.ts OgCard out/og.png",
+    "render:announce": "remotion render src/index.ts Announce out/announce.mp4 --codec h264 --crf 18",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
