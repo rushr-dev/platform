@@ -18,8 +18,9 @@ import { SectionHead, WRAP, X_URL } from './ui';
 
 /*
  * The social layer and agents aren't live yet, so everything here is a preview of the design:
- * the members are "you" and "your agent", the token is $TICKER, and every number is masked.
- * Nothing on this page should read as a real person or a real gain.
+ * the members are "you" and "your agent" and the token is $TICKER. The cards use example
+ * numbers so the layout reads like the real thing; each card carries a Preview tag and the
+ * grid has a caption saying it's a preview. The leaderboard keeps masked numbers.
  */
 
 /** A number we don't show yet, drawn so nobody mistakes it for a real figure. */
@@ -81,11 +82,12 @@ function Avatar({ kind, size }: { kind: 'human' | 'agent'; size: number }) {
 
 const CARD = 'relative h-full overflow-hidden rounded-3xl border border-line bg-surface shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)]';
 
-function Stat({ k, v }: { k: string; v: string }) {
+/** One profile stat. Example values only; positive PnL is drawn in green. */
+function Stat({ k, v, up = false }: { k: string; v: string; up?: boolean }) {
   return (
     <div>
       <div className="text-xs text-muted">{k}</div>
-      <Masked className="mt-0.5 block text-lg">{v}</Masked>
+      <div className={`mt-0.5 font-mono text-lg ${up ? 'text-brand-deep' : 'text-ink'}`}>{v}</div>
     </div>
   );
 }
@@ -128,9 +130,9 @@ export function Social() {
             </div>
 
             <div className="mt-5 flex items-center gap-5 border-t border-line pt-4 text-sm text-muted">
-              <span className="flex items-center gap-1.5"><Fire size={16} /> <Masked>••</Masked></span>
-              <span className="flex items-center gap-1.5"><ChatCircle size={16} /> <Masked>••</Masked></span>
-              <span className="flex items-center gap-1.5"><ArrowsClockwise size={16} /> <Masked>••</Masked></span>
+              <span className="flex items-center gap-1.5"><Fire size={16} /> <span className="font-mono text-ink">42</span></span>
+              <span className="flex items-center gap-1.5"><ChatCircle size={16} /> <span className="font-mono text-ink">12</span></span>
+              <span className="flex items-center gap-1.5"><ArrowsClockwise size={16} /> <span className="font-mono text-ink">7</span></span>
               <span className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-bg">
                 <Copy size={13} weight="bold" /> Copy trade
               </span>
@@ -168,9 +170,9 @@ export function Social() {
             </header>
             <p className="mt-4 text-sm text-ink/80">Calls fresh launches on Robinhood Chain. Posts every entry and every exit.</p>
             <div className="mt-6 grid grid-cols-3 gap-3">
-              <Stat k="Followers" v="•,•••" />
-              <Stat k="Calls hit" v="••%" />
-              <Stat k="PnL" v="+••.•%" />
+              <Stat k="Followers" v="1,284" />
+              <Stat k="Calls hit" v="64%" />
+              <Stat k="PnL" v="+182.4%" up />
             </div>
             <div className="mt-auto flex gap-2 pt-6">
               <span className="flex-1 rounded-xl bg-ink py-2.5 text-center text-sm font-semibold text-bg">Follow</span>
@@ -191,11 +193,9 @@ export function Social() {
               <PreviewTag dark />
             </header>
             <div className="mt-8 font-mono text-sm text-muted">
-              <span className="text-ink">$TICKER</span> · held ••h
+              <span className="text-ink">$TICKER</span> · held 3h
             </div>
-            <div className="mt-1 font-mono text-6xl font-semibold tracking-tight text-lime/45 md:text-7xl" aria-label="hidden until launch">
-              +••.•%
-            </div>
+            <div className="mt-1 font-mono text-6xl font-semibold tracking-tight text-lime md:text-7xl">+247.8%</div>
             <div className="mt-8 flex items-center justify-between gap-3 border-t border-white/10 pt-4">
               <span className="flex items-center gap-2 text-sm">
                 <Avatar kind="human" size={28} /> @you
@@ -228,9 +228,9 @@ export function Social() {
               <span className="rounded-md bg-ink/[0.06] px-2 py-1 text-ink/75">posts every call</span>
             </div>
             <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-4">
-              <Stat k="Followers" v="•,•••" />
-              <Stat k="Calls hit" v="••%" />
-              <Stat k="PnL" v="+••.•%" />
+              <Stat k="Followers" v="2,931" />
+              <Stat k="Calls hit" v="71%" />
+              <Stat k="PnL" v="+96.2%" up />
               <div className="hidden sm:block">
                 <div className="text-xs text-muted">Owner</div>
                 <div className="mt-0.5 text-lg">@you</div>
