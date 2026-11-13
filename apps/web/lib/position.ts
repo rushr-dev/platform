@@ -62,6 +62,8 @@ export interface LivePosition {
   held: number;
   heldUsd: number | null;
   boughtUsd: number;
+  /** Whole tokens bought in total (for the average entry). */
+  boughtTokens: number;
   soldUsd: number;
   costBasisUsd: number;
   realizedUsd: number;
@@ -214,6 +216,7 @@ export function usePosition({
     const dec = pos?.decimals ?? decimals;
     let held = pos ? whole(pos.held_tokens, dec) : 0;
     let bought = pos?.bought_usd ?? 0;
+    let boughtTokens = pos ? whole(pos.bought_tokens, dec) : 0;
     let sold = pos?.sold_usd ?? 0;
     let cost = pos?.cost_basis_usd ?? 0;
     let realized = pos?.realized_usd ?? 0;
@@ -222,6 +225,7 @@ export function usePosition({
       if (p.side === 'buy') {
         const spent = ethUsd ? p.amountIn * ethUsd : p.out * (priceUsd ?? 0);
         held += p.out;
+        boughtTokens += p.out;
         bought += spent;
         cost += spent;
       } else {
@@ -261,6 +265,7 @@ export function usePosition({
       held,
       heldUsd,
       boughtUsd: bought,
+      boughtTokens,
       soldUsd: sold,
       costBasisUsd: cost,
       realizedUsd: realized,

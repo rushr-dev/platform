@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
 import { API_URL, type Candle, type SignalReason, type TokenDetail } from '@/lib/api';
 import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, quoteLabel, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
@@ -17,12 +18,18 @@ import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
 import { useAuth } from '@/lib/auth';
 import { usePosition } from '@/lib/position';
+import { updateSettings, useSettings } from '@/lib/settings';
+import { AboutCard, PositionCard, ThesisBox } from './simple-rail';
 import { useEthUsd } from '@/lib/profile';
 
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
 
 /** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
+const SimpleTrade = dynamic(() => import('./simple-trade').then((m) => m.SimpleTrade), {
+  ssr: false,
+  loading: () => <div className="h-[330px] shrink-0 animate-pulse rounded-2xl border border-white/[0.06] bg-surface" />,
+});
 const TradePanel = dynamic(() => import('./trade-panel').then((m) => m.TradePanel), {
   ssr: false,
   loading: () => <div className="h-[380px] shrink-0 animate-pulse rounded-2xl border border-white/[0.06] bg-surface" />,
@@ -92,6 +99,23 @@ export function TokenView({
   const ethUsd = useEthUsd();
   const myWallet = session.authenticated ? (session.user?.wallet ?? null) : null;
   const position = usePosition({ wallet: myWallet, token: t.address, decimals: t.decimals, priceUsd: priceNow, ethUsd, feed: trades });
+  // Simple rail by default; Pro mode (remembered per browser) shows the full panel and stats.
+  const pro = useSettings().proMode;
+  const desktop = useMediaQuery('(min-width: 1024px)');
+  const [sheet, setSheet] = useState<'buy' | 'sell' | null>(null);
+  const trading = tradingAvailable();
+  const tradeToken = {
+    address: t.address as `0x${string}`,
+    symbol: t.symbol,
+    decimals: t.decimals,
+    risk: t.risk,
+    verdict: t.verdict,
+    createdAt: t.created_at || null,
+    mainPool: (t.main_pool as `0x${string}` | null | undefined) ?? null,
+    createdBlock: t.created_block,
+    priceChange5mPct: live.data.stats?.['5m']?.priceChangePct != null ? Math.abs(live.data.stats['5m'].priceChangePct) : null,
+  };
+  const stats = <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />;
   const tabs = (
     <Tabs
       tab={tab}
@@ -134,7 +158,7 @@ export function TokenView({
   );
 
   return (
-    <div className="h-full overflow-y-auto lg:overflow-hidden">
+    <div className={`h-full overflow-y-auto lg:overflow-hidden ${!pro && trading ? 'pb-20 lg:pb-0' : ''}`}>
       <div className="grid gap-2 p-2 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-2 lg:min-h-0 lg:overflow-hidden">
           <Header t={t} pools={pools} priceNow={priceNow} serverNow={serverNow} />
@@ -148,9 +172,7 @@ export function TokenView({
               {hydrationLabel(live.hydration).detail && <span className="ml-auto shrink-0 font-mono text-muted">{hydrationLabel(live.hydration).detail}</span>}
             </div>
           )}
-          <div className="lg:hidden">
-            <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
-          </div>
+          {pro && <div className="lg:hidden">{stats}</div>}
           <div className="h-[360px] shrink-0 overflow-hidden rounded-2xl border border-white/[0.06] bg-surface lg:h-auto lg:min-h-[280px] lg:flex-[1.15]">
             <PriceChart
               address={t.address}
@@ -166,33 +188,130 @@ export function TokenView({
           {tabs}
         </div>
         <aside className="flex min-h-0 flex-col gap-2 lg:overflow-y-auto lg:[scrollbar-width:thin]">
-          <div className="hidden lg:block">
-            <WindowStats t={t} trades={trades} candles={candles} server={live.data.stats} pairs={pairs} priceNow={priceNow} serverNow={serverNow} />
-          </div>
-          {tradingAvailable() ? (
-            <TradePanel
-              priceUsd={priceNow}
-              position={position}
-              token={{
-                address: t.address as `0x${string}`,
-                symbol: t.symbol,
-                decimals: t.decimals,
-                risk: t.risk,
-                verdict: t.verdict,
-                createdAt: t.created_at || null,
-                mainPool: (t.main_pool as `0x${string}` | null | undefined) ?? null,
-                createdBlock: t.created_block,
-                priceChange5mPct: live.data.stats?.['5m']?.priceChangePct != null ? Math.abs(live.data.stats['5m'].priceChangePct) : null,
-              }}
-            />
+          {pro ? (
+            <>
+              <ModeSwitch />
+              <div className="hidden lg:block">{stats}</div>
+              {trading ? <TradePanel priceUsd={priceNow} position={position} token={tradeToken} /> : <TradeSoon symbol={t.symbol} />}
+              <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
+              <Safety t={t} />
+              <DevRecord t={t} />
+            </>
           ) : (
-            <TradeSoon symbol={t.symbol} />
+            <>
+              {/* On phones the trade card opens from the sticky Buy/Sell bar instead. */}
+              {trading ? desktop && <SimpleTrade token={tradeToken} priceUsd={priceNow} /> : <TradeSoon symbol={t.symbol} />}
+              <PositionCard t={t} position={position} supply={supply} />
+              <ThesisBox t={t} />
+              <About
+                t={t}
+                server={live.data.stats}
+                trades={trades}
+                candles={candles}
+                priceNow={priceNow}
+                serverNow={serverNow}
+                more={
+                  <>
+                    {stats}
+                    <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
+                    <Safety t={t} />
+                    <DevRecord t={t} />
+                  </>
+                }
+              />
+            </>
           )}
-          <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
-          <Safety t={t} />
-          <DevRecord t={t} />
         </aside>
       </div>
+      {!pro && trading && !desktop && (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.08] bg-bg/95 p-3 backdrop-blur-sm [padding-bottom:max(0.75rem,env(safe-area-inset-bottom))] lg:hidden">
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setSheet('buy')} className="rounded-xl bg-go py-3 text-[15px] font-semibold text-bg">
+              Buy
+            </button>
+            <button type="button" onClick={() => setSheet('sell')} className="rounded-xl bg-risk-high py-3 text-[15px] font-semibold text-bg">
+              Sell
+            </button>
+          </div>
+        </div>
+      )}
+      {sheet && !desktop && (
+        <Sheet onClose={() => setSheet(null)}>
+          <SimpleTrade token={tradeToken} priceUsd={priceNow} initialSide={sheet} />
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+/** The About card with its own clock, so the per-second window refresh re-renders only this card. */
+function About({
+  t,
+  server,
+  trades,
+  candles,
+  priceNow,
+  serverNow,
+  more,
+}: {
+  t: TokenDetail;
+  server: ServerStats | null;
+  trades: Tx[] | null;
+  candles: Candle[] | null;
+  priceNow: number | null;
+  serverNow: number;
+  more: React.ReactNode;
+}) {
+  const windows = useWindows(server, trades, candles, priceNow, serverNow);
+  const nowMs = useNow(serverNow);
+  return <AboutCard t={t} windows={windows} trades={trades} nowMs={nowMs} more={more} />;
+}
+
+/** Desktop breakpoint, read after mount (false during server render). */
+function useMediaQuery(query: string) {
+  const [match, setMatch] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia(query);
+    const on = () => setMatch(m.matches);
+    on();
+    m.addEventListener('change', on);
+    return () => m.removeEventListener('change', on);
+  }, [query]);
+  return match;
+}
+
+/** Bottom sheet for the trade card on phones. */
+function Sheet({ onClose, children }: { onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex flex-col justify-end" role="dialog" aria-modal="true" aria-label="Trade">
+      <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/60" />
+      <div className="relative max-h-[92vh] overflow-y-auto rounded-t-3xl bg-bg p-2 [padding-bottom:max(0.5rem,env(safe-area-inset-bottom))]">
+        <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-white/15" />
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** Back to the simple rail from Pro mode. */
+function ModeSwitch() {
+  return (
+    <div className="flex shrink-0 items-center justify-between rounded-xl border border-white/[0.06] bg-surface px-3 py-2 text-xs">
+      <span className="text-muted">Pro mode</span>
+      <button type="button" onClick={() => updateSettings({ proMode: false })} className="font-semibold text-ink/85 hover:text-ink">
+        Switch to simple
+      </button>
     </div>
   );
 }
@@ -298,6 +417,17 @@ function fromServerStats(s: ServerStats): Record<WindowId, WindowStatsT> {
   return out;
 }
 
+/** Window stats (5m/1h/6h/24h): exact from the server on feed v2, else derived from trades and candles. */
+function useWindows(server: ServerStats | null, trades: Tx[] | null, candles: Candle[] | null, priceNow: number | null, serverNow: number) {
+  const now = useNow(serverNow);
+  // Recomputing per second keeps windows sliding; it's a single pass over the trade list.
+  const derived = useMemo(
+    () => (!server && trades && candles ? windowStats(trades, candles, Math.floor(now / 1000), priceNow) : null),
+    [server, trades, candles, now, priceNow],
+  );
+  return useMemo(() => (server ? fromServerStats(server) : derived), [server, derived]);
+}
+
 function WindowStats({
   t,
   trades,
@@ -322,13 +452,7 @@ function WindowStats({
   // Until the user picks: Rushr when the server sends exact stats (v2 indexes every venue), else
   // "all pools" for plain-pool tokens DexScreener knows (venues the old index doesn't cover).
   const source = chosen ?? (!server && hasPairs && t.launchpad === 'uniswap-v4' ? 'all' : 'rushr');
-  const now = useNow(serverNow);
-  // Recomputing per second keeps windows sliding; it's a single pass over ≤1000 trades.
-  const derived = useMemo(
-    () => (!server && trades && candles ? windowStats(trades, candles, Math.floor(now / 1000), priceNow) : null),
-    [server, trades, candles, now, priceNow],
-  );
-  const ours = useMemo(() => (server ? fromServerStats(server) : derived), [server, derived]);
+  const ours = useWindows(server, trades, candles, priceNow, serverNow);
   const all = useMemo(() => (hasPairs ? aggregate(pairs!) : null), [hasPairs, pairs]);
   const useAll = source === 'all' && all;
   const tile = (id: WindowId) => (useAll ? all.byWindow[id].change : (ours?.[id].change ?? null));
