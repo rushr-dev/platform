@@ -83,6 +83,7 @@ export const knownErrorsAbi = parseAbi([
   'error SlippageExceeded(uint256 received, uint256 minimum)',
   'error UnknownCurve(address token)',
   'error CurveGraduated(address token)',
+  'error CurveGraduated()', // the live PONS curve (0x025ac17e)
   'error DeadlinePassed()',
   'error Reentrancy()',
   'error EthTransferFailed()',
