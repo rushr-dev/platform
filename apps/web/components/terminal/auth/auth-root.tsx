@@ -17,6 +17,13 @@ const LOAD_AFTER_MS = 1_500;
 export function AuthRoot() {
   const [load, setLoad] = useState(false);
   useEffect(() => {
+    // Privy's embedded wallet throws over plain http (and took the whole page down). The middleware
+    // redirects http → https; if a page still arrives insecure, switch to https and never mount Privy here.
+    if (!window.isSecureContext) {
+      if (window.location.protocol === 'http:') window.location.replace(window.location.href.replace(/^http:/, 'https:'));
+      setAuthState({ ready: true });
+      return;
+    }
     if (!privyAppId()) {
       setAuthState({ ready: true });
       return;
