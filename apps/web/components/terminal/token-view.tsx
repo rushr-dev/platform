@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
+import { CaretLeft, CaretRight, Check, CheckCircle, Copy, Info, Lightning, Warning, WarningOctagon } from '@phosphor-icons/react';
 import { API_URL, type Candle, type SignalReason, type TokenDetail } from '@/lib/api';
 import { ageLong, compact, dateTimeUtc, dateUtc, dexscreenerUrl, EXPLORER, quoteLabel, LAUNCHPAD_LABEL, nf, pct, pctSigned, price, short, usd, usdSigned } from '@/lib/format';
 import { useTopic } from '@/lib/feed/react';
@@ -20,6 +20,8 @@ import { useAuth } from '@/lib/auth';
 import { usePosition } from '@/lib/position';
 import { updateSettings, useSettings } from '@/lib/settings';
 import { AboutCard, PositionCard, ThesisBox } from './simple-rail';
+import { useTokenCallouts, type Callout } from '@/lib/callouts';
+import { CallsFeed } from './calls-feed';
 import { useEthUsd } from '@/lib/profile';
 
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
@@ -66,6 +68,11 @@ export function TokenView({
   const hydrating = isHydrating(live.hydration);
   const [maker, setMaker] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>('trades');
+  // Members' calls on this token: the feed column (or Calls tab) and the chart markers.
+  const calls = useTokenCallouts(t.address);
+  const [selectedCall, setSelectedCall] = useState<string | null>(null);
+  const [callsOpen, setCallsOpen] = useStoredFlag('rushr.calls.open', true);
+  const wide = useMediaQuery('(min-width: 1280px)');
   const supply = toWhole(detail.total_supply, detail.decimals) ?? 0;
 
   useEffect(() => {
@@ -121,8 +128,10 @@ export function TokenView({
       tab={tab}
       setTab={setTab}
       holdersCount={t.holders}
+      callsCount={calls.items?.length ?? null}
       body={
         <>
+          {tab === 'calls' && <CallsPanel symbol={t.symbol} items={calls.items} selected={selectedCall} onSelect={setSelectedCall} serverNow={serverNow} />}
           {tab === 'trades' && <TradesTable trades={trades} ctx={ctx} supply={supply} serverNow={serverNow} maker={maker} onMaker={showMaker} />}
           {tab === 'holders' && (
             <HoldersTab
@@ -159,7 +168,35 @@ export function TokenView({
 
   return (
     <div className={`h-full overflow-y-auto lg:overflow-hidden ${!pro && trading ? 'pb-20 lg:pb-0' : ''}`}>
-      <div className="grid gap-2 p-2 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div
+        className={`grid gap-2 p-2 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_340px] ${
+          callsOpen ? 'xl:grid-cols-[300px_minmax(0,1fr)_340px]' : 'xl:grid-cols-[40px_minmax(0,1fr)_340px]'
+        }`}
+      >
+        {/* Wide screens: calls in their own column, collapsible so the chart can take the room. */}
+        {wide && (
+          <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.06] bg-surface" aria-label={`Calls on ${t.symbol}`}>
+            {callsOpen ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-2.5">
+                  <h2 className="text-sm font-semibold">Calls on ${t.symbol}</h2>
+                  {calls.items && <span className="font-mono text-xs text-muted">{calls.items.length}</span>}
+                  <button type="button" onClick={() => setCallsOpen(false)} aria-label="Hide calls" title="Hide calls" className="ml-auto rounded-md p-1 text-muted hover:bg-white/[0.05] hover:text-ink">
+                    <CaretLeft size={14} />
+                  </button>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
+                  <CallsPanel symbol={t.symbol} items={calls.items} selected={selectedCall} onSelect={setSelectedCall} serverNow={serverNow} />
+                </div>
+              </>
+            ) : (
+              <button type="button" onClick={() => setCallsOpen(true)} aria-label="Show calls" className="flex h-full flex-col items-center gap-2 py-3 text-xs text-muted hover:text-ink">
+                <CaretRight size={14} />
+                <span className="[writing-mode:vertical-rl]">Calls{calls.items?.length ? ` · ${calls.items.length}` : ''}</span>
+              </button>
+            )}
+          </section>
+        )}
         <div className="flex min-w-0 flex-col gap-2 lg:min-h-0 lg:overflow-hidden">
           <Header t={t} pools={pools} priceNow={priceNow} serverNow={serverNow} />
           {hydrating && (
@@ -183,6 +220,13 @@ export function TokenView({
               priceUsd={priceNow}
               hydration={live.hydration}
               marks={myWallet ? position.trades : null}
+              calls={calls.items}
+              selectedCall={selectedCall}
+              onSelectCall={(id) => {
+                setSelectedCall(id);
+                if (id && !wide) setTab('calls');
+                if (id) setCallsOpen(true);
+              }}
             />
           </div>
           {tabs}
@@ -202,7 +246,7 @@ export function TokenView({
               {/* On phones the trade card opens from the sticky Buy/Sell bar instead. */}
               {trading ? desktop && <SimpleTrade token={tradeToken} priceUsd={priceNow} /> : <TradeSoon symbol={t.symbol} />}
               <PositionCard t={t} position={position} supply={supply} />
-              <ThesisBox t={t} />
+              <ThesisBox t={t} position={position} />
               <About
                 t={t}
                 server={live.data.stats}
@@ -801,11 +845,55 @@ function DevStat({ k, v, bad, good }: { k: string; v: string; bad?: boolean; goo
 
 /* ------------------------------------------------------------------ bottom tabs */
 
-type Tab = 'trades' | 'holders' | 'traders' | 'early' | 'bubbles' | 'dev';
+type Tab = 'trades' | 'calls' | 'holders' | 'traders' | 'early' | 'bubbles' | 'dev';
 
-function Tabs({ tab, setTab, holdersCount, body }: { tab: Tab; setTab: (t: Tab) => void; holdersCount: number; body: React.ReactNode }) {
+/** The calls feed with its own clock (time-ago labels), so the page doesn't re-render every second. */
+function CallsPanel(props: { symbol: string; items: Callout[] | null; selected: string | null; onSelect: (id: string | null) => void; serverNow: number }) {
+  const nowMs = useNow(props.serverNow);
+  return <CallsFeed symbol={props.symbol} items={props.items} selected={props.selected} onSelect={props.onSelect} nowMs={nowMs} />;
+}
+
+/** A boolean remembered in this browser (e.g. whether the calls column is open). */
+function useStoredFlag(key: string, initial: boolean): [boolean, (v: boolean) => void] {
+  const [v, setV] = useState(initial);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw === '0' || raw === '1') setV(raw === '1');
+    } catch {
+      // storage unavailable
+    }
+  }, [key]);
+  const set = useCallback(
+    (next: boolean) => {
+      setV(next);
+      try {
+        localStorage.setItem(key, next ? '1' : '0');
+      } catch {
+        // storage unavailable
+      }
+    },
+    [key],
+  );
+  return [v, set];
+}
+
+function Tabs({
+  tab,
+  setTab,
+  holdersCount,
+  callsCount,
+  body,
+}: {
+  tab: Tab;
+  setTab: (t: Tab) => void;
+  holdersCount: number;
+  callsCount: number | null;
+  body: React.ReactNode;
+}) {
   const tabs: [Tab, string][] = [
     ['trades', 'Trades'],
+    ['calls', callsCount ? `Calls ${callsCount}` : 'Calls'],
     ['holders', `Holders ${nf.format(holdersCount)}`],
     ['traders', 'Top traders'],
     ['early', 'Early buyers'],
@@ -820,7 +908,7 @@ function Tabs({ tab, setTab, holdersCount, body }: { tab: Tab; setTab: (t: Tab) 
             key={id}
             type="button"
             onClick={() => setTab(id)}
-            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${tab === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'}`}
+            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${tab === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'} ${id === 'calls' ? 'xl:hidden' : ''}`}
           >
             {label}
           </button>

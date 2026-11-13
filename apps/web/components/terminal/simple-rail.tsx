@@ -5,8 +5,9 @@ import Link from 'next/link';
 import { CaretDown, Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phosphor-icons/react';
 import type { TokenDetail } from '@/lib/api';
 import { auth, useAuth } from '@/lib/auth';
-import { age, compact, countFmt, pctSigned, usd } from '@/lib/format';
-import { useMe, V1 } from '@/lib/members';
+import { compact, countFmt, pctSigned, usd } from '@/lib/format';
+import { useMe } from '@/lib/members';
+import { CALL_MAX, postCallout } from '@/lib/callouts';
 import type { LivePosition } from '@/lib/position';
 import { TRADE_LIMIT, WINDOWS, type Tx, type WindowId, type WindowStats } from '@/lib/trades';
 import { GeneratedAvatar } from './avatar';
@@ -50,145 +51,137 @@ export function PositionCard({ t, position, supply }: { t: TokenDetail; position
   );
 }
 
-/* ------------------------------------------------------------------ thesis */
-
-interface Callout {
-  id: string;
-  createdAt: string;
-  stance: 'bullish' | 'bearish';
-  body: string;
-  author: { handle: string; displayName: string | null; avatarUrl: string | null };
-}
-
-/** Matches the API's limit for a callout body (POST /v1/callouts). */
-const THESIS_MAX = 500;
+/* ------------------------------------------------------------------ call composer */
 
 /**
- * Post a thesis on this token (a callout: POST /v1/callouts), visible to everyone, with the latest
- * few from other traders underneath. Your most recent buy of the token is linked by the server.
+ * Post your call on this token (POST /v1/callouts), visible to everyone; your most recent buy of
+ * the token is linked by the server. The stance starts from your last trade here, and right after
+ * a buy the box offers to share the call. Posting needs a registered member (sign-up is invite-only).
  */
-export function ThesisBox({ t }: { t: TokenDetail }) {
+export function ThesisBox({ t, position }: { t: TokenDetail; position: LivePosition }) {
   const session = useAuth();
   const me = useMe();
   const member = me?.status === 'registered' ? me.member : null;
+  const lastSide = [...position.trades].reverse().find((x) => !x.pending)?.side ?? null;
   const [text, setText] = useState('');
   const [stance, setStance] = useState<'bullish' | 'bearish'>('bullish');
+  const [touched, setTouched] = useState(false);
+  const [nudge, setNudge] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [tick, setTick] = useState(0);
-  const [list, setList] = useState<Callout[] | null>(null);
 
+  // Default the stance from the last trade until the user picks one.
   useEffect(() => {
-    const ctl = new AbortController();
-    fetch(`${V1}/tokens/${t.address}/callouts?limit=3${tick ? `&r=${tick}` : ''}`, { signal: ctl.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<{ items: Callout[] }>) : { items: [] }))
-      .then((b) => setList(b.items ?? []))
-      .catch(() => undefined);
-    return () => ctl.abort();
-  }, [t.address, tick]);
+    if (!touched && lastSide) setStance(lastSide === 'buy' ? 'bullish' : 'bearish');
+  }, [lastSide, touched]);
+
+  // After a confirmed buy of this token from this browser: "Share your call?"
+  useEffect(() => {
+    const wallet = session.user?.wallet?.toLowerCase();
+    if (!wallet) return;
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ phase?: string; side?: string; wallet?: string; token?: string }>).detail;
+      if (d?.phase !== 'confirmed' || d.side !== 'buy' || d.wallet?.toLowerCase() !== wallet || d.token?.toLowerCase() !== t.address.toLowerCase()) return;
+      setNudge(true);
+      setStance('bullish');
+      setText((cur) => cur || `Just bought $${t.symbol}. `);
+    };
+    window.addEventListener('rushr:trade', on);
+    return () => window.removeEventListener('rushr:trade', on);
+  }, [session.user?.wallet, t.address, t.symbol]);
 
   const post = async () => {
     if (!member || !text.trim() || busy) return;
     setBusy(true);
     setMsg(null);
-    try {
-      const token = await auth.getAccessToken();
-      const r = await fetch(`${V1}/callouts`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify({ token: t.address, stance, body: text.trim() }),
-      });
-      if (r.ok) {
-        setText('');
-        setMsg({ ok: true, text: 'Posted.' });
-        setTick((x) => x + 1);
-      } else {
-        const e = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
-        setMsg({ ok: false, text: e?.error?.message ?? 'Couldn’t post. Try again.' });
-      }
-    } catch {
-      setMsg({ ok: false, text: 'Network error. Try again.' });
-    } finally {
-      setBusy(false);
-    }
+    const r = await postCallout({ token: t.address, stance, body: text.trim() });
+    setBusy(false);
+    if (r.ok) {
+      setText('');
+      setNudge(false);
+      setMsg({ ok: true, text: 'Posted. Your call is live on the chart.' });
+    } else setMsg({ ok: false, text: r.message });
   };
 
-  const disabledReason = !session.authenticated ? 'Sign in to post a thesis.' : !member ? 'Pick a handle to post.' : null;
+  const canPost = session.authenticated && !!member;
 
   return (
-    <section className="shrink-0 rounded-2xl border border-white/[0.06] bg-surface p-3" aria-label="Thesis">
+    <section
+      className={`shrink-0 rounded-2xl border bg-surface p-3 transition ${nudge ? 'border-brand/40 shadow-[0_0_0_3px] shadow-brand/10' : 'border-white/[0.06]'}`}
+      aria-label="Post your call"
+    >
+      {nudge && <p className="mb-2 text-sm font-medium text-brand">Share your call?</p>}
       <div className="flex items-center gap-2">
-        <span className="relative block size-7 shrink-0 overflow-hidden rounded-full">
-          <GeneratedAvatar address={member?.wallet ?? t.address} symbol={member?.handle ?? '?'} size={28} />
-          {member?.avatarUrl && <img src={iconSrc(member.avatarUrl)} alt="" className="absolute inset-0 size-full object-cover" />}
-        </span>
-        <span className="min-w-0 truncate text-sm font-medium">{member ? `@${member.handle}` : 'You'}</span>
+        {member ? (
+          <Link href={`/u/${member.handle}`} className="flex min-w-0 items-center gap-2 hover:opacity-90">
+            <span className="relative block size-7 shrink-0 overflow-hidden rounded-full">
+              <GeneratedAvatar address={member.wallet} symbol={member.handle} size={28} />
+              {member.avatarUrl && <img src={iconSrc(member.avatarUrl)} alt="" className="absolute inset-0 size-full object-cover" />}
+            </span>
+            <span className="min-w-0 truncate text-sm font-medium">@{member.handle}</span>
+          </Link>
+        ) : (
+          <span className="text-sm font-medium">Your call</span>
+        )}
         <span className="rounded-md bg-brand/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand">Thesis</span>
-        <div className="ml-auto flex rounded-lg bg-white/[0.04] p-0.5 text-[11px]">
-          {(['bullish', 'bearish'] as const).map((s) => (
+        <div className="ml-auto flex rounded-lg bg-white/[0.04] p-0.5 text-[11px]" role="radiogroup" aria-label="Stance">
+          {(['bullish', 'bearish'] as const).map((st) => (
             <button
-              key={s}
+              key={st}
               type="button"
-              onClick={() => setStance(s)}
-              className={`rounded-md px-2 py-0.5 capitalize ${stance === s ? (s === 'bullish' ? 'bg-go/20 text-go' : 'bg-risk-high/20 text-risk-high') : 'text-muted'}`}
+              role="radio"
+              aria-checked={stance === st}
+              onClick={() => {
+                setTouched(true);
+                setStance(st);
+              }}
+              className={`rounded-md px-2 py-0.5 capitalize ${stance === st ? (st === 'bullish' ? 'bg-go/20 text-go' : 'bg-risk-high/20 text-risk-high') : 'text-muted'}`}
             >
-              {s}
+              {st}
             </button>
           ))}
         </div>
       </div>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value.slice(0, THESIS_MAX))}
-        placeholder="Add a thesis to your trade"
-        rows={3}
-        disabled={!!disabledReason}
-        aria-label="Your thesis"
-        className="mt-2 w-full resize-none rounded-xl border border-white/[0.06] bg-bg px-3 py-2 text-sm outline-none placeholder:text-muted/70 focus:border-white/20 disabled:opacity-60"
-      />
-      <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted">
-        <span>Visible to everyone</span>
-        <span className="font-mono">
-          {text.length}/{THESIS_MAX}
-        </span>
-        {disabledReason ? (
-          session.authenticated ? (
-            <Link href="/me" className="ml-auto rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-ink hover:bg-white/10">
-              Pick a handle
+      {canPost ? (
+        <>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value.slice(0, CALL_MAX))}
+            placeholder={`Add a thesis to your trade: why $${t.symbol}?`}
+            rows={3}
+            aria-label="Your call"
+            className="mt-2 w-full resize-none rounded-xl border border-white/[0.06] bg-bg px-3 py-2 text-sm outline-none placeholder:text-muted/70 focus:border-white/20"
+          />
+          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted">
+            <span>Visible to everyone</span>
+            <span className="font-mono">
+              {text.length}/{CALL_MAX}
+            </span>
+            <button
+              type="button"
+              onClick={() => void post()}
+              disabled={busy || !text.trim()}
+              className="ml-auto rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-bg hover:bg-white disabled:opacity-40"
+            >
+              {busy ? 'Posting…' : 'Post call'}
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-white/[0.08] px-3 py-3 text-sm text-muted">
+          <span>Sign up to post your call.</span>
+          {session.authenticated ? (
+            <Link href="/me" className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-ink hover:bg-white/10">
+              Sign up
             </Link>
           ) : (
-            <button type="button" onClick={() => auth.login()} className="ml-auto rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-ink hover:bg-white/10">
-              Sign in
+            <button type="button" onClick={() => auth.login()} className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-ink hover:bg-white/10">
+              Sign up
             </button>
-          )
-        ) : (
-          <button
-            type="button"
-            onClick={() => void post()}
-            disabled={busy || !text.trim()}
-            className="ml-auto rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-bg hover:bg-white disabled:opacity-40"
-          >
-            {busy ? 'Posting…' : 'Post'}
-          </button>
-        )}
-      </div>
-      {msg && <p className={`mt-1.5 text-xs ${msg.ok ? 'text-go' : 'text-risk-high'}`}>{msg.text}</p>}
-      {!!list?.length && (
-        <ul className="mt-3 space-y-2 border-t border-white/[0.05] pt-3">
-          {list.map((c) => (
-            <li key={c.id} className="text-sm">
-              <div className="flex items-center gap-1.5 text-xs text-muted">
-                <Link href={`/u/${c.author.handle}`} className="font-medium text-ink/85 hover:text-ink">
-                  @{c.author.handle}
-                </Link>
-                <span className={c.stance === 'bullish' ? 'text-go' : 'text-risk-high'}>{c.stance}</span>
-                <span className="ml-auto">{age(new Date(c.createdAt).getTime(), Date.now())}</span>
-              </div>
-              <p className="mt-0.5 line-clamp-3 text-ink/85">{c.body}</p>
-            </li>
-          ))}
-        </ul>
+          )}
+        </div>
       )}
+      {msg && <p className={`mt-1.5 text-xs ${msg.ok ? 'text-go' : 'text-risk-high'}`}>{msg.text}</p>}
     </section>
   );
 }
