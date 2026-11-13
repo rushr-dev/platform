@@ -9,12 +9,15 @@ import { useWalletHoldings } from '@/lib/holdings';
 import { useMe } from '@/lib/members';
 import { EXPLORER, short } from '@/lib/format';
 import { MemberAvatar } from '../member-avatar';
+import { useHint } from '@/lib/session-hint';
 import { WalletPanel } from './wallet-panel';
 
 /** Top-bar sign-in button, and the account menu once signed in. */
 export function AccountMenu() {
-  const { enabled, authenticated, user } = useAuth();
+  const { enabled, ready, authenticated, user } = useAuth();
   const me = useMe();
+  // Signed in last time and the SDK is still loading: show who it was, not a Sign in button.
+  const hint = useHint();
   const [open, setOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -42,6 +45,22 @@ export function AccountMenu() {
     );
   }
 
+  // First paint, before the hint is read: a neutral placeholder rather than a possibly wrong Sign in.
+  if (!ready && hint === undefined) return <span className="block h-9 w-28 animate-pulse rounded-xl bg-white/[0.05]" aria-busy aria-label="Loading account" />;
+
+  if (!ready && hint) {
+    const cached = me?.status === 'registered' ? me.member : null;
+    return (
+      <div className="flex items-center gap-2" aria-busy>
+        {hint.wallet && <BalanceButton wallet={hint.wallet as `0x${string}`} onOpen={() => auth.login()} />}
+        <span className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-surface py-1 pl-1 pr-3 text-sm">
+          <MemberAvatar member={cached} wallet={hint.wallet} label={hint.name ?? ''} size={28} />
+          <span className="hidden max-w-[12ch] truncate font-medium sm:inline">{cached ? `@${cached.handle}` : <NameSkeleton />}</span>
+        </span>
+      </div>
+    );
+  }
+
   if (!authenticated || !user) {
     return (
       <button
@@ -55,7 +74,8 @@ export function AccountMenu() {
     );
   }
 
-  const name = me?.status === 'registered' ? `@${me.member.handle}` : displayName(user);
+  // The handle once the member is known; the sign-in name only for people without a member yet.
+  const name = me?.status === 'registered' ? `@${me.member.handle}` : me ? displayName(user) : <NameSkeleton />;
   return (
     <div ref={box} className="relative flex items-center gap-2">
       {user.wallet && <BalanceButton wallet={user.wallet} onOpen={() => setWalletOpen(true)} />}
@@ -210,4 +230,8 @@ function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () =
       )}
     </button>
   );
+}
+
+function NameSkeleton() {
+  return <span className="inline-block h-3.5 w-16 animate-pulse rounded bg-white/[0.08] align-middle" aria-label="Loading" />;
 }

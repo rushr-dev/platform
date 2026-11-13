@@ -6,13 +6,14 @@ import {
   ColorType,
   createChart,
   HistogramSeries,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { API_URL, type Candle } from '@/lib/api';
-import { usd } from '@/lib/format';
+import { price, usd } from '@/lib/format';
 import type { Hydration } from '@/lib/feed/protocol';
 import type { Callout } from '@/lib/callouts';
 import type { OwnTrade } from '@/lib/position';
@@ -61,6 +62,7 @@ export function PriceChart({
   calls = null,
   selectedCall = null,
   onSelectCall,
+  avgBuy = null,
 }: {
   address: string;
   /** 1m candles for the last 24h; null while they load. */
@@ -81,6 +83,8 @@ export function PriceChart({
   calls?: Callout[] | null;
   selectedCall?: string | null;
   onSelectCall?: (id: string | null) => void;
+  /** The signed-in wallet's average buy price (USD) while it holds the token: a dashed line on the axis. */
+  avgBuy?: number | null;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -235,11 +239,19 @@ export function PriceChart({
     appliedTop.current = trades ? (trades[0]?.id ?? '') : null;
     const n = series.length;
     const fitKey = `${interval}:${n > 1 ? 'data' : 'seed'}`;
-    if (fitted.current !== fitKey) {
-      fitted.current = fitKey;
+    const fit = () => {
       // Show the most recent ~120 bars rather than squeezing the whole history in.
       if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
       else chart.current?.timeScale().fitContent();
+    };
+    if (fitted.current !== fitKey) {
+      fitted.current = fitKey;
+      fit();
+    } else {
+      // The series can get shorter after the first fit (e.g. the live feed's window replacing the
+      // 24h history): a kept zoom would then start before the first bar and leave the left empty.
+      const vr = chart.current?.timeScale().getVisibleLogicalRange();
+      if (vr && vr.from < -2) fit();
     }
     // trades intentionally excluded: they are applied incrementally below
   }, [base, scale]);
@@ -305,6 +317,22 @@ export function PriceChart({
     }
     api.set(out);
   }, [ownByBar, base, scale, lastBar, showTrades]);
+
+  // Average buy: a price line on the candle series (it doesn't take part in autoscale), in the
+  // active mode's units (market cap or price), redrawn when the position or the mode changes.
+  useEffect(() => {
+    const series = candles.current;
+    if (!series || avgBuy == null || !(avgBuy > 0)) return;
+    const line = series.createPriceLine({
+      price: avgBuy * scale,
+      color: '#36d42a',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `Avg buy ${scale > 1 ? `${usd(avgBuy * scale)} MC` : usdPrecise(avgBuy)}`,
+    });
+    return () => series.removePriceLine(line);
+  }, [avgBuy, scale]);
 
   // Call markers: the most recent calls, at the candle of each call and the price (or market cap)
   // when it was posted.
@@ -476,11 +504,17 @@ function continuous(data: Candle[]): Bar[] {
   return out;
 }
 
+/**
+ * Axis and legend prices: compact dollars, subscript zeros for tiny prices, never e-notation. The
+ * margins under the lowest candle can reach below zero; those ticks get no label.
+ */
 function usdPrecise(n: number) {
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n === 0) return '$0';
   if (n >= 1000) return usd(n);
   if (n >= 1) return `$${n.toFixed(2)}`;
-  if (n === 0) return '$0';
-  return `$${n.toPrecision(4)}`;
+  if (n >= 0.01) return `$${n.toFixed(4)}`;
+  return price(n);
 }
 
 const SOURCE_TEXT = { chain: 'from chain', index: 'from the Rushr index', mixed: 'from chain and index' } as const;

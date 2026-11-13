@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react';
 import { API_URL } from './api';
 import { auth } from './auth';
+import { writeHint } from './session-hint';
 
 /**
  * Rushr members (Agents stream's API, docs/agents.md "Beta API (v1)"). Humans authenticate with
@@ -106,6 +107,7 @@ const listeners = new Set<() => void>();
 
 export function setMe(next: MeResult | null) {
   me = next;
+  if (next && next.status !== 'unavailable') writeHint({ me: next });
   listeners.forEach((l) => l());
 }
 
