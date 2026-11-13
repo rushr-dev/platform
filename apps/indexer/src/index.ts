@@ -17,6 +17,8 @@ export { LiveFeed } from './feed';
 export { Backfiller } from './backfill';
 export { Gateway } from './gateway';
 export { TokenHydrator, RpcBudget } from './hydrator';
+import { hydrator } from './hydrator';
+import { applyLiftGraduations, liftGraduated, syncLiftProgress } from './liftfun';
 
 /** Follow-up delays for launch metadata that wasn't loadable on the first try. */
 const METADATA_RETRY_S = [10, 60, 300, 1800];
@@ -147,6 +149,24 @@ app.post('/admin/pools/backfill', async (c) => {
 });
 
 // PONS curves: recompute every curve's progress from its own threshold, then confirm graduations.
+// lift.fun graduations (its API decides them; see liftfun.ts): adopt graduated tokens we don't track yet,
+// then mark them migrated at lift.fun's graduation time. Re-run after hydration finishes to mark the adopted ones.
+app.post('/admin/liftfun/graduations', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const grads = await liftGraduated();
+    const known = new Set((await sql<{ address: string }[]>`select address from tokens where address = any(${grads.map((g) => g.token)})`).map((r) => r.address));
+    const adopting: Record<string, string> = {};
+    for (const g of grads.filter((x) => !known.has(x.token))) {
+      adopting[g.token] = (await hydrator(c.env, g.token).hydrate(g.token).catch((e) => ({ state: `error: ${e}` }))).state;
+    }
+    const marked = await applyLiftGraduations(sql, grads);
+    return c.json({ graduated: grads.map((g) => ({ token: g.token, graduated_at: g.migratedAt })), tracked: known.size, adopting, marked });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 app.post('/admin/curves/refresh', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
@@ -273,6 +293,20 @@ export default {
         if (done.length) console.log(`graduated: ${done.join(', ')}`);
       } catch (err) {
         console.error('graduation check failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // lift.fun: bonding progress of traded tokens every 2 minutes; graduations of every token every 10.
+    const minute = new Date(event.scheduledTime).getUTCMinutes();
+    if (minute % 2 === 0) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const r = await syncLiftProgress(sql);
+        if (minute % 10 === 0) r.graduated.push(...(await applyLiftGraduations(sql, await liftGraduated())));
+        if (r.graduated.length) console.log(`lift.fun graduated: ${r.graduated.join(', ')}`);
+      } catch (err) {
+        console.error('lift.fun sync failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }
