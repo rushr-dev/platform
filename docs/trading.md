@@ -9,7 +9,7 @@ Status 2026-11-12: research done, decisions recorded (below), scaffold in `packa
 - **Route:** through **Uniswap's audited Universal Router**, with our fee in the same tx: `TRANSFER` on buys, `PAY_PORTION` + `SWEEP` on sells, recipient = the user.
 - **Contracts:** no RushrRouter or RushrPonsRouter. Those stay for agents and offline one-click, after the audit.
 - **PONS bonding-curve tokens** (since 2026-11-13): traded **directly on the curve** from the user's wallet, as pons.fun's own UI does, with **no Rushr fee during the beta** (see "PONS curve trades" below).
-- **Fee and treasury:** 0.5% (0.45% referred), paid to the treasury `0x447a…5E40`.
+- **Fee and treasury:** **0.25% during the beta** (half price; 0.22% referred), 0.5% (0.45% referred) after it, paid to the treasury `0x447a…5E40`. PONS curve trades are free during the beta.
 
 ### Pieces
 | Where | What |
@@ -317,22 +317,61 @@ The web client posts as soon as the swap is broadcast and ignores errors until t
 7. **First real trade (a maintainer, by hand):**
    - log in on a build with the flag on and fund the embedded wallet with a little ETH on Robinhood Chain
    - buy 0.001–0.005 ETH of a liquid token (e.g. PONS) from the token page
-   - check the explorer link; the treasury receives 0.5%
+   - check the explorer link; the treasury receives 0.25% during the beta (0.5% after), and run `scripts/fee-audit.ts --tx <hash>`
    - sell 100%: the first sell sends two approval transactions, then the swap
+
+### Fee audit (`scripts/fee-audit.ts`)
+
+A read-only check that the treasury actually received the fee. For each trade it compares what the treasury got in that transaction with the expected rate on the trade's notional. The notional is the input on buys and the gross output (net + fee) on sells, the same definition as the indexer's ledger.
+
+```bash
+# specific transactions
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --tx 0x… 0x…
+# the last N Universal Router trades in the trade ledger, for everyone or one wallet
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --last 20
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --wallet 0x… --last 10
+```
+
+- **Environment:**
+  - `RPC_URL`: an RPC with `debug_traceTransaction`. ETH fees are internal transfers, visible only in a call trace; the public RPC has none, so ETH trades would be flagged `no_trace`.
+  - `DATABASE_URL`: the indexer database, needed for `--last` and `--wallet`. It's read in a read-only transaction.
+  - Either can come from `--env <file>` with `KEY=VALUE` lines, and nothing is printed.
+- **Options:** `--bps <n>` sets the expected base rate (default: the config's), and `--json` prints raw results.
+- **Exit code:** 1 when any trade is flagged.
+- **Flags:**
+  - Shared with the ledger: `no_fee`, `fee_bps_<x>_expected_<y>` (more than 1 bp off).
+  - Audit-only:
+    - `fee_wrong_asset_<asset>`: e.g. WETH instead of ETH.
+    - `calldata_bps_<x>_expected_<y>`: the fee command itself encoded the wrong rate.
+    - `no_fee_command`: no TRANSFER, PAY_PORTION or PERMIT2_TRANSFER_FROM to the treasury.
+    - `not_universal_router`, `reverted`, `no_trace`.
+    - `ledger_fee_differs`: the ledger's confirmed `fee_amount` disagrees with the chain.
+- **Referred or not:** taken from the ledger's `referrer` when the row comes from the ledger; otherwise inferred from the calldata's rate.
+- **The logic** lives in `auditFee` (`src/fee-audit.ts`) and is unit-tested.
+- **Live simulation** (`scripts/fee-sim.ts`, `test/live/fee.live.test.ts`): a 0.01 ETH buy, then a sell of the minimum tokens received, in one `eth_simulateV1` block. On 2026-11-13 every audit passed at 25 bps:
+
+  | Token (v4) | Buy: treasury got | Sell: treasury got (quoted) |
+  | --- | --- | --- |
+  | PONS | 0.000025 ETH | 0.000023553962931078 (0.000023553962931078) |
+  | BULL | 0.000025 ETH | 0.000023221152043989 (0.000023155008901038) |
+  | PLOG | 0.000025 ETH | 0.000022206928081359 (0.000022122054047407) |
+  | ZOLVA | 0.000025 ETH | 0.000021925001698567 (0.00002186378680411) |
+
+  Sells pay slightly more than quoted because they run right after the simulated buy, at a higher price. The fee is 25 bps of the actual output (`PAY_PORTION`).
 
 ## Decisions (2026-11-12)
 
 | Question | Decision |
 | --- | --- |
-| **Rate** | **0.5%** of the trade, buys and sells: fomo parity, undercuts Axiom (~1%). It's config (`feeBps: 50`), not a constant. |
+| **Rate** | **0.5%** of the trade, buys and sells (`STANDARD_FEE_BPS`): fomo parity, undercuts Axiom (~1%). **Beta (decided 2026-11-13): 0.25%, half price** (`BETA_FEE_BPS`, the default `feeBps`), so real trades exercise the fee path. Returning to 0.5% is one line in `config.ts`. Curve trades stay free during the beta. |
 | **Which side** | Always the **quote side** (ETH, WETH or USDG): taken from the input on buys, from the output on sells. The treasury only receives ETH or USDG, and a token's own tax can't shrink or block the fee. |
 | **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and other hooked v4 pools) | **Primary path.** Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, `PAY_PORTION(ETH, treasury, bps)`, `SWEEP(ETH, user, minOut)` (the pattern Uniswap's interface fee used). |
 | **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then (decided 2026-11-13), curve tokens trade **directly on the curve with no Rushr fee**. |
 | **Treasury** | The treasury (currently a single **EOA**, moving to a Safe): `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` (decided 2026-11-12; EIP-55 checksum valid; no code and nonce 0 on 4663). It's `RUSHR_TREASURY`, the default `feeRecipient` in `packages/trade`. The routers can move it to a Safe later **only through the guardian's timelock** (queue, wait `delay`, activate, events; no owner, no instant change). **Known risk:** see below. |
-| **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee** (0.5% → **0.45%**, charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
+| **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee**, rounded in their favour (0.5% → **0.45%**; beta 0.25% → **0.22%**, since 25 − ⌈2.5⌉ = 22; charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
 | **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's factories (verified in its bytecode). Phase 2. |
 | **Agents** | Agents trade through the same code: `packages/trade` is pure functions that return unsigned transactions (`prepareSwap`), usable from a server or agent runtime, not only from `/swap`. |
-| **UI** | The fee is a line in every quote ("Rushr fee 0.5% · 0.00005 ETH"; referred: "0.45%, 10% referral discount"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
+| **UI** | The fee is a line in every quote (beta: "Rushr fee 0.25% (beta, half price)"; referred: "Rushr fee 0.22% (beta, half price, referral discount)"; curve trades: "Rushr fee: free on curve trades during beta"; after the beta "Rushr fee 0.5%"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
 
 Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x204faca1…0498` (the default). The core registry's `0x8876…0904` is also a Universal Router with the same factories embedded, and it's config.
 
@@ -349,7 +388,7 @@ Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x2
 
 How it works:
 - **At quote time:** a `SwapRequest` may carry `referral: { referrer, code? }` (resolved server-side from the trader's signup) and `source: { kind: 'web' | 'agent' | 'api', id? }`.
-- **Fee rate:** `effectiveFeeBps` = base − ⌈base × 10%⌉ = **45 bps** when referred. The Universal Router plan uses that rate (`TRANSFER` amount, `PAY_PORTION` bips). RushrPonsRouter has an immutable `referralFeeBps` and a `referred` flag.
+- **Fee rate:** `effectiveFeeBps` = base − ⌈base × 10%⌉ = **22 bps** when referred during the beta (45 at the standard rate). The Universal Router plan uses that rate (`TRANSFER` amount, `PAY_PORTION` bips). RushrPonsRouter has an immutable `referralFeeBps` and a `referred` flag.
 - **Recording:** `draftTradeRecord(quote)` → store at submit. `confirmTradeRecord(record, receipt)` → status `confirmed`, with `feeAmount` = **fee actually received by the treasury** (from the receipt's transfers, same analysis as `analyzeSwapTransfers`) and `referrerAccrual` = 20% of that.
 - **Payouts (later):** sum confirmed `referrer_accrual` by referrer and fee token, minus what has been paid.
 
@@ -476,7 +515,7 @@ Status 2026-11-12. Nothing is signed or broadcast anywhere: verification is unit
 | Module | What it does |
 | --- | --- |
 | `addresses.ts`, `chain.ts` | Trading contracts for 4663 from Uniswap's official list, the PONS factory, and a viem chain with multicall3 |
-| `config.ts` | `feeBps` (default **50**, capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (default `RUSHR_TREASURY`, the treasury: currently a single EOA, moving to a Safe), `universalRouter`, `ponsRouter` (null until deployed). `assertSignable` refuses a placeholder treasury. One-click trading is gated separately by `assertOneClickAllowed` (RushrRouter deployed **and** audited), and the web UI by `NEXT_PUBLIC_SWAP_ENABLED` |
+| `config.ts` | `feeBps` (default `BETA_FEE_BPS` = **25** during the beta, `STANDARD_FEE_BPS` = 50 after; capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (default `RUSHR_TREASURY`, the treasury: currently a single EOA, moving to a Safe), `universalRouter`, `ponsRouter` (null until deployed). `assertSignable` refuses a placeholder treasury. One-click trading is gated separately by `assertOneClickAllowed` (RushrRouter deployed **and** audited), and the web UI by `NEXT_PUBLIC_SWAP_ENABLED` |
 | `referral.ts` | Effective rate, referrer accrual and discount; `TradeRecord` draft and confirm for the off-chain ledger |
 | `agent.ts` | `prepareSwap(client, request, opts)` for servers and agents: best route → unsigned tx, approvals, command list, ledger record, optional simulation. `toJsonSafe` for tool and HTTP output. No browser globals, no keys |
 | `fees.ts` | Fee math: fee off the input on buys, off the gross output on sells (identical to `PAY_PORTION`), slippage minimums, tax-adjusted slippage |
