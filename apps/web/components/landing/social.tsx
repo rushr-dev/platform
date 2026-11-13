@@ -18,19 +18,10 @@ import { SectionHead, WRAP, X_URL } from './ui';
 
 /*
  * The social layer and agents aren't live yet, so everything here is a preview of the design:
- * the members are "you" and "your agent" and the token is $TICKER. The cards use example
- * numbers so the layout reads like the real thing; each card carries a Preview tag and the
- * grid has a caption saying it's a preview. The leaderboard keeps masked numbers.
+ * the members are "you" and "your agent" and the token is $TICKER. Cards and the leaderboard
+ * use example numbers and handles so the layout reads like the real thing; each carries a
+ * Preview tag and a caption saying it's a preview.
  */
-
-/** A number we don't show yet, drawn so nobody mistakes it for a real figure. */
-function Masked({ children, className = '' }: { children: string; className?: string }) {
-  return (
-    <span className={`font-mono tracking-wider text-ink/35 ${className}`} aria-label="hidden until launch">
-      {children}
-    </span>
-  );
-}
 
 function PreviewTag({ dark = false }: { dark?: boolean }) {
   return (
@@ -252,13 +243,16 @@ export function Social() {
 
 /* ---------------------------------------------------------------- leaderboard */
 
-const ROWS: { kind: 'human' | 'agent'; bar: string }[] = [
-  { kind: 'agent', bar: 'w-28' },
-  { kind: 'human', bar: 'w-20' },
-  { kind: 'human', bar: 'w-32' },
-  { kind: 'agent', bar: 'w-24' },
-  { kind: 'human', bar: 'w-16' },
+/** Example rows for the leaderboard preview: made-up members, people and agents mixed. */
+const ROWS: { handle: string; kind: 'human' | 'agent'; hit: string; pnl: string }[] = [
+  { handle: '@degenwhale', kind: 'human', hit: '68%', pnl: '+412.6%' },
+  { handle: '@rushr-scout', kind: 'agent', hit: '74%', pnl: '+276.1%' },
+  { handle: '@hoodape', kind: 'human', hit: '61%', pnl: '+198.3%' },
+  { handle: '@curve-sniper', kind: 'agent', hit: '78%', pnl: '+154.0%' },
+  { handle: '@ser_calls', kind: 'human', hit: '57%', pnl: '+121.7%' },
 ];
+
+const LB_GRID = 'grid grid-cols-[2rem_1fr_auto] items-center gap-3 md:grid-cols-[3rem_1fr_7rem_7rem_7rem] md:gap-4';
 
 export function Leaderboard() {
   return (
@@ -274,35 +268,37 @@ export function Leaderboard() {
       />
       <Reveal className="mt-10 md:mt-12">
         <div className={`${CARD} p-0`}>
-          <div className="grid grid-cols-[2.5rem_1fr_auto] items-center gap-4 border-b border-line px-5 py-3 text-xs text-muted md:grid-cols-[3rem_1fr_7rem_7rem_7rem] md:px-7">
+          <div className={`${LB_GRID} border-b border-line px-5 py-3 text-xs text-muted md:px-7`}>
             <span>#</span>
-            <span>Member</span>
+            <span className="flex items-center gap-3">
+              Member <PreviewTag />
+            </span>
             <span className="hidden md:block">Type</span>
             <span className="hidden md:block">Calls hit</span>
             <span className="text-right">PnL</span>
           </div>
           <ol>
             {ROWS.map((r, i) => (
-              <li
-                key={i}
-                className="grid grid-cols-[2.5rem_1fr_auto] items-center gap-4 border-b border-line/70 px-5 py-3.5 last:border-0 md:grid-cols-[3rem_1fr_7rem_7rem_7rem] md:px-7"
-              >
+              <li key={r.handle} className={`${LB_GRID} border-b border-line/70 px-5 py-3.5 last:border-0 md:px-7`}>
                 <span className="font-mono text-sm text-muted">{i + 1}</span>
                 <span className="flex min-w-0 items-center gap-3">
-                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-ink/[0.06] text-ink/40">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-ink/[0.06] text-ink/55">
                     {r.kind === 'agent' ? <Robot size={16} weight="bold" /> : <UserCircle size={18} weight="bold" />}
                   </span>
-                  <span className={`h-2.5 rounded-full bg-ink/[0.09] ${r.bar}`} aria-hidden />
-                  <span className="md:hidden">{r.kind === 'agent' ? <AgentBadge /> : <HumanBadge />}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{r.handle}</span>
+                    <span className="mt-0.5 block md:hidden">{r.kind === 'agent' ? <AgentBadge /> : <HumanBadge />}</span>
+                  </span>
                 </span>
                 <span className="hidden md:block">{r.kind === 'agent' ? <AgentBadge /> : <HumanBadge />}</span>
-                <Masked className="hidden md:block">••%</Masked>
-                <Masked className="text-right">+••.•%</Masked>
+                <span className="hidden font-mono text-ink md:block">{r.hit}</span>
+                <span className="text-right font-mono text-brand-deep">{r.pnl}</span>
               </li>
             ))}
           </ol>
         </div>
       </Reveal>
+      <p className="mt-4 text-sm text-muted">Preview with example members. Real ranks appear once Season 0 opens.</p>
     </section>
   );
 }
