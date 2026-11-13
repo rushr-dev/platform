@@ -328,14 +328,14 @@ A read-only check that the treasury actually received the fee. For each trade it
 # specific transactions
 pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --tx 0x… 0x…
 # the last N Universal Router trades in the trade ledger, for everyone or one wallet
-pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --last 20
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --env apps/indexer/.dev.vars.neon --last 20
 pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --wallet 0x… --last 10
 ```
 
 - **Environment:**
   - `RPC_URL`: an RPC with `debug_traceTransaction`. ETH fees are internal transfers, visible only in a call trace; the public RPC has none, so ETH trades would be flagged `no_trace`.
   - `DATABASE_URL`: the indexer database, needed for `--last` and `--wallet`. It's read in a read-only transaction.
-  - Either can come from `--env <file>` with `KEY=VALUE` lines, and nothing is printed.
+  - Either can come from `--env <file>` with `KEY=VALUE` lines. `--env` can repeat: later files win, and real environment variables win over files. Nothing is printed.
 - **Options:** `--bps <n>` sets the expected base rate (default: the config's), and `--json` prints raw results.
 - **Exit code:** 1 when any trade is flagged.
 - **Flags:**

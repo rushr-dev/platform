@@ -8,7 +8,7 @@
  *   pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --last 20
  *   pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --wallet 0x… --last 10
  *
- * Environment (or `--env <file>` with KEY=VALUE lines, e.g. apps/indexer/.dev.vars):
+ * Environment (or `--env <file>` with KEY=VALUE lines, repeatable, later files win; e.g. apps/indexer/.dev.vars):
  *   RPC_URL       an RPC with debug_traceTransaction (ETH fees are internal transfers, visible only in a
  *                 call trace). Without one, ETH trades are flagged `no_trace` and only tokens are checked.
  *   DATABASE_URL  the indexer database, for --last / --wallet (read in a read-only transaction).
@@ -17,6 +17,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { createPublicClient, formatUnits, http, type Hex } from 'viem';
 import { robinhoodChain } from '../src/chain';
 import { DEFAULT_TRADE_CONFIG, resolveConfig } from '../src/config';
@@ -28,12 +29,17 @@ const opt = (name: string) => {
   const i = argv.indexOf(name);
   return i >= 0 ? argv[i + 1] : undefined;
 };
-const envFile = opt('--env');
-if (envFile)
-  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+// --env may repeat; a later file overrides an earlier one (e.g. .dev.vars, then .dev.vars.neon for the
+// production database). Variables already set in the environment win over every file.
+const fromFiles: Record<string, string> = {};
+argv.forEach((a, i) => {
+  if (a !== '--env' || !argv[i + 1]) return;
+  for (const line of readFileSync(argv[i + 1]!, 'utf8').split('\n')) {
     const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*"?([^"]*)"?\s*$/);
-    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!;
+    if (m) fromFiles[m[1]!] = m[2]!;
   }
+});
+for (const [k, v] of Object.entries(fromFiles)) if (!process.env[k]) process.env[k] = v;
 
 const cfg = resolveConfig(opt('--bps') ? { feeBps: Number(opt('--bps')) } : {});
 const referredBps = effectiveFeeBps(cfg, { referrer: cfg.feeRecipient });
@@ -53,7 +59,9 @@ if (txIdx >= 0) {
   // `postgres` is a dependency of @rushr/db, not of this package.
   type Tag = <T>(s: TemplateStringsArray, ...v: unknown[]) => Promise<T>;
   type Sql = Tag & { begin<T>(mode: string, fn: (tx: Tag) => Promise<T>): Promise<T>; end(): Promise<void> };
-  const postgres = createRequire(new URL('../../db/package.json', import.meta.url))('postgres') as (url: string, o: object) => Sql;
+  // postgres v4 is ESM-only: resolve it from @rushr/db and import it as ESM (its default export).
+  const entry = createRequire(new URL('../../db/package.json', import.meta.url)).resolve('postgres');
+  const postgres = ((await import(pathToFileURL(entry).href)) as { default: (url: string, o: object) => Sql }).default;
   const sql = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
   try {
     rows = await sql.begin('read only', (tx) =>
