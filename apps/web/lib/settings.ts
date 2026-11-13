@@ -36,6 +36,8 @@ export interface TradeSettings {
    */
   presets: [TradePreset, TradePreset, TradePreset];
   activePreset: 0 | 1 | 2;
+  /** Token page: the full trade panel and stats rail instead of the simple one. */
+  proMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: TradeSettings = {
@@ -52,6 +54,7 @@ export const DEFAULT_SETTINGS: TradeSettings = {
     { buy: ['0.005', '0.01', '0.02', '0.05'], sell: [25, 50, 75, 100], slippagePct: 'auto' },
   ],
   activePreset: 0,
+  proMode: false,
 };
 
 /** Hard bounds the settings page enforces. */
@@ -132,6 +135,7 @@ export function sanitize(s: TradeSettings): TradeSettings {
     maxTradeEth: num(s.maxTradeEth, LIMITS.maxTradeEth[0], LIMITS.maxTradeEth[1], DEFAULT_SETTINGS.maxTradeEth),
     presets: [0, 1, 2].map((i) => presetOf(s.presets?.[i], DEFAULT_SETTINGS.presets[i]!)) as TradeSettings['presets'],
     activePreset: active,
+    proMode: s.proMode === true,
   };
 }
 

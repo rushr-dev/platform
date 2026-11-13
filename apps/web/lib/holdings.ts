@@ -87,6 +87,31 @@ export function useWalletHoldings(wallet: Address | null): Holdings {
   const { balances, refresh: refreshCash } = useBalances(wallet);
   const eth = useEthQuote();
   const pnl = useWalletPnl(wallet, tick);
+  // Fresh every 15s, and right after this wallet's own trades (the `rushr:trade` event from
+  // components/trade/use-quick-trade.ts): once on confirmation and again when the indexer has caught up.
+  useEffect(() => {
+    if (!wallet) return;
+    const w = wallet.toLowerCase();
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const bump = () => {
+      setTick((x) => x + 1);
+      refreshCash();
+    };
+    const id = setInterval(bump, 15_000);
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ phase?: string; wallet?: string }>).detail;
+      if (d?.wallet?.toLowerCase() !== w || (d.phase !== 'confirmed' && d.phase !== 'failed')) return;
+      bump();
+      timers.push(setTimeout(bump, 4_000));
+    };
+    window.addEventListener('rushr:trade', on);
+    return () => {
+      clearInterval(id);
+      timers.forEach(clearTimeout);
+      window.removeEventListener('rushr:trade', on);
+    };
+    // refreshCash is a new function each render; the wallet decides the subscription.
+  }, [wallet]);
   const positions: Position[] = pnl.state === 'ready' ? pnl.data.positions : [];
   // Tokens the indexer thinks are held; the chain decides the amount.
   const tokens = useMemo(

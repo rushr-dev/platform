@@ -57,10 +57,16 @@ function LivePill() {
   return (
     <div
       className="hidden items-center gap-2 rounded-xl border border-white/[0.06] bg-surface px-3 py-2 font-mono text-xs sm:flex"
-      title="Time from the block being produced to this update reaching your browser (block timestamps are whole seconds, so this reads up to 1s high)"
+      title={
+        connected
+          ? s == null
+            ? 'Live: updates stream as blocks are produced.'
+            : `Live. Last update arrived ${s < 10 ? s.toFixed(1) : Math.round(s)}s after its block (block timestamps are whole seconds, so this reads up to 1s high).`
+          : 'Reconnecting to the live feed…'
+      }
     >
       <span className={`size-2 rounded-full ${connected ? 'bg-brand shadow-[0_0_8px] shadow-brand' : 'bg-risk-high'}`} />
-      {connected ? (s == null ? 'live' : `${s < 10 ? s.toFixed(1) : Math.round(s)}s`) : 'reconnecting'}
+      {connected ? 'live' : 'reconnecting'}
     </div>
   );
 }

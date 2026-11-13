@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ArrowSquareOut, Check, Copy, GearSix, SignOut, User, Wallet } from '@phosphor-icons/react';
 import { auth, displayName, useAuth } from '@/lib/auth';
 import { fmtUnits, useBalances } from '@/lib/balances';
+import { useWalletHoldings } from '@/lib/holdings';
 import { useMe } from '@/lib/members';
 import { EXPLORER, short } from '@/lib/format';
 import { GeneratedAvatar } from '../avatar';
@@ -57,7 +58,8 @@ export function AccountMenu() {
 
   const name = me?.status === 'registered' ? `@${me.member.handle}` : displayName(user);
   return (
-    <div ref={box} className="relative">
+    <div ref={box} className="relative flex items-center gap-2">
+      {user.wallet && <BalanceButton wallet={user.wallet} onOpen={() => setWalletOpen(true)} />}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -186,5 +188,35 @@ export function UserAvatar({ user, size }: { user: NonNullable<ReturnType<typeof
         <img src={iconSrc(pic)} alt="" width={size} height={size} onError={() => setFailed(true)} className="absolute inset-0 size-full rounded-full object-cover" />
       )}
     </span>
+  );
+}
+
+const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moneyWhole = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+/**
+ * Total wallet value in dollars next to the account chip (the same total as the wallet view): ETH at
+ * the live price plus every token held. Opens the wallet panel. Phones drop the cents above $1,000.
+ */
+function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () => void }) {
+  const h = useWalletHoldings(wallet);
+  const v = h.totalUsd;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Wallet balance: ETH, USDG and every token you hold"
+      aria-label={v == null ? 'Wallet balance' : `Wallet balance ${money.format(v)}`}
+      className="rounded-xl border border-white/[0.08] bg-surface px-3 py-2 font-mono text-sm font-semibold tabular-nums transition hover:border-white/20"
+    >
+      {v == null ? (
+        <span className="inline-block h-4 w-14 animate-pulse rounded bg-white/[0.08] align-middle" />
+      ) : (
+        <>
+          <span className="sm:hidden">{v >= 1000 ? moneyWhole.format(v) : money.format(v)}</span>
+          <span className="hidden sm:inline">{money.format(v)}</span>
+        </>
+      )}
+    </button>
   );
 }
