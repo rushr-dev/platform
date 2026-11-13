@@ -109,8 +109,6 @@ const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(',
 // Full width from md up; on phones the strip is taller than 3:1 (16:10) so it is drawn ~1.9x wider.
 const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
 
-/** About Robinhood Chain, on Robinhood's own docs site. */
-const ROBINHOOD_CHAIN_URL = 'https://docs.robinhood.com/chain/';
 
 /** The public beta code; the app reads `?invite=` and prefills it at sign-up. */
 const BETA_CODE = 'RUSHRBETA';
@@ -149,19 +147,20 @@ export function Hero() {
           </a>
         </div>
         <BetaSeats className="rise mt-5" />
-        {/* Plain text on purpose: "Robinhood Chain" is always written in full, per Robinhood's brand guidelines. */}
-        <a
-          href={ROBINHOOD_CHAIN_URL}
-          target="_blank"
-          rel="noreferrer"
-          className="group rise mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-muted transition-colors hover:text-ink"
+        {/*
+          Robinhood Chain's official logo, unmodified (public/robinhood-chain-logo-black.svg, from their brand kit at
+          docs.robinhood.com/chain/brand-guidelines): black on white is an approved pair, so it sits on a borderless
+          white patch that blends into the paper, with clear space around it and at least 20px tall.
+        */}
+        <p
+          className="rise mt-4 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted"
           style={{ animationDelay: '0.16s' }}
         >
-          Built on{' '}
-          <span className="text-ink/80 underline decoration-ink/20 underline-offset-4 transition-colors group-hover:decoration-ink/60">
-            Robinhood Chain
+          Built on
+          <span className="inline-flex rounded-md bg-white px-2 py-1.5">
+            <Image src="/robinhood-chain-logo-black.svg" alt="Robinhood Chain" width={152} height={20} className="h-5 w-auto" />
           </span>
-        </a>
+        </p>
       </div>
 
       {/* The forum, edge to edge: people at the temple of the green R, charts in hand. */}

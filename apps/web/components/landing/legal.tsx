@@ -3,7 +3,7 @@ import { Footer, Nav } from './sections';
 import { WRAP } from './ui';
 
 /** When the current drafts were last changed. Update with every wording change. */
-export const LEGAL_UPDATED = '12 November 2026';
+export const LEGAL_UPDATED = '13 November 2026';
 
 export const LEGAL_PAGES = [
   { href: '/terms', label: 'Terms' },

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { LegalPage, Part, Todo } from '@/components/landing/legal';
+import { LegalPage, Part } from '@/components/landing/legal';
 
 export const metadata: Metadata = {
   title: 'Terms',
@@ -117,15 +117,17 @@ export default function Terms() {
         <p>
           Rushr is provided &quot;as is&quot; and &quot;as available&quot;, without warranties of any kind. To the extent the
           law allows, Rushr is not liable for trading losses, lost profits, losses caused by smart contracts, tokens, agents,
-          networks or third-party services, or for any indirect or consequential loss. <Todo>liability cap: to be confirmed after legal review</Todo>
+          networks or third-party services, or for any indirect or consequential loss. In any case, the Rushr team&apos;s total
+          liability to you is limited to the platform fees you paid Rushr in the three months before the claim.
         </p>
       </Part>
 
       <Part title="Changes, ending and law">
         <p>
           We may update these terms; the date at the top shows the latest version, and continuing to use Rushr means you accept
-          the update. You can stop using Rushr at any time, and your wallet stays yours. These terms are governed by the laws
-          of <Todo>governing law and venue: to be confirmed after legal review</Todo>.
+          the update. You can stop using Rushr at any time, and your wallet stays yours. If you have a dispute with us, contact
+          the Rushr team first and we will try in good faith to resolve it. Nothing in these terms takes away rights you have
+          under the law where you live.
         </p>
       </Part>
     </LegalPage>
