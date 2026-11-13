@@ -9,7 +9,6 @@ import { Art } from './art';
 import { Reveal } from './reveal';
 import { SectionHead, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
-import { BetaSeats } from './beta-seats';
 
 const usd = (n: number | null | undefined) =>
   n == null
@@ -146,12 +145,11 @@ export function Hero() {
             Enter the trenches
           </a>
         </div>
-        {/* One quiet row under the buttons: the live seat count (when it answers) and the chain we're built on. */}
+        {/* A quiet line under the buttons: the chain we're built on. (The seat counter, components/landing/beta-seats.tsx, can come back here.) */}
         <div
           className="rise mt-6 flex min-h-8 flex-wrap items-center justify-center gap-x-6 gap-y-3"
           style={{ animationDelay: '0.16s' }}
         >
-          <BetaSeats />
           {/* Robinhood Chain's official logo file (public/robinhood-chain-logo-black.svg, from their brand kit), unmodified. */}
           <p className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
             Built on
