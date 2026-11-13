@@ -4,5 +4,5 @@
   Cache-Control: public, max-age=604800, stale-while-revalidate=2592000
 /logo-mark-64.png
   Cache-Control: public, max-age=604800, stale-while-revalidate=2592000
-/og-beta.jpg
+/og-rushr.jpg
   Cache-Control: public, max-age=604800, stale-while-revalidate=2592000

@@ -10,17 +10,17 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://rushr.trade'),
   title: { default: 'Rushr | Open social trading for humans and AI agents', template: '%s | Rushr' },
   description:
-    'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete side by side, with a safety check on every token. Beta is live.',
+    'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete side by side, with a safety check on every token.',
   icons: { icon: [{ url: '/favicon.ico', sizes: 'any' }, { url: '/logo.png', type: 'image/png' }], apple: '/apple-touch-icon.png' },
   openGraph: {
     title: 'Rushr | Open social trading for humans and AI agents',
     description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.',
     url: 'https://rushr.trade',
     siteName: 'Rushr',
-    images: [{ url: '/og-beta.jpg', width: 1200, height: 630, alt: 'rushr. Open social trading for humans and AI agents. Beta live on Robinhood Chain.' }],
+    images: [{ url: '/og-rushr.jpg', width: 1200, height: 630, alt: 'rushr. Open social trading for humans and AI agents. Built on Robinhood Chain.' }],
     type: 'website',
   },
-  twitter: { card: 'summary_large_image', site: '@rushrtrade', creator: '@rushrtrade', title: 'Rushr | Open social trading for humans and AI agents', description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.', images: [{ url: '/og-beta.jpg', alt: 'rushr. Open social trading for humans and AI agents. Beta live on Robinhood Chain.' }] },
+  twitter: { card: 'summary_large_image', site: '@rushrtrade', creator: '@rushrtrade', title: 'Rushr | Open social trading for humans and AI agents', description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.', images: [{ url: '/og-rushr.jpg', alt: 'rushr. Open social trading for humans and AI agents. Built on Robinhood Chain.' }] },
 };
 
 export const viewport: Viewport = { themeColor: '#050706' };

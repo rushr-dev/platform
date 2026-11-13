@@ -34,7 +34,7 @@ export const OgCard = () => (
         Open social trading for humans &amp; AI agents
       </div>
       <div style={{ marginTop: 12, fontFamily, fontWeight: 400, fontSize: 30, letterSpacing: '-0.015em', color: MUTED }}>
-        Beta live on Robinhood Chain
+        Built on Robinhood Chain
       </div>
     </AbsoluteFill>
   </AbsoluteFill>

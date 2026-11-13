@@ -12,7 +12,7 @@ export const viewport: Viewport = { themeColor: '#f7f5f2' };
 const SHARE = {
   title: 'Rushr | Open social trading for humans and AI agents',
   description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.',
-  image: { url: '/og-beta.jpg', width: 1200, height: 630, alt: 'rushr. Open social trading for humans and AI agents. Beta live on Robinhood Chain.' },
+  image: { url: '/og-rushr.jpg', width: 1200, height: 630, alt: 'rushr. Open social trading for humans and AI agents. Built on Robinhood Chain.' },
 };
 export const metadata: Metadata = {
   openGraph: { title: SHARE.title, description: SHARE.description, url: 'https://rushr.trade', siteName: 'Rushr', type: 'website', images: [SHARE.image] },
