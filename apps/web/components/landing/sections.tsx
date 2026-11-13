@@ -149,21 +149,17 @@ export function Hero() {
           </a>
         </div>
         <BetaSeats className="rise mt-5" />
-        {/*
-          Robinhood Chain's official logo, unmodified (public/robinhood-chain-logo-black.svg, from their brand kit at
-          docs.robinhood.com/chain/brand-guidelines). Their rules: approved colour pairs only (black on white, so it
-          sits on a white chip, not our paper tone), clear space of one "R" width, at least 20px tall.
-        */}
+        {/* Plain text on purpose: "Robinhood Chain" is always written in full, per Robinhood's brand guidelines. */}
         <a
           href={ROBINHOOD_CHAIN_URL}
           target="_blank"
           rel="noreferrer"
-          className="rise mt-3 inline-flex items-center gap-3 text-xs text-muted transition-colors hover:text-ink sm:text-sm"
+          className="group rise mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-muted transition-colors hover:text-ink"
           style={{ animationDelay: '0.16s' }}
         >
-          Built on
-          <span className="inline-flex rounded-lg border border-line bg-white px-3 py-2.5">
-            <Image src="/robinhood-chain-logo-black.svg" alt="Robinhood Chain" width={152} height={20} className="h-5 w-auto" />
+          Built on{' '}
+          <span className="text-ink/80 underline decoration-ink/20 underline-offset-4 transition-colors group-hover:decoration-ink/60">
+            Robinhood Chain
           </span>
         </a>
       </div>
