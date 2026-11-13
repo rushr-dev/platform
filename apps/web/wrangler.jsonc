@@ -12,9 +12,10 @@
   // Served only on the custom domains; workers.dev and preview URLs would expose the account name.
   "routes": [
     { "pattern": "rushr.trade", "custom_domain": true },
-    { "pattern": "www.rushr.trade", "custom_domain": true }
+    { "pattern": "www.rushr.trade", "custom_domain": true },
+    { "pattern": "app.rushr.trade", "custom_domain": true }
   ],
   "workers_dev": false,
   "preview_urls": false,
-  "vars": { "NEXT_PUBLIC_API_URL": "https://api.rushr.trade" }
+  "vars": { "NEXT_PUBLIC_API_URL": "https://api.rushr.trade", "NEXT_PUBLIC_APP_URL": "https://app.rushr.trade" }
 }

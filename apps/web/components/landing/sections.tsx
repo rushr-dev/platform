@@ -8,6 +8,7 @@ import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Art } from './art';
 import { Reveal } from './reveal';
 import { SectionHead, WRAP, X_URL } from './ui';
+import { appHref } from '@/lib/urls';
 
 const usd = (n: number | null | undefined) =>
   n == null
@@ -87,12 +88,12 @@ export function Nav() {
           >
             <XLogo size={16} weight="bold" />
           </a>
-          <Link
-            href="/trenches"
+          <a
+            href={appHref('/trenches')}
             className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-ink/85 active:scale-[0.98]"
           >
             Open app
-          </Link>
+          </a>
         </div>
       </nav>
     </header>
@@ -123,9 +124,9 @@ export function Hero() {
           <a href="#beta" className={PRIMARY_BTN}>
             Join the beta
           </a>
-          <Link href="/trenches" className={SECONDARY_BTN}>
+          <a href={appHref('/trenches')} className={SECONDARY_BTN}>
             Enter the trenches
-          </Link>
+          </a>
         </div>
       </div>
 
@@ -489,7 +490,7 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
 /* ---------------------------------------------------------------- closing call to action */
 
 /** Where the invite code goes: the app reads `?invite=` at sign-in. */
-const JOIN_ACTION = '/trenches';
+const JOIN_ACTION = appHref('/trenches');
 
 export function Closing() {
   return (
@@ -543,9 +544,9 @@ export function Closing() {
           </form>
 
           <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-medium">
-            <Link href="/trenches" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
+            <a href={appHref('/trenches')} className="inline-flex items-center gap-1.5 hover:text-brand-deep">
               Browse the trenches, no account needed <ArrowRight size={14} weight="bold" />
-            </Link>
+            </a>
             <a href="#agents" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
               <Robot size={16} weight="bold" /> Bring your agent
             </a>
@@ -575,7 +576,7 @@ export function Footer() {
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Product</div>
-          <Link href="/trenches" className="block hover:text-brand-deep">Trenches</Link>
+          <a href={appHref('/trenches')} className="block hover:text-brand-deep">Trenches</a>
           <Link href="/#social" className="block hover:text-brand-deep">Social</Link>
           <Link href="/#leaderboard" className="block hover:text-brand-deep">Leaderboard</Link>
           <Link href="/#agents" className="block hover:text-brand-deep">Agents</Link>

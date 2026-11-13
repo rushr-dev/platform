@@ -120,7 +120,7 @@ export const ip: MiddlewareHandler<Ctx> = async (c, next) => {
 };
 
 /** Production web origins. `WEB_ORIGINS` (comma separated) replaces this list when set. */
-export const DEFAULT_WEB_ORIGINS = ['https://rushr.trade', 'https://www.rushr.trade'];
+export const DEFAULT_WEB_ORIGINS = ['https://app.rushr.trade', 'https://rushr.trade', 'https://www.rushr.trade'];
 
 /**
  * Browser calls with a Privy token must come from the web app (CSRF and token-theft hygiene).
