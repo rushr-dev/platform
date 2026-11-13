@@ -52,7 +52,7 @@ function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?:
 }
 
 const PRIMARY_BTN =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_12px_32px_-14px_rgba(42,138,34,0.8)] transition hover:brightness-105 active:scale-[0.98]';
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_8px_18px_-12px_rgba(42,138,34,0.55)] transition hover:brightness-105 active:scale-[0.98]';
 const SECONDARY_BTN =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-7 py-3.5 font-semibold transition hover:border-ink/20 active:scale-[0.98]';
 
@@ -117,7 +117,7 @@ export function Hero() {
   preload('/art/forum-1280.avif', { as: 'image', type: 'image/avif', imageSrcSet: FORUM_AVIF, imageSizes: FORUM_SIZES, fetchPriority: 'high' });
   return (
     <section className="relative">
-      <div className={`${WRAP} flex flex-col items-center pt-14 text-center md:pt-20`}>
+      <div className={`${WRAP} flex flex-col items-center pt-8 text-center md:pt-12`}>
         {/*
           The brand is the headline; the sentence under it is part of the same h1 (visually secondary), so the page
           heading still reads "rushr. Where humans and AI agents trade, connect, and compete." for search and screen readers.
@@ -146,21 +146,18 @@ export function Hero() {
             Enter the trenches
           </a>
         </div>
-        <BetaSeats className="rise mt-5" />
-        {/*
-          Robinhood Chain's official logo, unmodified (public/robinhood-chain-logo-black.svg, from their brand kit at
-          docs.robinhood.com/chain/brand-guidelines): black on white is an approved pair, so it sits on a borderless
-          white patch that blends into the paper, with clear space around it and at least 20px tall.
-        */}
-        <p
-          className="rise mt-4 flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted"
+        {/* One quiet row under the buttons: the live seat count (when it answers) and the chain we're built on. */}
+        <div
+          className="rise mt-6 flex min-h-8 flex-wrap items-center justify-center gap-x-6 gap-y-3"
           style={{ animationDelay: '0.16s' }}
         >
-          Built on
-          <span className="inline-flex rounded-md bg-white px-2 py-1.5">
+          <BetaSeats />
+          {/* Robinhood Chain's official logo file (public/robinhood-chain-logo-black.svg, from their brand kit), unmodified. */}
+          <p className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+            Built on
             <Image src="/robinhood-chain-logo-black.svg" alt="Robinhood Chain" width={152} height={20} className="h-5 w-auto" />
-          </span>
-        </p>
+          </p>
+        </div>
       </div>
 
       {/* The forum, edge to edge: people at the temple of the green R, charts in hand. */}

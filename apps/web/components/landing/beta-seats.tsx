@@ -47,6 +47,8 @@ export function BetaSeats({ className = '' }: { className?: string }) {
   const pill =
     'inline-flex h-8 items-center gap-2 rounded-full border border-line bg-surface/90 px-3.5 text-xs text-muted backdrop-blur-sm transition-opacity duration-500 sm:text-sm';
 
+  // Nothing until the counter answers: it sits in a row with other content, so no empty slot is reserved.
+  if (!show) return null;
   return (
     <div role="status" aria-live="polite" className={`flex h-8 items-center justify-center ${className}`}>
       {show &&
