@@ -21,7 +21,7 @@ import {
   type ProfileMember,
   type Suggestion,
 } from '@/lib/profile';
-import { GeneratedAvatar } from '../avatar';
+import { MemberAvatar } from '../member-avatar';
 import { iconSrc, TokenAvatar } from '../bits';
 import { EditProfile } from './edit-profile';
 import { WalletOverview } from '../wallet-overview';
@@ -165,9 +165,8 @@ function Header({ view, summary, onEdited }: { view: View; summary: PnlSummary |
       </div>
       <div className="px-3 sm:px-4">
         <div className="-mt-12 flex flex-wrap items-end gap-3 sm:-mt-14">
-          <span className="relative block shrink-0 overflow-hidden rounded-full border-4 border-bg bg-bg" style={{ width: 104, height: 104 }}>
-            <GeneratedAvatar address={view.avatarSeed} symbol={view.handle ?? view.name} size={96} />
-            {view.avatarUrl && <img src={iconSrc(view.avatarUrl)} alt="" className="absolute inset-0 size-full object-cover" />}
+          <span className="block shrink-0 rounded-full border-4 border-bg bg-bg">
+            <MemberAvatar member={view.member} wallet={view.wallet} label={view.name} size={96} />
           </span>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2 pb-1">
             <Count label="Following" value={m?.following ?? null} />
@@ -540,10 +539,7 @@ function TopTraders({ exclude }: { exclude: string | null }) {
         <ul className="mt-2 space-y-1">
           {list.data.map((s: Suggestion) => (
             <li key={s.member.id} className="flex items-center gap-2.5 rounded-xl px-1 py-1.5 hover:bg-white/[0.02]">
-              <span className="relative block size-9 shrink-0 overflow-hidden rounded-full">
-                <GeneratedAvatar address={s.member.wallet} symbol={s.member.handle} size={36} />
-                {s.member.avatarUrl && <img src={iconSrc(s.member.avatarUrl)} alt="" className="absolute inset-0 size-full object-cover" />}
-              </span>
+              <MemberAvatar member={s.member} size={36} />
               <Link href={`/u/${s.member.handle}`} className="min-w-0 flex-1">
                 <span className="flex items-center gap-1 truncate text-sm font-medium">
                   {s.member.displayName ?? s.member.handle}

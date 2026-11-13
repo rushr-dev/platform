@@ -2,16 +2,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { erc20Abi, formatUnits, parseUnits, type Address } from 'viem';
+import { formatUnits, parseUnits, type Address } from 'viem';
 import { ArrowDown, CaretDown, Check, Copy, Gear, GasPump, PencilSimple, Plus, ShareNetwork, Wallet, XLogo } from '@phosphor-icons/react';
 import { feeLine, type QuickTrade } from '@rushr/trade';
 import { tradingAvailable } from '@/components/trade/flag';
 import { Status } from '@/components/trade/trade-box';
-import { chainClient, useQuickTrade, type TradeToken } from '@/components/trade/use-quick-trade';
+import { useQuickTrade, type TradeToken } from '@/components/trade/use-quick-trade';
 import { compact, pctSigned, short, usd } from '@/lib/format';
 import type { LivePosition } from '@/lib/position';
 import { useEthUsd } from '@/lib/profile';
 import { updateSettings, useSettings, type TradePreset, type TradeSettings } from '@/lib/settings';
+import { useTokenBalance } from '@/lib/balances';
 import { DepositPanel } from './profile/funding';
 import { Modal } from './profile/modal';
 
@@ -37,24 +38,6 @@ function units(v: bigint, decimals: number, max = 6) {
 }
 const whole = (v: bigint, decimals: number) => Number(formatUnits(v, decimals));
 
-/** ETH and token balance for the wallet, re-read whenever `tick` changes. */
-function useTokenBalance(wallet: Address | undefined, token: Address, tick: number) {
-  const [bal, setBal] = useState<Bal | null>(null);
-  useEffect(() => {
-    if (!wallet) return setBal(null);
-    let gone = false;
-    Promise.all([
-      chainClient().getBalance({ address: wallet }),
-      chainClient().readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [wallet] }),
-    ])
-      .then(([eth, tok]) => !gone && setBal({ eth, token: tok }))
-      .catch(() => undefined);
-    return () => {
-      gone = true;
-    };
-  }, [wallet, token, tick]);
-  return bal;
-}
 
 function Panel({ token, priceUsd, position }: { token: TradeToken; priceUsd: number | null; position: LivePosition }) {
   const q = useQuickTrade(token);

@@ -1,21 +1,28 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   CandlestickSeries,
   ColorType,
   createChart,
   HistogramSeries,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import { API_URL, type Candle } from '@/lib/api';
-import { usd } from '@/lib/format';
+import { price, usd } from '@/lib/format';
 import type { Hydration } from '@/lib/feed/protocol';
+import type { Callout } from '@/lib/callouts';
 import type { OwnTrade } from '@/lib/position';
-import { TradePills, type Pill } from './trade-pills';
+import { iconSrc } from './bits';
+import { avatarSeed, MemberAvatar } from './member-avatar';
+import { CALL_RADIUS, CallMarks, TradePills, type CallMark, type Pill } from './trade-pills';
+
+/** At most this many calls are drawn (the most recent), so the chart stays readable. */
+const MAX_CALL_MARKS = 30;
 import type { Tx } from '@/lib/trades';
 
 /**
@@ -52,6 +59,10 @@ export function PriceChart({
   priceUsd = null,
   hydration,
   marks = null,
+  calls = null,
+  selectedCall = null,
+  onSelectCall,
+  avgBuy = null,
 }: {
   address: string;
   /** 1m candles for the last 24h; null while they load. */
@@ -68,6 +79,12 @@ export function PriceChart({
   hydration?: Hydration;
   /** The signed-in wallet's trades on this token: B/S markers snapped to the interval's candles. */
   marks?: OwnTrade[] | null;
+  /** Members' calls on this token, newest first: avatar markers at each call's time and price. */
+  calls?: Callout[] | null;
+  selectedCall?: string | null;
+  onSelectCall?: (id: string | null) => void;
+  /** The signed-in wallet's average buy price (USD) while it holds the token: a dashed line on the axis. */
+  avgBuy?: number | null;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -82,25 +99,37 @@ export function PriceChart({
   const [fetched, setFetched] = useState<{ iv: Interval; data: Candle[] } | null>(null);
   const [legend, setLegend] = useState<Bar | null>(null);
   const [hovering, setHovering] = useState(false);
+  const [showCalls, setShowCalls] = useState(true);
+  const [showTrades, setShowTrades] = useState(true);
+  // The call pill under the cursor, with its centre in the chart pane (CSS pixels).
+  const [hoverCall, setHoverCall] = useState<{ call: Callout; x: number; y: number; others: number } | null>(null);
+  const callsById = useRef(new Map<string, Callout>());
+  const callMarks = useRef<CallMarks | null>(null);
+  // Calls by candle for hover and click (read inside chart callbacks, so kept in a ref).
+  const callsByBar = useRef(new Map<number, Callout[]>());
+  const onSelectRef = useRef(onSelectCall);
+  onSelectRef.current = onSelectCall;
   const scale = mode === 'mcap' && supply > 0 ? supply : 1;
 
   // Remember the last interval and mode.
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem('rushr.chart') ?? '{}') as { iv?: Interval; mode?: 'mcap' | 'price' };
+      const saved = JSON.parse(localStorage.getItem('rushr.chart') ?? '{}') as { iv?: Interval; mode?: 'mcap' | 'price'; calls?: boolean; trades?: boolean };
       if (saved.iv && saved.iv in INTERVALS) setIv(saved.iv);
       if (saved.mode === 'price' || saved.mode === 'mcap') setMode(saved.mode);
+      if (saved.calls === false) setShowCalls(false);
+      if (saved.trades === false) setShowTrades(false);
     } catch {
       // storage unavailable
     }
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem('rushr.chart', JSON.stringify({ iv: interval, mode }));
+      localStorage.setItem('rushr.chart', JSON.stringify({ iv: interval, mode, calls: showCalls, trades: showTrades }));
     } catch {
       // storage unavailable
     }
-  }, [interval, mode]);
+  }, [interval, mode, showCalls, showTrades]);
 
   useEffect(() => {
     if (!box.current) return;
@@ -120,17 +149,34 @@ export function PriceChart({
     volume.current = c.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' } });
     pills.current = new TradePills((time) => bars.current.get(time));
     candles.current.attachPrimitive(pills.current);
+    callMarks.current = new CallMarks();
+    candles.current.attachPrimitive(callMarks.current);
     c.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     const onMove = (p: MouseEventParams) => {
       const bar = p.time == null ? null : bars.current.get(p.time as number);
       setHovering(!!bar);
       if (bar) setLegend(bar);
+      const hit = p.point ? callMarks.current?.hit(p.point.x, p.point.y) : null;
+      const call = hit ? callsById.current.get(hit.item.id) : undefined;
+      setHoverCall(
+        hit && call ? { call, x: hit.x, y: hit.y, others: Math.max(0, (callsByBar.current.get(hit.item.time)?.length ?? 1) - 1) } : null,
+      );
+    };
+    // Clicking a call pill selects it; clicking elsewhere on a candle with calls selects the newest.
+    const onClick = (p: MouseEventParams) => {
+      const hit = p.point ? callMarks.current?.hit(p.point.x, p.point.y) : null;
+      if (hit) return onSelectRef.current?.(hit.item.id);
+      const here = p.time == null ? undefined : callsByBar.current.get(p.time as number);
+      if (here?.length) onSelectRef.current?.(here[0]!.id);
     };
     c.subscribeCrosshairMove(onMove);
+    c.subscribeClick(onClick);
     chart.current = c;
     return () => {
       c.unsubscribeCrosshairMove(onMove);
+      c.unsubscribeClick(onClick);
       pills.current = null;
+      callMarks.current = null;
       c.remove();
     };
   }, []);
@@ -193,11 +239,19 @@ export function PriceChart({
     appliedTop.current = trades ? (trades[0]?.id ?? '') : null;
     const n = series.length;
     const fitKey = `${interval}:${n > 1 ? 'data' : 'seed'}`;
-    if (fitted.current !== fitKey) {
-      fitted.current = fitKey;
+    const fit = () => {
       // Show the most recent ~120 bars rather than squeezing the whole history in.
       if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
       else chart.current?.timeScale().fitContent();
+    };
+    if (fitted.current !== fitKey) {
+      fitted.current = fitKey;
+      fit();
+    } else {
+      // The series can get shorter after the first fit (e.g. the live feed's window replacing the
+      // 24h history): a kept zoom would then start before the first bar and leave the left empty.
+      const vr = chart.current?.timeScale().getVisibleLogicalRange();
+      if (vr && vr.from < -2) fit();
     }
     // trades intentionally excluded: they are applied incrementally below
   }, [base, scale]);
@@ -256,13 +310,61 @@ export function PriceChart({
     const api = pills.current;
     if (!api) return;
     const out: Pill[] = [];
-    for (const [bucket, g] of ownByBar) {
+    for (const [bucket, g] of showTrades ? ownByBar : []) {
       if (!bars.current.has(bucket)) continue;
       if (g.buys.length) out.push({ time: bucket, side: 'buy', count: g.buys.length, pending: g.buys.some((x) => x.pending) });
       if (g.sells.length) out.push({ time: bucket, side: 'sell', count: g.sells.length, pending: g.sells.some((x) => x.pending) });
     }
     api.set(out);
-  }, [ownByBar, base, scale, lastBar]);
+  }, [ownByBar, base, scale, lastBar, showTrades]);
+
+  // Average buy: a price line on the candle series (it doesn't take part in autoscale), in the
+  // active mode's units (market cap or price), redrawn when the position or the mode changes.
+  useEffect(() => {
+    const series = candles.current;
+    if (!series || avgBuy == null || !(avgBuy > 0)) return;
+    const line = series.createPriceLine({
+      price: avgBuy * scale,
+      color: '#36d42a',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: `Avg buy ${scale > 1 ? `${usd(avgBuy * scale)} MC` : usdPrecise(avgBuy)}`,
+    });
+    return () => series.removePriceLine(line);
+  }, [avgBuy, scale]);
+
+  // Call markers: the most recent calls, at the candle of each call and the price (or market cap)
+  // when it was posted.
+  useEffect(() => {
+    const api = callMarks.current;
+    if (!api) return;
+    const byBar = new Map<number, Callout[]>();
+    const out: CallMark[] = [];
+    if (showCalls && calls?.length) {
+      const step = INTERVALS[interval];
+      for (const c of calls.slice(0, MAX_CALL_MARKS)) {
+        const price = c.atPost.priceUsd;
+        if (price == null) continue;
+        const bucket = Math.floor(new Date(c.createdAt).getTime() / 1000 / step) * step;
+        if (!bars.current.has(bucket)) continue;
+        byBar.set(bucket, [...(byBar.get(bucket) ?? []), c]);
+        out.push({
+          id: c.id,
+          time: bucket,
+          value: price * scale,
+          stance: c.stance,
+          handle: c.author.handle,
+          seed: avatarSeed(c.author),
+          imageSrc: c.author.avatarUrl ? iconSrc(c.author.avatarUrl) : null,
+          selected: c.id === selectedCall,
+        });
+      }
+    }
+    callsByBar.current = byBar;
+    callsById.current = new Map((calls ?? []).map((c) => [c.id, c]));
+    api.set(out);
+  }, [calls, selectedCall, showCalls, interval, base, scale, lastBar]);
 
   const ownHere = legend ? ownByBar.get(legend.time) : undefined;
   const empty = base != null && base.length === 0 && !(trades?.length && FROM_TRADES.has(interval));
@@ -285,7 +387,13 @@ export function PriceChart({
             {i}
           </button>
         ))}
-        <div className="ml-auto flex shrink-0 rounded-lg bg-white/[0.04] p-0.5">
+        <div className="ml-auto flex shrink-0 gap-1 pl-2">
+          {calls != null && (
+            <ChipToggle on={showCalls} onClick={() => setShowCalls(!showCalls)} label="Calls" />
+          )}
+          {marks != null && <ChipToggle on={showTrades} onClick={() => setShowTrades(!showTrades)} label="My trades" short="Mine" />}
+        </div>
+        <div className="ml-1 flex shrink-0 rounded-lg bg-white/[0.04] p-0.5">
           {(['mcap', 'price'] as const).map((m) => (
             <button
               key={m}
@@ -321,6 +429,7 @@ export function PriceChart({
             {ownHere && <OwnLegend g={ownHere} scale={scale} />}
           </div>
         )}
+        {hoverCall && <CallHover hover={hoverCall} scale={scale} />}
         {loading && <div className="absolute inset-x-6 bottom-10 top-10 animate-pulse rounded-xl bg-white/[0.025]" />}
         {hydrating ? (
           <HydratingPill hydration={hydration!} />
@@ -395,11 +504,17 @@ function continuous(data: Candle[]): Bar[] {
   return out;
 }
 
+/**
+ * Axis and legend prices: compact dollars, subscript zeros for tiny prices, never e-notation. The
+ * margins under the lowest candle can reach below zero; those ticks get no label.
+ */
 function usdPrecise(n: number) {
+  if (!Number.isFinite(n) || n < 0) return '';
+  if (n === 0) return '$0';
   if (n >= 1000) return usd(n);
   if (n >= 1) return `$${n.toFixed(2)}`;
-  if (n === 0) return '$0';
-  return `$${n.toPrecision(4)}`;
+  if (n >= 0.01) return `$${n.toFixed(4)}`;
+  return price(n);
 }
 
 const SOURCE_TEXT = { chain: 'from chain', index: 'from the Rushr index', mixed: 'from chain and index' } as const;
@@ -452,5 +567,77 @@ function OwnLegend({ g, scale }: { g: { buys: OwnTrade[]; sells: OwnTrade[] }; s
       You{g.buys.length > 0 && <span className="ml-1 text-brand">B {part(g.buys)}</span>}
       {g.sells.length > 0 && <span className="ml-1 text-risk-high">S {part(g.sells)}</span>}
     </span>
+  );
+}
+
+function ChipToggle({ on, onClick, label, short }: { on: boolean; onClick: () => void; label: string; short?: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={on}
+      className={`shrink-0 rounded-md border px-2 py-0.5 ${on ? 'border-white/15 bg-white/[0.06] text-ink' : 'border-white/[0.06] text-muted line-through decoration-white/30'}`}
+    >
+      {short ? (
+        <>
+          <span className="sm:hidden">{short}</span>
+          <span className="hidden sm:inline">{label}</span>
+        </>
+      ) : (
+        label
+      )}
+    </button>
+  );
+}
+
+const HOVER_W = 288;
+/** Gap between the pill's edge and the card, so the card never covers the pill. */
+const HOVER_GAP = CALL_RADIUS + 8;
+
+/**
+ * Hover card for one call, anchored to its pill: above it, or below when there's no room at the
+ * top of the chart, and kept inside the chart horizontally.
+ */
+function CallHover({ hover, scale }: { hover: { call: Callout; x: number; y: number; others: number }; scale: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const c = hover.call;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const box = el?.parentElement;
+    if (!el || !box) return;
+    const h = el.offsetHeight;
+    const w = box.clientWidth;
+    const left = Math.min(Math.max(4, hover.x - HOVER_W / 2), Math.max(4, w - HOVER_W - 4));
+    const above = hover.y - HOVER_GAP - h;
+    setPos({ left, top: above >= 4 ? above : hover.y + HOVER_GAP });
+  }, [hover.x, hover.y, c.id]);
+  const at = c.atPost.priceUsd != null ? (scale > 1 ? `${usd(c.atPost.priceUsd * scale)} MC` : usdPrecise(c.atPost.priceUsd)) : null;
+  const since = c.result.sincePostPct;
+  const bull = c.stance === 'bullish';
+  return (
+    <div
+      ref={ref}
+      className="pointer-events-none absolute z-20 rounded-xl border border-white/[0.1] bg-surface-2/95 p-3 text-xs shadow-2xl backdrop-blur-sm"
+      style={{ width: HOVER_W, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+      role="tooltip"
+    >
+      <div className="flex items-center gap-2">
+        <MemberAvatar member={c.author} size={22} />
+        <span className="min-w-0 truncate font-medium text-ink">@{c.author.handle}</span>
+        <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bull ? 'bg-go/15 text-go' : 'bg-risk-high/15 text-risk-high'}`}>
+          {bull ? 'Bullish' : 'Bearish'}
+        </span>
+      </div>
+      <p className="mt-2 line-clamp-4 whitespace-pre-line break-words text-[13px] leading-snug text-ink/90">{c.body}</p>
+      {(at || since != null) && (
+        <p className="mt-2 font-mono text-[11px] text-muted">
+          {at && <>called at {at}</>}
+          {at && since != null && ' · '}
+          {since != null && <span className={since >= 0 ? 'text-go' : 'text-risk-high'}>{`${since >= 0 ? '+' : ''}${since.toFixed(0)}% since`}</span>}
+        </p>
+      )}
+      {hover.others > 0 && <p className="mt-1 text-[11px] text-muted">+{hover.others} more call{hover.others > 1 ? 's' : ''} on this candle</p>}
+    </div>
   );
 }

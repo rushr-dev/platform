@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, decodeFunctionData, zeroAddress, type Address, type PublicClient } from 'viem';
-import { resolveConfig, assertSignable, PLACEHOLDER_FEE_RECIPIENT } from '../src/config';
+import { resolveConfig, assertSignable, PLACEHOLDER_FEE_RECIPIENT, STANDARD_FEE_BPS } from '../src/config';
 import { confirmTradeRecord, draftTradeRecord, effectiveFeeBps, referrerAccrual } from '../src/referral';
 import { quotePool } from '../src/quote';
 import { buildSwap } from '../src/build';
@@ -15,7 +15,9 @@ const TRADER: Address = '0x2222222222222222222222222222222222222222';
 const REFERRER: Address = '0x5555555555555555555555555555555555555555';
 const TOKEN: Address = '0x39dbed3a2bd333467115de45665cc57f813c4571';
 const noRpc = {} as PublicClient;
-const cfg = resolveConfig({ feeRecipient: TREASURY }); // defaults: 0.5%, 10% referee discount, 20% referrer share
+// The standard rate (0.5%, 10% referee discount, 20% referrer share); the beta default is tested below.
+const cfg = resolveConfig({ feeRecipient: TREASURY, feeBps: STANDARD_FEE_BPS });
+const beta = resolveConfig({ feeRecipient: TREASURY }); // default during the beta: 0.25%
 
 const v2Pool: V2Pool = { venue: 'uniswap-v2', id: '0x8018ee3ad3000000000000000000000000000000', token: TOKEN, quote: TRADE_ADDRESSES.weth, reserveToken: 10n ** 24n, reserveQuote: 10n ** 20n, venueFeeBps: 30, venueFeeLabel: 'v2' };
 const req = (side: SwapRequest['side'], amountIn: bigint, referred = false): SwapRequest => ({
@@ -27,6 +29,36 @@ const req = (side: SwapRequest['side'], amountIn: bigint, referred = false): Swa
   slippageBps: 100,
   referral: referred ? { referrer: REFERRER, code: 'rush' } : null,
   source: { kind: 'agent', id: 'agent-7' },
+});
+
+describe('beta rate (default config): 0.25%, 0.22% for referees', () => {
+  it('rounds the 10% referral discount in the referee\'s favour: 25 - ceil(2.5) = 22 bps', () => {
+    expect(beta.feeBps).toBe(25);
+    expect(effectiveFeeBps(beta)).toBe(25);
+    expect(effectiveFeeBps(beta, { referrer: REFERRER })).toBe(22);
+  });
+
+  for (const referred of [false, true]) {
+    const bps = referred ? 22n : 25n;
+    it(`buy${referred ? ' (referred)' : ''}: TRANSFER of ${bps} bps of msg.value to the treasury`, async () => {
+      const q = await quotePool(noRpc, v2Pool, req('buy', 10n ** 18n, referred), beta);
+      expect(q.fee).toMatchObject({ feeBps: Number(bps), baseFeeBps: 25, feeAmount: bps * 10n ** 14n, referralDiscountAmount: referred ? 3n * 10n ** 14n : 0n });
+      const built = buildSwap(q, beta);
+      expect(built.tx.value).toBe(10n ** 18n);
+      expect(built.commands[0]!.label).toBe('TRANSFER');
+      const [asset, to, amount] = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], built.commands[0]!.input);
+      expect([asset, to, amount]).toEqual([zeroAddress, TREASURY, bps * 10n ** 14n]);
+      expect(q.swapAmountIn).toBe(10n ** 18n - bps * 10n ** 14n);
+    });
+    it(`sell${referred ? ' (referred)' : ''}: PAY_PORTION of ${bps} bips of the ETH out to the treasury`, async () => {
+      const q = await quotePool(noRpc, v2Pool, req('sell', 10n ** 21n, referred), beta);
+      const pay = buildSwap(q, beta).commands.find((c) => c.label === 'PAY_PORTION')!;
+      const [asset, to, bips] = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], pay.input);
+      expect([asset, to, bips]).toEqual([zeroAddress, TREASURY, bps]);
+      expect(q.fee.feeAmount).toBe((q.grossOut * bps) / 10_000n);
+      expect(q.amountOut).toBe(q.grossOut - q.fee.feeAmount);
+    });
+  }
 });
 
 describe('referral fee model (off-chain accounting)', () => {
@@ -99,7 +131,7 @@ describe('PONS graduation cap (curve 0xdb0f…8050, eth_simulateV1 2026-11-12)',
 
 describe('prepareSwap (server / agent entry point)', () => {
   it('returns an unsigned tx, approvals and a ledger record without touching RPC when pools are given', async () => {
-    const p = await prepareSwap(noRpc, req('sell', 10n ** 21n, true), { config: { feeRecipient: TREASURY }, discover: { pools: [v2Pool] }, now: 1_000 });
+    const p = await prepareSwap(noRpc, req('sell', 10n ** 21n, true), { config: { feeRecipient: TREASURY, feeBps: STANDARD_FEE_BPS }, discover: { pools: [v2Pool] }, now: 1_000 });
     expect(p.tx).toMatchObject({ chainId: 4663, to: TRADE_ADDRESSES.universalRouter, value: 0n });
     expect(p.commands).toEqual(['V2_SWAP_EXACT_IN', 'UNWRAP_WETH', 'PAY_PORTION', 'SWEEP']);
     expect(p.approvals.map((a) => a.kind)).toEqual(['erc20', 'permit2']);

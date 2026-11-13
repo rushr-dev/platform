@@ -5,16 +5,19 @@ import Link from 'next/link';
 import { ArrowSquareOut, Check, Copy, GearSix, SignOut, User, Wallet } from '@phosphor-icons/react';
 import { auth, displayName, useAuth } from '@/lib/auth';
 import { fmtUnits, useBalances } from '@/lib/balances';
+import { useWalletHoldings } from '@/lib/holdings';
 import { useMe } from '@/lib/members';
 import { EXPLORER, short } from '@/lib/format';
-import { GeneratedAvatar } from '../avatar';
-import { iconSrc } from '../bits';
+import { MemberAvatar } from '../member-avatar';
+import { useHint } from '@/lib/session-hint';
 import { WalletPanel } from './wallet-panel';
 
 /** Top-bar sign-in button, and the account menu once signed in. */
 export function AccountMenu() {
-  const { enabled, authenticated, user } = useAuth();
+  const { enabled, ready, authenticated, user } = useAuth();
   const me = useMe();
+  // Signed in last time and the SDK is still loading: show who it was, not a Sign in button.
+  const hint = useHint();
   const [open, setOpen] = useState(false);
   const [walletOpen, setWalletOpen] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -42,6 +45,22 @@ export function AccountMenu() {
     );
   }
 
+  // First paint, before the hint is read: a neutral placeholder rather than a possibly wrong Sign in.
+  if (!ready && hint === undefined) return <span className="block h-9 w-28 animate-pulse rounded-xl bg-white/[0.05]" aria-busy aria-label="Loading account" />;
+
+  if (!ready && hint) {
+    const cached = me?.status === 'registered' ? me.member : null;
+    return (
+      <div className="flex items-center gap-2" aria-busy>
+        {hint.wallet && <BalanceButton wallet={hint.wallet as `0x${string}`} onOpen={() => auth.login()} />}
+        <span className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-surface py-1 pl-1 pr-3 text-sm">
+          <MemberAvatar member={cached} wallet={hint.wallet} label={hint.name ?? ''} size={28} />
+          <span className="hidden max-w-[12ch] truncate font-medium sm:inline">{cached ? `@${cached.handle}` : <NameSkeleton />}</span>
+        </span>
+      </div>
+    );
+  }
+
   if (!authenticated || !user) {
     return (
       <button
@@ -55,9 +74,11 @@ export function AccountMenu() {
     );
   }
 
-  const name = me?.status === 'registered' ? `@${me.member.handle}` : displayName(user);
+  // The handle once the member is known; the sign-in name only for people without a member yet.
+  const name = me?.status === 'registered' ? `@${me.member.handle}` : me ? displayName(user) : <NameSkeleton />;
   return (
-    <div ref={box} className="relative">
+    <div ref={box} className="relative flex items-center gap-2">
+      {user.wallet && <BalanceButton wallet={user.wallet} onOpen={() => setWalletOpen(true)} />}
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -174,17 +195,43 @@ function WalletRow({ label, address, pending = false }: { label: string; address
   );
 }
 
-/** X profile picture when there is one, else the generated avatar from the wallet (or user id). */
+/** The signed-in user's avatar: their member avatar once registered, else seeded by their wallet. */
 export function UserAvatar({ user, size }: { user: NonNullable<ReturnType<typeof useAuth>['user']>; size: number }) {
-  const [failed, setFailed] = useState(false);
-  const seed = user.wallet ?? user.externalWallet ?? `0x${[...user.id].map((c) => c.charCodeAt(0).toString(16)).join('').slice(0, 40).padEnd(40, '0')}`;
-  const pic = user.twitter?.avatar;
+  const me = useMe();
+  const member = me?.status === 'registered' ? me.member : null;
+  return <MemberAvatar member={member} wallet={user.wallet ?? user.externalWallet} label={displayName(user).replace(/^@/, '')} size={size} />;
+}
+
+const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moneyWhole = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+/**
+ * Total wallet value in dollars next to the account chip (the same total as the wallet view): ETH at
+ * the live price plus every token held. Opens the wallet panel. Phones drop the cents above $1,000.
+ */
+function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () => void }) {
+  const h = useWalletHoldings(wallet);
+  const v = h.totalUsd;
   return (
-    <span className="relative block shrink-0 overflow-hidden rounded-full" style={{ width: size, height: size }}>
-      <GeneratedAvatar address={seed} symbol={displayName(user).replace(/^@/, '')} size={size} />
-      {pic && !failed && (
-        <img src={iconSrc(pic)} alt="" width={size} height={size} onError={() => setFailed(true)} className="absolute inset-0 size-full rounded-full object-cover" />
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Wallet balance: ETH, USDG and every token you hold"
+      aria-label={v == null ? 'Wallet balance' : `Wallet balance ${money.format(v)}`}
+      className="rounded-xl border border-white/[0.08] bg-surface px-3 py-2 font-mono text-sm font-semibold tabular-nums transition hover:border-white/20"
+    >
+      {v == null ? (
+        <span className="inline-block h-4 w-14 animate-pulse rounded bg-white/[0.08] align-middle" />
+      ) : (
+        <>
+          <span className="sm:hidden">{v >= 1000 ? moneyWhole.format(v) : money.format(v)}</span>
+          <span className="hidden sm:inline">{money.format(v)}</span>
+        </>
       )}
-    </span>
+    </button>
   );
+}
+
+function NameSkeleton() {
+  return <span className="inline-block h-3.5 w-16 animate-pulse rounded bg-white/[0.08] align-middle" aria-label="Loading" />;
 }

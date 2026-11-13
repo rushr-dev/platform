@@ -1,15 +1,15 @@
 import { encodeFunctionData, maxUint256, type Address, type Hex, type PublicClient } from 'viem';
 import { TRADE_ADDRESSES } from './addresses';
-import { erc20Abi, permit2Abi } from './abis';
+import { erc20Abi, permit2Abi, ponsCurveAbi } from './abis';
 import { buildSwap } from './build';
-import { resolveConfig, type TradeConfig } from './config';
+import { BETA_FEE_BPS, resolveConfig, STANDARD_FEE_BPS, type TradeConfig } from './config';
 import { TradeError, isTradeError, sanitizeRpcMessage } from './errors';
 import { readAllowances } from './permit2';
 import { discoverPools, type DiscoverOptions } from './pools';
 import { quotePool, rankQuotes, withSlippage } from './quote';
 import { draftTradeRecord, type TradeRecord } from './referral';
 import { simulateCalls, type SimCall } from './simulate';
-import type { Pool, Quote, Referral } from './types';
+import type { PonsPool, Pool, Quote, Referral } from './types';
 import type { ApiPoolRow } from './api-pools';
 import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
@@ -58,6 +58,8 @@ export interface TokenRiskInfo {
 
 export type GuardCode =
   | 'CURVE_NOT_GRADUATED'
+  | 'SNIPE_TAX_ACTIVE'
+  | 'CURVE_GRADUATED'
   | 'NO_ROUTE'
   | 'LIQUIDITY_REMOVED'
   | 'NON_ETH_QUOTE'
@@ -152,7 +154,7 @@ function fmtEth(wei: bigint): string {
 
 /** One transaction for the embedded wallet (send in order; wait for each receipt). */
 export interface WalletCall {
-  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'swap';
+  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'swap';
   chainId: number;
   to: Address;
   data: Hex;
@@ -197,6 +199,8 @@ export interface QuickTradeOptions {
   /** Simulate the calls from the trader before returning (eth_simulateV1, no state overrides). Default true. */
   simulate?: boolean;
   now?: () => number;
+  /** Trade PONS tokens that are still on their bonding curve directly on the curve (default true). */
+  curveTrading?: boolean;
   /** SIMULATION/TESTS ONLY: pretend the trader holds these balances (and fund them in the simulation). */
   assume?: { ethWei?: bigint; tokenWei?: bigint };
 }
@@ -229,8 +233,8 @@ export function quickApprovalCalls(token: Address, a: { erc20ToPermit2: bigint; 
 
 
 /**
- * Builds a quick buy/sell for the embedded wallet: best Universal Router route (ETH quote, PONS curves
- * excluded until graduation), automatic or fixed slippage, approval calls for sells (ERC-20 → Permit2,
+ * Builds a quick buy/sell for the embedded wallet: a token still on its PONS curve trades directly on
+ * the curve (prepareCurveTrade); otherwise the best Universal Router route (ETH quote), automatic or fixed slippage, approval calls for sells (ERC-20 → Permit2,
  * Permit2 → Universal Router, 30-day expiry), guardrails, and a pre-send simulation.
  */
 export async function prepareQuickTrade(client: PublicClient, req: QuickTradeRequest, opts: QuickTradeOptions = {}): Promise<QuickTrade> {
@@ -244,9 +248,13 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
 
   // 1. Pools (ETH-quoted), curve detection.
   const pools = opts.discover?.pools ?? (await discoverPools(client, req.token, { ...opts.discover, quoteAsset: 'ETH', trader: req.trader }));
-  // A token still on its PONS curve trades there; any other pool is not its real market (could be a trap).
-  if (pools.some((p) => p.venue === 'pons-curve' && !p.graduated))
-    return empty([{ code: 'CURVE_NOT_GRADUATED', message: 'Tradable after graduation: this token is still on its PONS bonding curve.' }]);
+  // A token still on its PONS curve trades ONLY there; any other pool is not its real market (could be
+  // a trap, e.g. a stray 89%-fee v4 pool seen live on a curve token).
+  const curve = pools.find((p): p is PonsPool => p.venue === 'pons-curve' && !p.graduated);
+  if (curve) {
+    if (opts.curveTrading === false) return empty([{ code: 'CURVE_NOT_GRADUATED', message: 'Tradable after graduation: this token is still on its PONS bonding curve.' }]);
+    return prepareCurveTrade(client, req, curve, opts, settings, cfg, now, empty);
+  }
   const uniswap = pools.filter((p) => p.venue !== 'pons-curve');
   const tradable = uniswap.filter((p) => p.venueFeeBps <= MAX_VENUE_FEE_BPS);
   if (!tradable.length)
@@ -363,8 +371,128 @@ export function isFresh(t: Pick<QuickTrade, 'expiresAt'>, now = Date.now()): boo
 
 /** Fee summary for the trade box. */
 export function feeLine(q: Quote): string {
+  if (q.pool.venue === 'pons-curve' && q.fee.feeBps === 0) return 'Rushr fee: free on curve trades during beta';
   const pct = (q.fee.feeBps / 100).toFixed(2).replace(/0$/, '');
-  return `Rushr fee ${pct}%${q.fee.feeBps < q.fee.baseFeeBps ? ' (referral discount)' : ''}`;
+  const notes = [
+    ...(q.fee.baseFeeBps === BETA_FEE_BPS && BETA_FEE_BPS * 2 === STANDARD_FEE_BPS ? ['beta, half price'] : []),
+    ...(q.fee.feeBps < q.fee.baseFeeBps ? ['referral discount'] : []),
+  ];
+  return `Rushr fee ${pct}%${notes.length ? ` (${notes.join(', ')})` : ''}`;
 }
 
 
+
+// ---- PONS bonding curve, traded directly ---------------------------------------------------------
+
+/**
+ * Rushr's fee on direct curve trades. 0 during the beta: the curve is called straight from the user's
+ * wallet (as pons.fun's own UI does), so there is no contract to take a fee in the same transaction.
+ * The fee returns once RushrPonsRouter (contracts/) is independently reviewed and deployed.
+ */
+export const CURVE_FEE_BPS = 0;
+export const CURVE_GRADUATED_MESSAGE = 'This token just graduated to Uniswap. Try again to trade it there.';
+/** Gas floors for direct curve calls (simulated use + 30% wins when higher). A buy that completes the
+ *  curve also migrates the liquidity to Uniswap v4 in the same transaction (measured ~282k; floor 1M). */
+export const CURVE_GAS = { buy: 250_000n, sell: 250_000n, graduatingBuy: 1_000_000n, approve: 80_000n };
+
+/** Was the curve completed (liquidity moved to Uniswap)? A trade built against it can no longer fill. */
+export async function curveGraduated(client: PublicClient, curve: Address): Promise<boolean> {
+  return client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'graduated' }).catch(() => false);
+}
+
+/**
+ * Quick buy/sell directly on a PONS bonding curve: `curve.buy(quoteIn, minTokensOut, user)` with
+ * `msg.value = quoteIn`, or `curve.sell(tokensIn, minQuoteOut, user)` after `token.approve(curve)`.
+ * Quotes come from the curve's own state (virtual reserves, curve fee, creator tax), so the minimums
+ * are net of all of them. No Rushr fee (CURVE_FEE_BPS). A buy larger than what is left on the curve
+ * is HANDLED by the curve itself: it sells the remaining tokens, graduates in the same transaction and
+ * refunds the unused ETH to the buyer; the quote shows that refund.
+ */
+async function prepareCurveTrade(
+  client: PublicClient,
+  req: QuickTradeRequest,
+  curve: PonsPool,
+  opts: QuickTradeOptions,
+  settings: QuickSettings,
+  cfg: TradeConfig,
+  now: number,
+  empty: (b: Guard[], w?: string[]) => QuickTrade,
+): Promise<QuickTrade> {
+  if (curve.nativeQuote === false) return empty([{ code: 'NON_ETH_QUOTE', message: 'This bonding curve is priced in another token, not ETH; not supported yet.' }]);
+  if (req.side === 'buy' && curve.snipeTaxBps > 0)
+    return empty([{ code: 'SNIPE_TAX_ACTIVE', message: `Launch snipe tax is ${(curve.snipeTaxBps / 100).toFixed(0)}% right now; it drops to 0 within seconds of launch. Try again in a moment.` }]);
+  const curveCfg: TradeConfig = { ...cfg, feeBps: CURVE_FEE_BPS };
+  const facts = Promise.all([
+    opts.assume?.ethWei ?? client.getBalance({ address: req.trader }),
+    req.side === 'sell' ? (opts.assume?.tokenWei ?? client.readContract({ address: req.token, abi: erc20Abi, functionName: 'balanceOf', args: [req.trader] })) : Promise.resolve(0n),
+    client.getGasPrice().catch(() => 100_000_000n),
+    opts.assume ? Promise.resolve(0n) : client.readContract({ address: req.token, abi: erc20Abi, functionName: 'allowance', args: [req.trader, curve.curve] }).catch(() => null),
+  ] as const);
+
+  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: null, source: { kind: 'web' as const } };
+  let quote0: Quote;
+  try {
+    quote0 = await quotePool(client, curve, { ...base, slippageBps: 500 }, curveCfg); // pure math, no RPC
+  } catch (e) {
+    void facts.catch(() => undefined);
+    return empty([{ code: 'NO_ROUTE', message: isTradeError(e) ? e.message : sanitizeRpcMessage(e) }]);
+  }
+  const tax = req.side === 'buy' ? opts.risk?.buyTaxBps : opts.risk?.sellTaxBps;
+  const slippageBps = settings.slippageBps ?? autoSlippageBps({ side: req.side, ageMinutes: opts.risk?.ageMinutes, priceChange5mPct: opts.risk?.priceChange5mPct, priceImpactBps: quote0.priceImpactBps, taxBps: tax });
+  // The router-only warning doesn't apply: this path calls the curve directly.
+  const quote = { ...withSlippage(quote0, slippageBps), warnings: quote0.warnings.filter((w) => !/RushrPonsRouter|completes the bonding curve/.test(w)) };
+  const [ethBal, tokenBal, gasPrice, allowance] = await facts;
+
+  const graduating = quote.expectedRefund > 0n;
+  const approve = (): WalletCall => ({
+    label: 'approve token for the curve',
+    chainId: 4663,
+    to: req.token,
+    value: 0n,
+    gas: CURVE_GAS.approve,
+    data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [curve.curve, maxUint256] }),
+  });
+  const calls: WalletCall[] = [];
+  if (req.side === 'sell' && (allowance ?? 0n) < req.amountIn) calls.push(approve());
+  calls.push(
+    req.side === 'buy'
+      ? { label: 'swap', chainId: 4663, to: curve.curve, value: req.amountIn, gas: graduating ? CURVE_GAS.graduatingBuy : CURVE_GAS.buy, data: encodeFunctionData({ abi: ponsCurveAbi, functionName: 'buy', args: [req.amountIn, quote.minAmountOut, req.trader] }) }
+      : { label: 'swap', chainId: 4663, to: curve.curve, value: 0n, gas: CURVE_GAS.sell, data: encodeFunctionData({ abi: ponsCurveAbi, functionName: 'sell', args: [req.amountIn, quote.minAmountOut, req.trader] }) },
+  );
+  // After a buy, approving the curve now makes the later sell a single transaction.
+  const sellApprovals = req.side === 'buy' && allowance !== null && allowance < PREAPPROVE_MIN ? [approve()] : [];
+
+  const gasCostWei = calls.reduce((s, c) => s + c.gas, 0n) * gasPrice * 2n;
+  const { blockers, warnings } = evaluateGuards({ quote, settings, risk: opts.risk, acknowledgedHighRisk: !!opts.acknowledgedHighRisk, ethBalanceWei: ethBal, tokenBalanceWei: tokenBal, gasCostWei });
+  if (graduating)
+    warnings.push(`This buy completes the bonding curve: you get the remaining tokens, the token moves to Uniswap in the same transaction, and about ${fmtEth(quote.expectedRefund)} ETH of unused input is refunded.`);
+
+  if (!blockers.length && opts.simulate !== false) {
+    const simCalls: SimCall[] = calls.map((c) => ({ from: req.trader, to: c.to, data: c.data, value: c.value, label: c.label }));
+    try {
+      const sim = await simulateCalls(client, simCalls, opts.assume?.ethWei ? { fund: { [req.trader]: opts.assume.ethWei } } : {});
+      const bad = sim.calls.find((c) => !c.ok);
+      // The curve completed since its state was read: this route is gone; the caller re-discovers pools.
+      if (bad && /CurveGraduated/.test(bad.error ?? '')) blockers.push({ code: 'CURVE_GRADUATED', message: CURVE_GRADUATED_MESSAGE });
+      else if (bad) blockers.push({ code: 'SIMULATION_REVERTED', message: `Would fail on-chain (${bad.label}): ${bad.error}` });
+      else sim.calls.forEach((c, i) => (calls[i]!.gas = bigMax(calls[i]!.gas, (c.gasUsed * 13n) / 10n + 20_000n)));
+    } catch (e) {
+      warnings.push(`Pre-send simulation unavailable: ${isTradeError(e) ? e.message : sanitizeRpcMessage(e)}`);
+    }
+  }
+
+  return {
+    ok: blockers.length === 0,
+    blockers,
+    warnings,
+    quote,
+    alternatives: [],
+    calls,
+    sellApprovals,
+    slippageBps,
+    gasCostWei,
+    quotedAt: now,
+    expiresAt: now + settings.quoteMaxAgeMs,
+    record: draftTradeRecord(quote, curveCfg, curve.curve, Math.floor(now / 1000)),
+  };
+}

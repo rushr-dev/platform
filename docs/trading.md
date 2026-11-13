@@ -8,7 +8,8 @@ Status 2026-11-12: research done, decisions recorded (below), scaffold in `packa
 - **Signing:** client-side, in the user's own **Privy embedded wallet**, with its UI off. Since the fast path (below) the wallet only signs (`signTransaction`) and the page broadcasts; Rushr's servers hold **no signing key for humans**.
 - **Route:** through **Uniswap's audited Universal Router**, with our fee in the same tx: `TRANSFER` on buys, `PAY_PORTION` + `SWEEP` on sells, recipient = the user.
 - **Contracts:** no RushrRouter or RushrPonsRouter. Those stay for agents and offline one-click, after the audit.
-- **Fee and treasury:** 0.5% (0.45% referred), paid to the treasury `0x447a…5E40`.
+- **PONS bonding-curve tokens** (since 2026-11-13): traded **directly on the curve** from the user's wallet, as pons.fun's own UI does, with **no Rushr fee during the beta** (see "PONS curve trades" below).
+- **Fee and treasury:** **0.25% during the beta** (half price; 0.22% referred), 0.5% (0.45% referred) after it, paid to the treasury `0x447a…5E40`. PONS curve trades are free during the beta.
 
 ### Pieces
 | Where | What |
@@ -56,6 +57,162 @@ What changed:
 
 Not verified yet: a real signed trade on this path (real trades are only made by maintainers, by hand). Unit tests cover the pipeline (cached nonce/fees, sync and polling broadcast, nonce error, mismatched or bare signatures never broadcast); the production build was checked as a signed-out visitor.
 
+### PONS curve trades (direct, no Rushr fee during the beta)
+
+Tokens still on their PONS bonding curve trade on the curve itself, from the user's embedded wallet, with the same prebuild, sign-only and sync-broadcast fast path as Uniswap trades (`prepareCurveTrade` in `packages/trade/src/quick.ts`).
+
+- **Calls:**
+  - Buy: `curve.buy(quoteIn, minTokensOut, user)` with `msg.value = quoteIn`.
+  - Sell: `token.approve(curve, max)` if needed, then `curve.sell(tokensIn, minQuoteOut, user)`.
+  - After a confirmed buy, the curve approval is sent in the background, so the first sell is one transaction.
+- **Quote:** pure math on the curve's state (virtual reserves, `feeBps`, `creatorTaxBps`), read with the pools (no extra RPC at quote time).
+  - "Min received" is net of the curve fee and the creator tax.
+  - The quote line reads "Rushr fee: free on curve trades during beta"; the venue line still lists the curve fee and creator tax.
+- **Fee:** `CURVE_FEE_BPS = 0`. Nothing in a direct curve call can collect a fee. It returns when `RushrPonsRouter` is independently reviewed and deployed, or through an EIP-7702 batch (see "Fees on curve trades without our own router" below).
+  - Trade records carry `venue: 'pons-curve'`, `feeBps: 0`, `feeAmount: 0`, `router` = the curve, so PnL and positions work as for any trade.
+  - The indexer's trade ledger flags such rows `no_fee`, which is expected for curve trades during the beta.
+- **Routing safety:** a token with a live (ungraduated) curve routes only to the curve, never to another pool for the same token.
+- **Edge cases:**
+  - **A buy larger than what is left on the curve** is handled, not capped by us. The curve sells its remaining tokens, graduates (moves the liquidity to Uniswap v4) in the same transaction and refunds the unused ETH to the buyer.
+    - The quote shows the remaining tokens and the refund.
+    - Gas floor: 1M (measured ~282k).
+    - The 30% price-impact guard still applies.
+  - **The curve graduates between quote and send:** `curve.buy/sell` reverts with `CurveGraduated()`.
+    - During the background refresh, the simulation catches it, the pools are re-read, and the trade re-routes to the new Uniswap pool.
+    - If a sent trade reverts for this reason, the user sees "This token just graduated to Uniswap. Try again to trade it there.", and the next attempt routes to Uniswap.
+  - **`graduated()`** is read with the pools. `curveGraduated(client, curve)` re-checks it after a failure.
+  - **Launch snipe tax** (99% for the first seconds after launch): buys are blocked with `SNIPE_TAX_ACTIVE` until it reaches 0.
+  - **Curves priced in another token** (`isNativeQuote() == false`, seen live): blocked with `NON_ETH_QUOTE`.
+  - `curveTrading: false` in the options restores the old "tradable after graduation" behaviour.
+- **Verified (read-only, nothing signed):** `scripts/curve-sim.ts` (and `test/live/curve.live.test.ts`) run a quick buy of 0.01 ETH, then approve + sell of exactly the tokens received, in one `eth_simulateV1` block from a test address with a simulated ETH balance. Quotes equal the curve's own return values to the wei:
+
+  | Token | Buy 0.01 ETH: quoted = curve result | Sell all: quoted = curve result | Gas buy / sell |
+  | --- | --- | --- | --- |
+  | MORPH | 662,269.754023080156597066 | 0.009216000000000001 ETH | 100,399 / 78,399 |
+  | SENTERA | 1,971,696.256188428434758272 | 0.009428410000000001 ETH | 100,411 / 78,423 |
+  | DUGE | 5,855,857.489319894144385642 | 0.009801 ETH | 97,611 / 75,623 |
+  | AEON | 1,096,871.426508708713963139 | 0.009409000000000001 ETH | 100,399 / 78,411 |
+
+  A graduating buy of 1.5 ETH on MORPH returned the remaining 55,053,798.69 tokens and refunded 0.510457 ETH; the quote's refund estimate was 195 wei high.
+
+### Fees on curve trades without our own router: EIP-7702 batching (researched 2026-11-13)
+
+**Question:** can the user's embedded wallet send [fee to the treasury + `curve.buy`] (and [`curve.sell` + fee]) as **one atomic transaction**, without deploying `RushrPonsRouter`?
+
+PONS curves are standalone contracts and never touch the Uniswap v4 PoolManager, so the Universal Router can't route them or take its fee. The only way to make two calls atomic from an EOA without a router of our own is to give the EOA code: EIP-7702 delegation to a batch-executor contract.
+
+**Short answer:** yes, technically. Everything needed is on chain 4663 today, and a read-only simulation passes on live curves. Recommendation: **go-later**, behind a flag. The blockers are product and security sign-off on delegating every user wallet, and one signed-in test of Privy signing a type-4 transaction. No code is missing on chain.
+
+#### 1. Chain support (verified read-only)
+
+- **Node and ArbOS:** the RPC reports `nitro/v3.12.4`, and `ArbSys.arbOSVersion()` (precompile `0x64`) returns 116. The precompile adds 55, so that's ArbOS 61. EIP-7702 arrived in ArbOS 40 "Callisto".
+- **Type-4 accepted:** `eth_estimateGas` with `type: 0x4` and an `authorizationList` returns 46,782 gas, against 21,565 for the same call without one. The extra ≈25k is the EIP-7702 per-authorization cost.
+  - The authorization's signature was a dummy, so the node skips it, but the transaction type and field are parsed and priced.
+- **Delegation honoured:** in `eth_simulateV1`, a test address with the delegation designator `0xef0100 ‖ delegate` as a code override runs the delegate's code.
+  - **Control:** the same calldata sent to an address without the designator executes nothing (23,892 gas, plain value-less call).
+- **Delegates already deployed** at their canonical addresses. "Same bytecode as Ethereum" was checked by comparing `eth_getCode` hashes.
+
+  | Contract | Address | Same bytecode as Ethereum |
+  | --- | --- | --- |
+  | eth-infinitism `Simple7702Account` (v0.8) | `0x4Cd241E8d1510e30b2076397afc7508Ae59C66c9` | yes |
+  | ERC-4337 EntryPoint v0.8 | `0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108` | n/a |
+  | Uniswap Calibur | `0x000000009B1D0aF20D8C6d0A44e162d11F9b8f00` | yes |
+  | Coinbase `EIP7702Proxy` | `0x7702cb554e6bFb442cb743A7dF23154544a7176C` | yes |
+  | MetaMask `EIP7702StatelessDeleGator`, ZeroDev Kernel v3.3 | `0x63c0…E32B`, `0xd6CE…5b28` | same size, different hash (chain-specific immutables) |
+  | Multicall3, CreateX, the deterministic deployers (Arachnid, Safe singleton factory) | canonical addresses | present |
+
+  Anything else can be deployed deterministically through CreateX or the Arachnid factory.
+
+#### 2. Privy embedded wallets (checked in `@privy-io/react-auth` 3.51)
+
+- **Authorizations:** `useSign7702Authorization().signAuthorization({ contractAddress, chainId, nonce? })` signs an EIP-7702 authorization with the embedded wallet. The docs place no chain restriction; `chainId` is any id (use 4663, never 0, which would be valid on every chain).
+- **Transactions:** Privy's transaction request type accepts `type: 4` and an `authorizationList`, and its viem account wrapper passes the list through. So the existing sign-only path (`useSignTransaction`, then our own `eth_sendRawTransactionSync`) should carry it.
+  - **Not verified with a real signature yet:** this needs one signed-in test on a dev wallet.
+- **Batching:** there is no EIP-5792 `wallet_sendCalls` for embedded wallets, and we don't need one. After delegation the wallet calls **itself** (`to = user`, `data = executeBatch([...])`).
+  - `Simple7702Account` only accepts `execute`/`executeBatch` from the account itself or the EntryPoint, so no bundler, paymaster or ERC-4337 infrastructure is involved. The user still pays gas in ETH, as today.
+- **Delegate choice:** `Simple7702Account`.
+  - It's the smallest (3.6 KB): ECDSA owner = the EOA's own key, `execute`, `executeBatch`, ERC-1271 and token receivers, with no modules, extra keys or upgrade logic.
+  - It ships in the ERC-4337 v0.8 release; check that release's audit report covers it before relying on it.
+  - Calibur (Uniswap) is the alternative if we later want scoped session keys for in-app agents (`docs/AGENTS.md` §4, option B), but it is a larger surface.
+- **External wallets** (MetaMask and similar) only delegate to their own contracts and refuse arbitrary authorizations from dapps. They need the fallback below.
+
+#### 3. The fee inside the batch
+
+Simulated with `packages/trade/scripts/batch7702-sim.ts` (read-only `eth_simulateV1`, simulated balance, stand-in treasury address). The script is a 0.01 ETH buy, then a sell of everything received. It was run on four live curves, and every fee arrived exactly:
+
+| Batch | Calls | Gas (direct call today) |
+| --- | --- | --- |
+| Buy | `transfer(fee = 0.5% of the ETH spent)`, `curve.buy(spent − fee, minOut, user)` | 120,214–123,014 (≈ 100k) |
+| Sell | `approve` (first sell only), `curve.sell(tokens, minOut, user)`, `transfer(fee)` | 116,698–119,498 (≈ 78k + approve) |
+
+- **Buys are exact:** the fee is taken on the input, which is known when signing. For a buy that completes the curve, take the fee on the ETH the curve uses (the quote already knows it), not on the refunded part.
+- **Sells:** a plain batch fixes every amount at signing time, so the fee is 0.5% of the **quoted** proceeds. Curve trades are deterministic, so the fill equals the quote unless someone trades first in the ~100 ms before inclusion.
+  - Worst case: the fill lands on the slippage floor and the fee is 0.5% / (1 − slippage), e.g. 0.526% at 5% slippage.
+  - Showing "min received" net of the fee keeps the user's guarantee honest.
+- **Exact proportional sell fees would need a helper:** for example, a ~20-line splitter contract set as the sell's recipient, forwarding 99.5% to the user and 0.5% to the treasury. It is new code that would need review, so it's not recommended for v1.
+- **If any call reverts, the whole batch reverts:** the user never pays a fee for a failed trade.
+
+#### 4. Security of delegating the embedded wallet
+
+- **Persistent:** the delegation stays on the account until the user signs another authorization. Every later transaction is an ordinary type-2 call to self.
+- **Revocable:** an authorization to `address(0)` clears the code (one transaction, ~25k gas).
+- **The key keeps full control:** delegation adds code but removes nothing.
+  - With `Simple7702Account`, nobody but the key can make the account act: direct calls must come from the account itself, and EntryPoint calls must carry a user operation signed by the key.
+- **What changes in the risk profile:**
+  1. A bug in the delegate would affect every delegated wallet at once. That's why the smallest, most-reviewed delegate is the right choice.
+  2. The account now has code. Contracts that treat "has code" as "is a contract" (`extcodesize`, some anti-bot checks, `safeTransfer` receiver hooks) behave differently.
+     - The delegate implements the token receivers, and the PONS curves accepted batched calls in the simulation.
+     - Any other venue we route to would need the same check.
+  3. Re-delegating later to a different implementation can collide with storage the old one wrote. `Simple7702Account` keeps no storage, which limits this.
+  4. A malicious site that obtained an authorization signature could take the account. Embedded wallets sign only what our app requests, so this risk sits in our own code and Privy's UI.
+     - The authorization must only ever name the pinned delegate address. `verifySigned` checks it before broadcast, as it does every other field today.
+- **Compared with the alternatives:**
+
+  | | 7702 batch | Fee as a second transaction | `RushrPonsRouter` |
+  | --- | --- | --- | --- |
+  | Atomic | yes | no: trade first, fee after it confirms | yes |
+  | Fee on a failed trade | never | never (sent only after success) | never |
+  | Exact sell fee | 0.5% of the quote | exact (read from the receipt) | exact |
+  | Revenue leak | none | the user closes the tab, or the fee tx fails | none |
+  | New audited code | none of ours (delegate already deployed) | none | the router, plus a sell approval to it |
+  | Changes the user's wallet | yes (persistent delegation, revocable) | no | no |
+  | Works with external wallets | no | yes | yes |
+  | Extra latency | none after the first trade | +1 signature (≈ 380 ms; can be signed together with the trade) | none |
+
+  No client-side fee can be forced: anyone can call the curve directly. That's equally true of the Universal Router fee, which also lives in calldata our app builds. Atomicity protects users (no fee without a trade) and revenue (no lost second transactions). It does not make the fee mandatory.
+
+#### 5. Latency
+
+- **The fast path is kept:** after delegation each trade is one type-2 transaction to the user's own address with `executeBatch` calldata. It uses the same prebuild, cached nonce and fees, sign-only and `eth_sendRawTransactionSync`, at about +23k gas.
+- **The first delegated trade** carries the `authorizationList` (type 4).
+  - The authorization's nonce is the transaction's nonce + 1, because the sender is the authority.
+  - Alternatively, delegation can be a separate one-time "enable fee batching" transaction on the first curve trade or at sign-up.
+  - Either way it's one extra Privy signature, once per wallet.
+
+#### Recommendation and plan
+
+**Go-later.** Turn it on once the beta's fee-free period ends and these are signed off:
+
+1. Delegating every embedded wallet persistently is accepted for the product, with copy explaining it and how to revoke it.
+2. One signed-in test on a dev wallet shows Privy's `useSignTransaction` signs a type-4 transaction, and the result is broadcast on 4663.
+3. The `Simple7702Account` v0.8 audit coverage is confirmed.
+
+Until then, a **second transaction** is the simpler interim option if fees on curves are wanted earlier. The fee is sent after the trade confirms and is exact, but not atomic.
+
+Implementation, about 3 days:
+- **`packages/trade` (1–1.5 days):**
+  - `batch.ts`: `executeBatch` calldata, a delegation check (`getCode == 0xef0100 ‖ SIMPLE_7702`) and building the authorization request.
+  - `prepareCurveTrade` gets an optional `feeBps` with the fee calls described above; quotes show the fee; `minOut` is net of the fee.
+  - `TxPipeline` allows `to = self` and type 4, and `verifySigned` pins the authorization's delegate and chain id.
+  - Unit tests, plus a live `eth_simulateV1` test from `batch7702-sim.ts`.
+- **Web (1 day):**
+  - `auth.signAuthorization` through `useSign7702Authorization`, in `lib/auth.ts`, plus the first-trade or enable flow and its copy.
+  - A fallback for external wallets: the second transaction, or fee-free.
+- **Ledger (0.5 day):**
+  - A plain ETH transfer emits no event. The indexer must read the fee from the call trace, or from `SafeReceived` once the treasury is a Safe (the treasury is currently a single EOA, moving to a Safe), or from the client's trade record.
+  - Curve rows then carry `feeBps: 50` and drop the `no_fee` flag.
+- **Signed-in test on a dev wallet (0.5 day):** a few small real trades.
+
 ### Uniswap v4 "every quote fails" (reported 2026-11-12)
 
 The v4 quote engine was not broken. Quoter, StateView and the PoolManager they read all match the chain, and pool keys from the API's pool rows hash to the pools that actually trade. Reproduced on 30 high-volume v4 tokens with `scripts/pool-survey.ts`:
@@ -88,7 +245,7 @@ The v4 quote engine was not broken. Quoter, StateView and the PoolManager they r
   - The buy→sell honeypot probe blocks tokens that can't be sold back.
   - Tax above 5% shows a warning, and medium risk shows its verdict.
 - **Routing safety:**
-  - **PONS tokens still on their curve are "tradable after graduation", even when other pools exist.** A curve token was found live with a stray **89%-fee** v4 pool.
+  - **A PONS token still on its curve trades only on the curve, even when other pools exist.** A curve token was found live with a stray **89%-fee** v4 pool.
   - Pools with a venue fee above 10% are never routed; above 3% shows a warning.
   - Price impact above 30% is a hard block.
 - **Balances:** ETH for amount plus gas (gas limit × 2× the gas price, matching the fee cap); token balance for sells.
@@ -111,7 +268,7 @@ The v4 quote engine was not broken. Quoter, StateView and the PoolManager they r
 - `quick-sim.ts` on live state (public RPC, nothing signed):
   - **PONS:** quick buy, then quick sell with approvals, in one simulated block. Tokens received equal the quote to the wei, the treasury gets exactly 0.00005 ETH, and the sell pays ETH to the user.
   - **lift.fun token:** buy passes. Selling after a buy was proven earlier by the probe.
-  - **PONS curve token:** blocked with "tradable after graduation".
+  - **PONS curve tokens:** see "PONS curve trades" for the direct-curve checks.
 - 78 unit tests.
 - Production build with the flag on, on the app's single Privy setup:
   - the trade box quotes for signed-out visitors (0.01 ETH ≈ 136 PONS, fee 0.00005 ETH) with the settings presets and cap
@@ -160,22 +317,61 @@ The web client posts as soon as the swap is broadcast and ignores errors until t
 7. **First real trade (a maintainer, by hand):**
    - log in on a build with the flag on and fund the embedded wallet with a little ETH on Robinhood Chain
    - buy 0.001–0.005 ETH of a liquid token (e.g. PONS) from the token page
-   - check the explorer link; the treasury receives 0.5%
+   - check the explorer link; the treasury receives 0.25% during the beta (0.5% after), and run `scripts/fee-audit.ts --tx <hash>`
    - sell 100%: the first sell sends two approval transactions, then the swap
+
+### Fee audit (`scripts/fee-audit.ts`)
+
+A read-only check that the treasury actually received the fee. For each trade it compares what the treasury got in that transaction with the expected rate on the trade's notional. The notional is the input on buys and the gross output (net + fee) on sells, the same definition as the indexer's ledger.
+
+```bash
+# specific transactions
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --tx 0x… 0x…
+# the last N Universal Router trades in the trade ledger, for everyone or one wallet
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --last 20
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --wallet 0x… --last 10
+```
+
+- **Environment:**
+  - `RPC_URL`: an RPC with `debug_traceTransaction`. ETH fees are internal transfers, visible only in a call trace; the public RPC has none, so ETH trades would be flagged `no_trace`.
+  - `DATABASE_URL`: the indexer database, needed for `--last` and `--wallet`. It's read in a read-only transaction.
+  - Either can come from `--env <file>` with `KEY=VALUE` lines, and nothing is printed.
+- **Options:** `--bps <n>` sets the expected base rate (default: the config's), and `--json` prints raw results.
+- **Exit code:** 1 when any trade is flagged.
+- **Flags:**
+  - Shared with the ledger: `no_fee`, `fee_bps_<x>_expected_<y>` (more than 1 bp off).
+  - Audit-only:
+    - `fee_wrong_asset_<asset>`: e.g. WETH instead of ETH.
+    - `calldata_bps_<x>_expected_<y>`: the fee command itself encoded the wrong rate.
+    - `no_fee_command`: no TRANSFER, PAY_PORTION or PERMIT2_TRANSFER_FROM to the treasury.
+    - `not_universal_router`, `reverted`, `no_trace`.
+    - `ledger_fee_differs`: the ledger's confirmed `fee_amount` disagrees with the chain.
+- **Referred or not:** taken from the ledger's `referrer` when the row comes from the ledger; otherwise inferred from the calldata's rate.
+- **The logic** lives in `auditFee` (`src/fee-audit.ts`) and is unit-tested.
+- **Live simulation** (`scripts/fee-sim.ts`, `test/live/fee.live.test.ts`): a 0.01 ETH buy, then a sell of the minimum tokens received, in one `eth_simulateV1` block. On 2026-11-13 every audit passed at 25 bps:
+
+  | Token (v4) | Buy: treasury got | Sell: treasury got (quoted) |
+  | --- | --- | --- |
+  | PONS | 0.000025 ETH | 0.000023553962931078 (0.000023553962931078) |
+  | BULL | 0.000025 ETH | 0.000023221152043989 (0.000023155008901038) |
+  | PLOG | 0.000025 ETH | 0.000022206928081359 (0.000022122054047407) |
+  | ZOLVA | 0.000025 ETH | 0.000021925001698567 (0.00002186378680411) |
+
+  Sells pay slightly more than quoted because they run right after the simulated buy, at a higher price. The fee is 25 bps of the actual output (`PAY_PORTION`).
 
 ## Decisions (2026-11-12)
 
 | Question | Decision |
 | --- | --- |
-| **Rate** | **0.5%** of the trade, buys and sells: fomo parity, undercuts Axiom (~1%). It's config (`feeBps: 50`), not a constant. |
+| **Rate** | **0.5%** of the trade, buys and sells (`STANDARD_FEE_BPS`): fomo parity, undercuts Axiom (~1%). **Beta (decided 2026-11-13): 0.25%, half price** (`BETA_FEE_BPS`, the default `feeBps`), so real trades exercise the fee path. Returning to 0.5% is one line in `config.ts`. Curve trades stay free during the beta. |
 | **Which side** | Always the **quote side** (ETH, WETH or USDG): taken from the input on buys, from the output on sells. The treasury only receives ETH or USDG, and a token's own tax can't shrink or block the fee. |
 | **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and other hooked v4 pools) | **Primary path.** Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, `PAY_PORTION(ETH, treasury, bps)`, `SWEEP(ETH, user, minOut)` (the pattern Uniswap's interface fee used). |
-| **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then, curve routes are quoted but not buildable. |
+| **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then (decided 2026-11-13), curve tokens trade **directly on the curve with no Rushr fee**. |
 | **Treasury** | The treasury (currently a single **EOA**, moving to a Safe): `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` (decided 2026-11-12; EIP-55 checksum valid; no code and nonce 0 on 4663). It's `RUSHR_TREASURY`, the default `feeRecipient` in `packages/trade`. The routers can move it to a Safe later **only through the guardian's timelock** (queue, wait `delay`, activate, events; no owner, no instant change). **Known risk:** see below. |
-| **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee** (0.5% → **0.45%**, charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
+| **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee**, rounded in their favour (0.5% → **0.45%**; beta 0.25% → **0.22%**, since 25 − ⌈2.5⌉ = 22; charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
 | **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's factories (verified in its bytecode). Phase 2. |
 | **Agents** | Agents trade through the same code: `packages/trade` is pure functions that return unsigned transactions (`prepareSwap`), usable from a server or agent runtime, not only from `/swap`. |
-| **UI** | The fee is a line in every quote ("Rushr fee 0.5% · 0.00005 ETH"; referred: "0.45%, 10% referral discount"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
+| **UI** | The fee is a line in every quote (beta: "Rushr fee 0.25% (beta, half price)"; referred: "Rushr fee 0.22% (beta, half price, referral discount)"; curve trades: "Rushr fee: free on curve trades during beta"; after the beta "Rushr fee 0.5%"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
 
 Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x204faca1…0498` (the default). The core registry's `0x8876…0904` is also a Universal Router with the same factories embedded, and it's config.
 
@@ -192,7 +388,7 @@ Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x2
 
 How it works:
 - **At quote time:** a `SwapRequest` may carry `referral: { referrer, code? }` (resolved server-side from the trader's signup) and `source: { kind: 'web' | 'agent' | 'api', id? }`.
-- **Fee rate:** `effectiveFeeBps` = base − ⌈base × 10%⌉ = **45 bps** when referred. The Universal Router plan uses that rate (`TRANSFER` amount, `PAY_PORTION` bips). RushrPonsRouter has an immutable `referralFeeBps` and a `referred` flag.
+- **Fee rate:** `effectiveFeeBps` = base − ⌈base × 10%⌉ = **22 bps** when referred during the beta (45 at the standard rate). The Universal Router plan uses that rate (`TRANSFER` amount, `PAY_PORTION` bips). RushrPonsRouter has an immutable `referralFeeBps` and a `referred` flag.
 - **Recording:** `draftTradeRecord(quote)` → store at submit. `confirmTradeRecord(record, receipt)` → status `confirmed`, with `feeAmount` = **fee actually received by the treasury** (from the receipt's transfers, same analysis as `analyzeSwapTransfers`) and `referrerAccrual` = 20% of that.
 - **Payouts (later):** sum confirmed `referrer_accrual` by referrer and fee token, minus what has been paid.
 
@@ -319,7 +515,7 @@ Status 2026-11-12. Nothing is signed or broadcast anywhere: verification is unit
 | Module | What it does |
 | --- | --- |
 | `addresses.ts`, `chain.ts` | Trading contracts for 4663 from Uniswap's official list, the PONS factory, and a viem chain with multicall3 |
-| `config.ts` | `feeBps` (default **50**, capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (default `RUSHR_TREASURY`, the treasury: currently a single EOA, moving to a Safe), `universalRouter`, `ponsRouter` (null until deployed). `assertSignable` refuses a placeholder treasury. One-click trading is gated separately by `assertOneClickAllowed` (RushrRouter deployed **and** audited), and the web UI by `NEXT_PUBLIC_SWAP_ENABLED` |
+| `config.ts` | `feeBps` (default `BETA_FEE_BPS` = **25** during the beta, `STANDARD_FEE_BPS` = 50 after; capped at 300), `referralDiscountBps` (1000 = 10% of the fee), `referrerShareBps` (2000), `feeRecipient` (default `RUSHR_TREASURY`, the treasury: currently a single EOA, moving to a Safe), `universalRouter`, `ponsRouter` (null until deployed). `assertSignable` refuses a placeholder treasury. One-click trading is gated separately by `assertOneClickAllowed` (RushrRouter deployed **and** audited), and the web UI by `NEXT_PUBLIC_SWAP_ENABLED` |
 | `referral.ts` | Effective rate, referrer accrual and discount; `TradeRecord` draft and confirm for the off-chain ledger |
 | `agent.ts` | `prepareSwap(client, request, opts)` for servers and agents: best route → unsigned tx, approvals, command list, ledger record, optional simulation. `toJsonSafe` for tool and HTTP output. No browser globals, no keys |
 | `fees.ts` | Fee math: fee off the input on buys, off the gross output on sells (identical to `PAY_PORTION`), slippage minimums, tax-adjusted slippage |
@@ -340,7 +536,7 @@ Fee command plans (Universal Router):
 | Buy with USDG | `PERMIT2_TRANSFER_FROM(USDG→treasury, fee)` · `PERMIT2_TRANSFER_FROM(USDG→router)` (v4) or swap with `payerIsUser` (v2/v3) |
 | Sell to ETH/WETH | swap into router · (`UNWRAP_WETH`) · `PAY_PORTION(ETH→treasury, feeBps)` · `SWEEP(ETH→user, minNet)` |
 | Sell to USDG | swap into router · `PAY_PORTION(USDG)` · `SWEEP(USDG, minNet)` |
-| PONS curve | `RushrPonsRouter.buy/sell` (not deployed) |
+| PONS curve | direct `curve.buy/sell` from the user's wallet, no Rushr fee (beta); `RushrPonsRouter.buy/sell` once reviewed and deployed |
 
 Verified live (`pnpm --filter @rushr/trade simulate`, about 20–40 RPC calls per token):
 - PONS buy and sell through Uniswap v3, v2 and v4 (ETH) and v4 (USDG), on both Universal Routers. Tokens received equal the quote to the wei, and the treasury receives exactly 0.5% (also verified at 1% earlier, and 0.45% for a referred buy on the /swap page).

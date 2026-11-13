@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseEther, type Address, type Hex, type PublicClient } from 'viem';
 import {
   autoSlippageBps,
+  CURVE_GRADUATED_MESSAGE,
+  curveGraduated,
   discoverPools,
   explorerTxUrl,
   fetchApiPools,
@@ -289,7 +291,7 @@ export function useQuickTrade(tokenArg: TradeToken) {
 
   /** Builds (or rebuilds) the trade for side/amount. `silent`: background refresh, no status change. */
   const build = useCallback(
-    async (side: 'buy' | 'sell', amount: bigint, silent: boolean, probe: TokenSafety | null = safetyRef.current): Promise<QuickTrade | null> => {
+    async (side: 'buy' | 'sell', amount: bigint, silent: boolean, probe: TokenSafety | null = safetyRef.current, rerouted = false): Promise<QuickTrade | null> => {
       const client = chainClient();
       const { pools, rows } = await poolsFor(token, trader);
       const r = risk(probe);
@@ -302,6 +304,11 @@ export function useQuickTrade(tokenArg: TradeToken) {
         simulate: trader !== GUEST,
       };
       let t = side === 'buy' ? await quickBuy(client, { token: token.address, ethWei: amount, trader }, opts) : await quickSell(client, { token: token.address, trader, amount }, opts);
+      // The bonding curve completed since the pools were read: re-discover once (now a Uniswap pool).
+      if (t.blockers.some((b) => b.code === 'CURVE_GRADUATED') && !rerouted) {
+        dropPools(token.address);
+        return build(side, amount, silent, probe, true);
+      }
       if (trader === GUEST) t = { ...t, blockers: t.blockers.filter((b) => b.code !== 'INSUFFICIENT_ETH' && b.code !== 'INSUFFICIENT_TOKEN') };
       // Honeypot / tax probe once per token, on the first buy quote (one eth_simulateV1 call).
       if (side === 'buy' && t.quote && !probe) {
@@ -458,6 +465,10 @@ export function useQuickTrade(tokenArg: TradeToken) {
         // After a buy: approve the token for selling now, in the background, so the sell is one tx.
         if (r.side === 'buy' && t.sellApprovals.length) void preApprove(pipe, t.sellApprovals);
       } catch (e) {
+        // A curve trade that reverted because the curve graduated in the meantime: say so; the pools
+        // cache is dropped below, so the next attempt routes to the new Uniswap pool.
+        const pool = t?.quote?.pool;
+        if (pool?.venue === 'pons-curve' && lastHash && (await curveGraduated(chainClient(), pool.curve))) e = new Error(CURVE_GRADUATED_MESSAGE);
         setStatus({ kind: 'failed', message: friendly(e), hash: lastHash, url: lastHash ? explorerTxUrl(lastHash) : undefined });
         emit({ ...base, phase: 'failed', hash: lastHash, expectedOut: null, message: friendly(e) });
       } finally {

@@ -18,13 +18,23 @@ export const RUSHR_TREASURY: Address = '0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E
 /** Kept for tests and forks: a config using it is refused by `assertSignable`. */
 export const PLACEHOLDER_FEE_RECIPIENT: Address = '0x000000000000000000000000000000000000fee1';
 
+/** The standard platform fee (decided 2026-11-12): 0.5%. */
+export const STANDARD_FEE_BPS = 50;
+/**
+ * Beta rate (decided 2026-11-13): half price, 0.25%, on Universal Router routes, so real trades exercise
+ * the fee path. PONS curve trades stay fee-free during the beta (`CURVE_FEE_BPS` in quick.ts).
+ * To return to the standard rate, set `feeBps: STANDARD_FEE_BPS` in DEFAULT_TRADE_CONFIG below.
+ */
+export const BETA_FEE_BPS = 25;
+
 /** Hard cap so a bad config can never take more than 3% of a trade. */
 export const MAX_FEE_BPS = 300;
 
 export interface TradeConfig {
-  /** Platform fee in basis points of the quote-side amount (50 = 0.5%). Decided 2026-11-12: 0.5%. */
+  /** Platform fee in basis points of the quote-side amount (25 = 0.25%). Beta: BETA_FEE_BPS; standard: STANDARD_FEE_BPS. */
   feeBps: number;
-  /** Referee discount, in bps OF THE FEE (1000 = 10% off, so 0.5% becomes 0.45%). */
+  /** Referee discount, in bps OF THE FEE (1000 = 10% off). Rounded in the referee's favour
+   *  (`effectiveFeeBps`): 0.5% becomes 0.45%, the 0.25% beta rate becomes 0.22%. */
   referralDiscountBps: number;
   /** Referrer's share of the fee actually collected, in bps of the fee (2000 = 20%). Accounted off-chain. */
   referrerShareBps: number;
@@ -45,7 +55,7 @@ export interface TradeConfig {
 }
 
 export const DEFAULT_TRADE_CONFIG: TradeConfig = {
-  feeBps: 50,
+  feeBps: BETA_FEE_BPS, // beta rate; STANDARD_FEE_BPS after the beta
   referralDiscountBps: 1_000,
   referrerShareBps: 2_000,
   feeRecipient: RUSHR_TREASURY,

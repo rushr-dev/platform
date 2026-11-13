@@ -67,3 +67,22 @@ export function fmtUnits(v: bigint, decimals: number, places = 4): string {
   const frac = (a % base).toString().padStart(decimals, '0').slice(0, places).replace(/0+$/, '');
   return `${neg ? '-' : ''}${whole.toLocaleString('en-US')}${frac ? `.${frac}` : ''}`;
 }
+
+/** ETH and one token's balance for a wallet, re-read whenever `tick` changes (after a trade). */
+export function useTokenBalance(wallet: Address | undefined, token: Address, tick: number) {
+  const [bal, setBal] = useState<{ eth: bigint; token: bigint } | null>(null);
+  useEffect(() => {
+    if (!wallet) return setBal(null);
+    let gone = false;
+    Promise.all([
+      publicClient().getBalance({ address: wallet }),
+      publicClient().readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [wallet] }),
+    ])
+      .then(([eth, tok]) => !gone && setBal({ eth, token: tok }))
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+    };
+  }, [wallet, token, tick]);
+  return bal;
+}

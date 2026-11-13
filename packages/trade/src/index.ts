@@ -20,3 +20,6 @@ export * from './simulate';
 export * from './types';
 export * from './universal-router';
 export * from './fast-send';
+export * from './curve-sim';
+export * from './fee-audit';
+export * from './fee-sim';
