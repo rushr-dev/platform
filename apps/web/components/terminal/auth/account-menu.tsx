@@ -48,10 +48,10 @@ export function AccountMenu() {
       <button
         type="button"
         onClick={() => auth.login()}
-        className="flex items-center gap-2 rounded-full bg-go px-4 py-1.5 text-sm font-semibold text-bg transition hover:brightness-110"
+        className="flex items-center gap-2 rounded-xl bg-ink px-3.5 py-2 text-sm font-semibold text-bg transition hover:bg-white"
       >
         <Wallet size={16} weight="bold" />
-        <span className="hidden sm:inline">Connect</span>
+        <span className="hidden sm:inline">Sign in</span>
       </button>
     );
   }
@@ -65,7 +65,7 @@ export function AccountMenu() {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="flex items-center gap-2 rounded-full border border-white/[0.08] py-1 pl-1 pr-3 text-sm transition hover:border-white/20"
+        className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-surface py-1 pl-1 pr-3 text-sm transition hover:border-white/20"
       >
         <UserAvatar user={user} size={28} />
         <span className="hidden max-w-[12ch] truncate font-medium sm:inline">{name}</span>
@@ -207,7 +207,7 @@ function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () =
       onClick={onOpen}
       title="Wallet balance: ETH, USDG and every token you hold"
       aria-label={v == null ? 'Wallet balance' : `Wallet balance ${money.format(v)}`}
-      className="rounded-full border border-brand/25 bg-brand/10 px-3.5 py-1.5 font-mono text-sm font-semibold tabular-nums text-brand transition hover:bg-brand/15"
+      className="rounded-xl border border-white/[0.08] bg-surface px-3 py-2 font-mono text-sm font-semibold tabular-nums transition hover:border-white/20"
     >
       {v == null ? (
         <span className="inline-block h-4 w-14 animate-pulse rounded bg-white/[0.08] align-middle" />

@@ -13,7 +13,7 @@ import {
   X,
 } from '@phosphor-icons/react';
 import type { Column, TokenCard } from '@/lib/api';
-import { age, compact, LAUNCHPAD_LABEL, pct, quoteLabel, usd } from '@/lib/format';
+import { age, compact, LAUNCHPAD_LABEL, pct, quoteLabel, short, usd } from '@/lib/format';
 import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
 import type { Delta } from '@/lib/feed/protocol';
@@ -21,7 +21,7 @@ import { useNow } from '@/lib/now';
 import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
 
-import { useSettings } from '@/lib/settings';
+import { updateSettings, useSettings } from '@/lib/settings';
 import { RingedAvatar, ringOf, SocialLinks } from './bits';
 
 /** Loaded only when trading is on (one chunk shared by every row). */
@@ -175,6 +175,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   }, []);
 
   useEffect(() => setFilters(loadFilters()), []);
+  const changeQuick = useCallback((v: string) => updateSettings({ quickBuy: v }), []);
   useEffect(() => {
     // Only the max-age filter needs this; row ages tick on their own clock.
     const id = setInterval(() => setNow(Date.now()), 5000);
@@ -241,21 +242,21 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar showSpam={showSpam} onShowSpam={setShowSpam} showPlain={showPlain} onShowPlain={setShowPlain} />
+      <Toolbar showSpam={showSpam} onShowSpam={setShowSpam} showPlain={showPlain} onShowPlain={setShowPlain} quick={quick} onQuick={changeQuick} />
       {/* Mobile: one column at a time */}
-      <div className="mx-3 mb-2 flex gap-1 rounded-full border border-white/[0.07] bg-surface p-1 md:hidden">
+      <div className="flex gap-1 px-2 pb-2 md:hidden">
         {COLUMNS.map((c) => (
           <button
             key={c.id}
             type="button"
             onClick={() => setMobileCol(c.id)}
-            className={`flex-1 rounded-full py-2 text-xs font-semibold ${mobileCol === c.id ? 'bg-white/[0.08] text-ink' : 'text-muted'}`}
+            className={`flex-1 rounded-lg py-2 text-xs font-semibold ${mobileCol === c.id ? 'bg-white/[0.08] text-ink' : 'text-muted'}`}
           >
             {c.title}
           </button>
         ))}
       </div>
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 px-3 pb-3 md:grid-cols-3 md:px-4 md:pb-4">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 px-2 pb-2 md:grid-cols-3">
         {COLUMNS.map((c) => {
           const f = filters[c.id];
           const live = lists[c.id].filter((t) => passes(t, f, now));
@@ -300,30 +301,68 @@ function Toolbar({
   onShowSpam,
   showPlain,
   onShowPlain,
+  quick,
+  onQuick,
 }: {
   showSpam: boolean;
   onShowSpam: (v: boolean) => void;
   showPlain: boolean;
   onShowPlain: (v: boolean) => void;
+  quick: string;
+  onQuick: (v: string) => void;
 }) {
-  const chip = (on: boolean, onClick: () => void, label: string, title: string) => (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={on}
-      title={title}
-      className={`rounded-full border px-3 py-1 text-xs transition ${on ? 'border-brand/30 bg-brand/10 text-brand' : 'border-white/[0.08] text-muted hover:border-white/15 hover:text-ink'}`}
-    >
-      {label}
-    </button>
-  );
+  // Local text so partial input ("0.") can be typed; valid amounts are saved as they're entered.
+  const [quickText, setQuickText] = useState(quick);
+  useEffect(() => setQuickText(quick), [quick]);
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 pb-3 pt-4 md:px-5">
-      <h1 className="text-2xl font-semibold tracking-[-0.03em] md:text-3xl">Trenches</h1>
-      <span className="rounded-full border border-white/[0.08] px-2.5 py-0.5 text-xs text-muted">Robinhood Chain</span>
-      <div className="ml-auto flex items-center gap-1.5">
-        {chip(showSpam, () => onShowSpam(!showSpam), 'Spam clones', 'Airdrop-farm clones: plain pools whose holder count was padded with mass airdrops')}
-        {chip(showPlain, () => onShowPlain(!showPlain), 'Plain pools', 'Tokens launched straight into a Uniswap pool, without a launchpad. Most copycat clones live here.')}
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
+      <h1 className="text-lg font-semibold tracking-[-0.03em]">Trenches</h1>
+      <span className="rounded-md bg-white/[0.06] px-2 py-0.5 text-xs text-muted">Robinhood Chain</span>
+      <label
+        className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-muted hover:text-ink"
+        title="Airdrop-farm clones: plain pools whose holder count was padded with mass airdrops"
+      >
+        <input type="checkbox" checked={showSpam} onChange={(e) => onShowSpam(e.target.checked)} className="accent-[var(--color-brand)]" />
+        Show spam clones
+      </label>
+      <label
+        className="flex cursor-pointer items-center gap-1.5 text-xs text-muted hover:text-ink"
+        title="Tokens launched straight into a Uniswap pool, without a launchpad. Most copycat clones live here."
+      >
+        <input type="checkbox" checked={showPlain} onChange={(e) => onShowPlain(e.target.checked)} className="accent-[var(--color-brand)]" />
+        Plain pools
+      </label>
+      <div
+        className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface py-1 pl-3 pr-1 text-xs"
+        title="Sets the amount on every Buy button. Trading opens soon."
+      >
+        <Lightning size={14} weight="fill" className="text-brand" />
+        <span className="hidden text-muted sm:inline">Quick buy</span>
+        <input
+          value={quickText}
+          onChange={(e) => {
+            const v = e.target.value.replace(/[^0-9.]/g, '').slice(0, 8);
+            setQuickText(v);
+            if (/^\d*\.?\d+$/.test(v) && Number(v) > 0) onQuick(v);
+          }}
+          onBlur={() => setQuickText(quick)}
+          className="w-12 bg-transparent text-right font-mono text-sm text-ink outline-none"
+          inputMode="decimal"
+          aria-label="Quick buy amount in ETH"
+        />
+        <span className="font-mono text-muted">ETH</span>
+        <span className="ml-1 hidden gap-0.5 sm:flex">
+          {['0.05', '0.1', '0.5', '1'].map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => onQuick(v)}
+              className={`rounded-lg px-1.5 py-1 font-mono text-[11px] ${quick === v ? 'bg-white/[0.1] text-ink' : 'text-muted hover:text-ink'}`}
+            >
+              {v}
+            </button>
+          ))}
+        </span>
       </div>
     </div>
   );
@@ -367,62 +406,70 @@ function ColumnPanel({
   className: string;
 }) {
   const [showFilters, setShowFilters] = useState(false);
+  const Icon = col.icon;
   const n = activeCount(filters);
   return (
     <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-surface ${className}`}>
       <header className="flex items-center gap-2 border-b border-white/[0.05] px-4 py-3">
-        <h2 className="shrink-0 text-[15px] font-semibold">{col.title}</h2>
+        <Icon size={16} weight="fill" className="text-brand" />
+        <h2 className="text-sm font-semibold">{col.title}</h2>
         <span className="font-mono text-xs text-muted">{total}</span>
-        {paused ? (
-          <span className="flex shrink-0 items-center gap-1 rounded-full bg-risk-medium/15 px-2 py-0.5 text-[11px] font-medium text-risk-medium" title="Paused while you hover">
-            <PauseCircle size={12} weight="fill" />
-            {waiting ? `${waiting} new` : 'Paused'}
-          </span>
-        ) : (
-          <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-brand" title="Live" />
-        )}
-        <div className="ml-auto flex min-w-0 items-center gap-1.5">
-          <label className="flex w-28 min-w-0 items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 focus-within:border-white/20 xl:w-36">
-            <MagnifyingGlass size={12} className="shrink-0 text-muted" />
-            <input
-              value={filters.keyword}
-              onChange={(e) => onFilters({ ...filters, keyword: e.target.value.slice(0, 42) })}
-              placeholder="Keyword"
-              aria-label={`Filter ${col.title} by keyword, symbol or address`}
-              className="w-full min-w-0 bg-transparent text-xs outline-none placeholder:text-muted/80"
-            />
-            {filters.keyword && (
-              <button type="button" onClick={() => onFilters({ ...filters, keyword: '' })} aria-label="Clear keyword" className="text-muted hover:text-ink">
-                <X size={11} />
-              </button>
-            )}
-          </label>
-          <select
-            value={sort}
-            onChange={(e) => onSort(e.target.value as SortKey)}
-            aria-label={`Sort ${col.title}`}
-            className={`hidden rounded-full border border-white/[0.08] bg-transparent px-2 py-1 text-xs outline-none 2xl:block ${sort === 'default' ? 'text-muted' : 'text-ink'}`}
-          >
-            {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
-              <option key={k} value={k} className="bg-surface">
-                {k === 'default' ? 'Sort' : SORT_LABEL[k]}
-              </option>
-            ))}
-          </select>
+        <div className="ml-auto flex items-center gap-1.5">
+          {paused ? (
+            <span className="flex items-center gap-1 rounded-md bg-risk-medium/15 px-2 py-0.5 text-[11px] font-medium text-risk-medium">
+              <PauseCircle size={12} weight="fill" /> Paused{waiting ? ` · ${waiting} new` : ''}
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-[11px] text-muted">
+              <span className="size-1.5 animate-pulse rounded-full bg-brand" /> Live
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setShowFilters((s) => !s)}
-            aria-expanded={showFilters}
-            className={`flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition ${
-              showFilters || n || sort !== 'default' ? 'border-white/20 bg-white/[0.06] text-ink' : 'border-white/[0.08] text-muted hover:text-ink'
+            className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] transition ${
+              showFilters || n ? 'border-white/20 bg-white/[0.06] text-ink' : 'border-white/[0.08] text-muted hover:border-white/15 hover:text-ink'
             }`}
           >
-            <Funnel size={12} weight={n ? 'fill' : 'regular'} /> Filter{n ? ` ${n}` : ''}
+            <Funnel size={12} weight={n ? 'fill' : 'regular'} /> Filter{n ? ` (${n})` : ''}
           </button>
         </div>
       </header>
-      {showFilters && <FilterBar value={filters} onChange={onFilters} sort={sort} onSort={onSort} />}
-      <ul className="min-h-0 flex-1 overflow-y-auto overscroll-contain" onMouseEnter={() => onPause(true)} onMouseLeave={() => onPause(false)}>
+      <div className="flex items-center gap-1.5 border-b border-white/[0.05] px-3 py-1.5">
+        <label className="flex min-w-0 flex-1 items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.02] px-3 py-1.5 transition-colors focus-within:border-white/20 hover:border-white/15">
+          <MagnifyingGlass size={12} className="shrink-0 text-muted" />
+          <input
+            value={filters.keyword}
+            onChange={(e) => onFilters({ ...filters, keyword: e.target.value.slice(0, 42) })}
+            placeholder="Keyword, symbol or 0x…"
+            aria-label={`Filter ${col.title} by keyword`}
+            className="w-full min-w-0 bg-transparent text-[11px] outline-none placeholder:text-muted/70"
+          />
+          {filters.keyword && (
+            <button type="button" onClick={() => onFilters({ ...filters, keyword: '' })} aria-label="Clear keyword" className="text-muted hover:text-ink">
+              <X size={11} />
+            </button>
+          )}
+        </label>
+        <select
+          value={sort}
+          onChange={(e) => onSort(e.target.value as SortKey)}
+          aria-label={`Sort ${col.title}`}
+          className={`rounded-full border border-white/[0.08] bg-transparent px-2.5 py-1.5 text-[11px] outline-none transition-colors hover:border-white/15 ${sort === 'default' ? 'text-muted' : 'text-ink'}`}
+        >
+          {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
+            <option key={k} value={k}>
+              {k === 'default' ? 'Sort' : SORT_LABEL[k]}
+            </option>
+          ))}
+        </select>
+      </div>
+      {showFilters && <FilterBar value={filters} onChange={onFilters} />}
+      <ul
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        onMouseEnter={() => onPause(true)}
+        onMouseLeave={() => onPause(false)}
+      >
         {tokens.map((t) => (
           <Row
             key={t.address}
@@ -436,14 +483,16 @@ function ColumnPanel({
           />
         ))}
         {!tokens.length && (
-          <li className="grid h-40 place-items-center px-6 text-center text-sm text-muted">{total ? 'Nothing matches these filters.' : 'Waiting for the next one…'}</li>
+          <li className="grid h-40 place-items-center px-6 text-center text-sm text-muted">
+            {total ? 'Nothing matches these filters.' : 'Waiting for the next one…'}
+          </li>
         )}
       </ul>
     </section>
   );
 }
 
-function FilterBar({ value, onChange, sort, onSort }: { value: Filters; onChange: (f: Filters) => void; sort: SortKey; onSort: (k: SortKey) => void }) {
+function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters) => void }) {
   const toggle = (k: 'hideHighRisk' | 'hideCopycat' | 'hasSocial', label: string) => (
     <label className="flex items-center gap-2 text-xs">
       <input type="checkbox" checked={value[k]} onChange={(e) => onChange({ ...value, [k]: e.target.checked })} className="accent-[var(--color-brand)]" />
@@ -471,17 +520,7 @@ function FilterBar({ value, onChange, sort, onSort }: { value: Filters; onChange
       {num('maxAgeMin', 'Max age (min)', 'any')}
       {num('maxTop10', 'Max top 10 %', 'any')}
       {num('maxDev', 'Max dev %', 'any')}
-      <label className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted">Sort</span>
-        <select value={sort} onChange={(e) => onSort(e.target.value as SortKey)} className="rounded-lg border border-white/[0.06] bg-bg px-2 py-1.5 text-xs outline-none">
-          {(Object.keys(SORT_LABEL) as SortKey[]).map((k) => (
-            <option key={k} value={k}>
-              {SORT_LABEL[k]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="flex flex-col gap-1">
+      <label className="col-span-2 flex flex-col gap-1">
         <span className="text-[10px] uppercase tracking-wider text-muted">Launchpad</span>
         <select
           value={value.launchpad}
@@ -588,6 +627,8 @@ const Row = memo(function Row({
   const sells = t.sells_24h ?? null;
   const split = buys != null || sells != null;
   const txns = split ? (buys ?? 0) + (sells ?? 0) : (t.trades_24h ?? null);
+  const fees = t.fees_24h_usd ?? t.fees_paid_usd ?? null;
+  const handle = t.creator_x ?? t.twitter_handle ?? null;
   const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
   const flags = [
     t.risk === 'high' && 'High risk',
@@ -602,17 +643,18 @@ const Row = memo(function Row({
       <div className="group relative flex items-center gap-2.5 px-3 py-3 transition-colors hover:bg-white/[0.03] sm:gap-3 sm:px-4 md:px-5">
         {/* Whole-row link sits underneath; links and buttons above it stay clickable. */}
         <Link href={`/token/${t.address}`} aria-label={`${t.symbol} token page`} className="absolute inset-0" />
-        <span className="sm:hidden">
-          <RingedAvatar t={t} size={44} ring={ringOf(t, col === 'migrated')} badge />
-        </span>
-        <span className="hidden sm:block">
-          <RingedAvatar t={t} size={52} ring={ringOf(t, col === 'migrated')} badge />
+        <span className="flex shrink-0 flex-col items-center gap-1">
+          <span className="sm:hidden">
+            <RingedAvatar t={t} size={44} ring={ringOf(t, col === 'migrated')} badge />
+          </span>
+          <span className="hidden sm:block">
+            <RingedAvatar t={t} size={52} ring={ringOf(t, col === 'migrated')} badge />
+          </span>
+          <span className="font-mono text-[9px] leading-none text-muted">{short(t.address, 2, 4)}</span>
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-1.5">
             <span className="max-w-[60%] shrink-0 truncate text-base font-semibold leading-tight">{t.symbol}</span>
-            {/* Phones clip the flags line, so a red dot keeps the warning visible. */}
-            {flags.length > 0 && <span className="size-1.5 shrink-0 self-center rounded-full bg-risk-high sm:hidden" title={flags.join(' · ')} />}
             <span className="min-w-0 truncate text-[13px] text-muted">{t.name}</span>
             <SocialLinks t={t} size={12} className="relative z-10 hidden shrink-0 self-center sm:flex" />
           </div>
@@ -630,31 +672,47 @@ const Row = memo(function Row({
                 </span>
               </>
             )}
+            {fees != null && (
+              <>
+                <Dot />
+                <span title="Fees paid">
+                  <span className="font-mono text-ink/75">{usd(fees)}</span> fees
+                </span>
+              </>
+            )}
             {quote && (
               <>
                 <Dot />
                 <span title="Quote asset">{quote}</span>
               </>
             )}
-            {flags.length > 0 && (
+            {handle && (
               <>
                 <Dot />
-                <span className="min-w-0 truncate font-medium text-risk-high" title={flags.join(' · ')}>
-                  {flags.join(' · ')}
-                </span>
-              </>
-            )}
-            {!flags.length && t.risk === 'medium' && (
-              <>
-                <Dot />
-                <span className="font-medium text-risk-medium">Medium risk</span>
+                <a
+                  href={`https://x.com/${handle}`}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  onClick={(e) => e.stopPropagation()}
+                  className="relative z-10 hover:text-ink"
+                  title="Creator on X"
+                >
+                  @{handle}
+                </a>
               </>
             )}
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-x-2.5 overflow-hidden whitespace-nowrap text-[11px] text-muted">
+            {flags.length > 0 && (
+              <span className="shrink-0 font-medium text-risk-high" title={flags.join(' · ')}>
+                {flags.join(' · ')}
+              </span>
+            )}
+            {!flags.length && t.risk === 'medium' && <span className="shrink-0 font-medium text-risk-medium">Medium risk</span>}
             <Stat label="Top 10" value={t.top10_pct} bad={30} title="Share held by the top 10 holders" />
             <Stat label="Dev" value={t.dev_pct} bad={10} title="Share the deployer holds" />
             <Stat label="Snipers" value={t.snipers_pct} bad={20} title="Bought by snipers in the first blocks" />
+            <Stat label="Bundle" value={t.bundled_pct} bad={20} title="Bought in the launch bundle" />
             {tax != null && tax > 0 && <Stat label="Tax" value={tax} bad={10} digits={1} title="Transfer tax" />}
           </div>
         </div>
@@ -668,25 +726,33 @@ const Row = memo(function Row({
           <div className="mt-1 font-mono text-[11px] text-muted" title="Volume, 24h">
             vol {usd(t.volume_24h_usd)}
           </div>
+          {split && (
+            <span className="ml-auto mt-1 flex h-[3px] w-14 overflow-hidden rounded-full bg-risk-high/70" title={`${buys ?? 0} buys / ${sells ?? 0} sells, 24h`}>
+              <span className="h-full bg-brand" style={{ width: `${txns ? ((buys ?? 0) / txns) * 100 : 50}%` }} />
+            </span>
+          )}
         </div>
-        <div className="relative z-10 flex shrink-0 items-center gap-1">
+        <div className="relative z-10 flex shrink-0 flex-col items-stretch gap-1">
           {tradingAvailable() ? (
             <>
-              {/* The second amount appears on hover so the list stays calm. */}
-              <span className="hidden md:group-hover:inline-flex">
+              <QuickBuyButton token={tradeToken} amountEth={quick} variant="subtle" />
+              {/* Phones keep one amount; wider screens show both, as before. */}
+              <span className="hidden sm:inline-flex">
                 <QuickBuyButton token={tradeToken} amountEth={quick2} variant="subtle" />
               </span>
-              <QuickBuyButton token={tradeToken} amountEth={quick} variant="subtle" />
             </>
           ) : (
-            <button
-              type="button"
-              disabled
-              title={`Quick buy ${quick || '0'} ETH of $${t.symbol}. Trading opens soon.`}
-              className="flex cursor-not-allowed items-center gap-1 rounded-full bg-brand/15 px-3 py-1.5 font-mono text-xs font-semibold text-brand opacity-80"
-            >
-              <Lightning size={11} weight="fill" /> {quick || '0'}
-            </button>
+            [quick, quick2].map((q, i) => (
+              <button
+                key={i}
+                type="button"
+                disabled
+                title={`Quick buy ${q || '0'} ETH of $${t.symbol}. Trading opens soon.`}
+                className={`cursor-not-allowed items-center gap-1 rounded-full bg-brand/15 px-3 py-1.5 font-mono text-xs font-semibold text-brand opacity-80 ${i ? 'hidden sm:flex' : 'flex'}`}
+              >
+                <Lightning size={11} weight="fill" /> {q || '0'}
+              </button>
+            ))
           )}
         </div>
       </div>
