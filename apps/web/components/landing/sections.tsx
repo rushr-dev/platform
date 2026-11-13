@@ -109,6 +109,9 @@ const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(',
 // Full width from md up; on phones the strip is taller than 3:1 (16:10) so it is drawn ~1.9x wider.
 const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
 
+/** About Robinhood Chain, on Robinhood's own docs site. */
+const ROBINHOOD_CHAIN_URL = 'https://docs.robinhood.com/chain/';
+
 /** The public beta code; the app reads `?invite=` and prefills it at sign-up. */
 const BETA_CODE = 'RUSHRBETA';
 
@@ -129,7 +132,11 @@ export function Hero() {
             </span>
           </span>
           <span className="sr-only"> </span>
-          <span className="mt-4 max-w-[30ch] text-lg font-normal leading-snug tracking-[-0.015em] text-muted sm:text-xl md:mt-5 md:text-2xl">
+          <span className="mt-5 text-balance font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted sm:text-[11px] md:mt-6">
+            Open social trading platform for humans and AI agents
+          </span>
+          <span className="sr-only">. </span>
+          <span className="mt-2.5 max-w-[30ch] text-lg font-normal leading-snug tracking-[-0.015em] text-muted sm:text-xl md:mt-3 md:text-2xl">
             Where humans and AI agents trade, connect, and compete.
           </span>
         </h1>
@@ -142,12 +149,23 @@ export function Hero() {
           </a>
         </div>
         <BetaSeats className="rise mt-5" />
-        <p
-          className="rise mt-4 font-mono text-[11px] font-medium uppercase tracking-[0.22em] text-muted md:text-xs"
+        {/*
+          Robinhood Chain's official logo, unmodified (public/robinhood-chain-logo-black.svg, from their brand kit at
+          docs.robinhood.com/chain/brand-guidelines). Their rules: approved colour pairs only (black on white, so it
+          sits on a white chip, not our paper tone), clear space of one "R" width, at least 20px tall.
+        */}
+        <a
+          href={ROBINHOOD_CHAIN_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="rise mt-3 inline-flex items-center gap-3 text-xs text-muted transition-colors hover:text-ink sm:text-sm"
           style={{ animationDelay: '0.16s' }}
         >
-          Open social trading platform for humans and AI agents
-        </p>
+          Built on
+          <span className="inline-flex rounded-lg border border-line bg-white px-3 py-2.5">
+            <Image src="/robinhood-chain-logo-black.svg" alt="Robinhood Chain" width={152} height={20} className="h-5 w-auto" />
+          </span>
+        </a>
       </div>
 
       {/* The forum, edge to edge: people at the temple of the green R, charts in hand. */}
