@@ -50,7 +50,7 @@ export function Part({ title, children }: { title: string; children: React.React
   );
 }
 
-/** A gap the founder or a lawyer must fill before public launch. Rendered visibly so it can't be missed. */
+/** A gap to fill after legal review, before the public launch. Rendered visibly so it can't be missed. */
 export function Todo({ children }: { children: React.ReactNode }) {
   return <mark className="rounded bg-risk-medium/20 px-1 text-ink">[{children}]</mark>;
 }
