@@ -15,6 +15,9 @@ import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
 import { hydrationLabel, isHydrating, PriceChart } from './chart';
 import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
+import { useAuth } from '@/lib/auth';
+import { usePosition } from '@/lib/position';
+import { useEthUsd } from '@/lib/profile';
 
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
@@ -83,6 +86,12 @@ export function TokenView({
   }, []);
 
   const priceNow = trades?.[0]?.priceUsd ?? t.price_usd ?? null;
+  // The signed-in wallet's position in this token: live with every price tick and own trade, and
+  // drawn on the chart as B/S markers.
+  const session = useAuth();
+  const ethUsd = useEthUsd();
+  const myWallet = session.authenticated ? (session.user?.wallet ?? null) : null;
+  const position = usePosition({ wallet: myWallet, token: t.address, decimals: t.decimals, priceUsd: priceNow, ethUsd, feed: trades });
   const tabs = (
     <Tabs
       tab={tab}
@@ -151,6 +160,7 @@ export function TokenView({
               trades={trades}
               priceUsd={priceNow}
               hydration={live.hydration}
+              marks={myWallet ? position.trades : null}
             />
           </div>
           {tabs}
@@ -162,7 +172,7 @@ export function TokenView({
           {tradingAvailable() ? (
             <TradePanel
               priceUsd={priceNow}
-              trades={trades}
+              position={position}
               token={{
                 address: t.address as `0x${string}`,
                 symbol: t.symbol,
