@@ -131,7 +131,7 @@ describe('Privy session signer (REST, Workers-compatible)', () => {
 });
 
 describe('Privy signer policy', () => {
-  it('founder default caps: 0.25 ETH per trade, 1 ETH per 24 h, 30-day grants', () => {
+  it('default caps: 0.25 ETH per trade, 1 ETH per 24 h, 30-day grants', () => {
     expect(defaultCaps(1_000)).toEqual({ perTradeWei: 25n * 10n ** 16n, dailyWei: 10n ** 18n, expiresAt: 1_000 + 30 * 86_400 });
     expect(DEFAULT_CAPS.grantSeconds).toBe(2_592_000);
   });

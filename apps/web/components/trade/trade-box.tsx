@@ -8,10 +8,10 @@ import { tradingAvailable } from './flag';
 import { chainClient, useKeepWarm, useQuickTrade, type TradeStatus, type TradeToken } from './use-quick-trade';
 
 /**
- * Trade box for the token page (Terminal places it). Beta v0: quick buy / sell from the user's Privy
+ * Trade box for the token page. Beta v0: quick buy / sell from the user's Privy
  * embedded wallet with no confirmation popup, through Uniswap's Universal Router, with the Rushr fee in
  * the same tx. Renders nothing unless NEXT_PUBLIC_SWAP_ENABLED=1 and a Privy app id are set. Sign-in
- * and signing go through Terminal's lib/auth (one Privy setup); settings are Terminal's /settings.
+ * and signing go through lib/auth (one Privy setup); settings come from /settings.
  */
 export function TradeBox({ token }: { token: TradeToken }) {
   if (!tradingAvailable()) return null;

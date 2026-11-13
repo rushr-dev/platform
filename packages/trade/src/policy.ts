@@ -4,7 +4,7 @@ import { rushrRouterAbi } from './rushr-router';
 
 /**
  * Privy policy for a Rushr session signer (quick-trade or one agent), in Privy's API schema
- * (POST /v1/policies, checked against the OpenAPI spec 2026-11-12). Founder defaults: 0.25 ETH per
+ * (POST /v1/policies, checked against the OpenAPI spec 2026-11-12). Defaults: 0.25 ETH per
  * trade, 1 ETH per rolling 24 h, 30-day grants, user-adjustable.
  *
  * Allowed (Privy denies anything no ALLOW rule matches):

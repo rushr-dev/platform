@@ -23,7 +23,7 @@ const row = (r: Partial<ApiPoolRow>): ApiPoolRow => ({
   ...r,
 });
 
-/** Shape of GET /tokens/:a/pools on Data's branch (0c61362), checksummed addresses as the API may send them. */
+/** Shape of GET /tokens/:a/pools (indexer API, 0c61362), checksummed addresses as the API may send them. */
 const FIXTURE = {
   pools: [
     row({ pool: '0xe0c4ceb92d08ca985bb70fe0a22feb121a9854a8', dex: 'ramses', version: 'v3', quote: TRADE_ADDRESSES.weth, key: { currency0: TRADE_ADDRESSES.weth, currency1: PONS, fee: null, tickSpacing: 50, hooks: null }, volume_24h_usd: 3_100_000, liquidity_usd: 900_000 }),

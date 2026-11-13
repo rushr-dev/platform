@@ -1,6 +1,6 @@
 # Review checklist (before any deployment)
 
-Status: **UNAUDITED, NOT DEPLOYED.** An independent reviewer confirms every item below. Deployment needs the Rushr founder's sign-off on all of them, plus constructor arguments and verified source on Blockscout.
+Status: **UNAUDITED, NOT DEPLOYED.** An independent reviewer confirms every item below. Deployment needs maintainer sign-off on all of them, plus constructor arguments and verified source on Blockscout.
 
 ## Threat model in one paragraph
 Rushr's one-click trading lets a server-held session signer (Privy, policy-limited) sign trades for a user's own wallet. The wallet provider's policy allows only `RushrRouter.{buy,sell}`, `RushrPonsRouter.{buy,sell}` and ERC-20 `approve` to these two routers, with ETH caps per trade and per rolling 24 h. These contracts must therefore guarantee:
@@ -61,6 +61,6 @@ Rushr's one-click trading lets a server-held session signer (Privy, policy-limit
    - fees in flight use the treasury current at execution
 
    Check that no path changes `treasury` without the delay.
-6. **EOA treasury (known risk):** the initial treasury is the founder's EOA `0x447a…5E40`. Confirm the key sits on a hardware wallet with regular sweeps, and that there's a plan (and the guardian's ability, tested) to `queueTreasury(safe)` before volume grows.
+6. **EOA treasury (known risk):** the treasury (currently a single EOA, moving to a Safe) is `0x447a…5E40`. Confirm the key sits on a hardware wallet with regular sweeps, and that there's a plan (and the guardian's ability, tested) to `queueTreasury(safe)` before volume grows.
 7. **Compiler:** solc 0.8.26, optimizer 10,000 runs, `evm_version = cancun`.
 8. **Tests:** re-run `forge test` and the fork suites (`ROBINHOOD_RPC_URL=… forge test --match-contract Fork`) at a fresh block, and add your own cases.
