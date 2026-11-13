@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   CandlestickSeries,
   ColorType,
@@ -16,7 +16,9 @@ import { usd } from '@/lib/format';
 import type { Hydration } from '@/lib/feed/protocol';
 import type { Callout } from '@/lib/callouts';
 import type { OwnTrade } from '@/lib/position';
-import { CallMarks, TradePills, type CallMark, type Pill } from './trade-pills';
+import { iconSrc } from './bits';
+import { avatarSeed, MemberAvatar } from './member-avatar';
+import { CALL_RADIUS, CallMarks, TradePills, type CallMark, type Pill } from './trade-pills';
 
 /** At most this many calls are drawn (the most recent), so the chart stays readable. */
 const MAX_CALL_MARKS = 30;
@@ -95,7 +97,9 @@ export function PriceChart({
   const [hovering, setHovering] = useState(false);
   const [showCalls, setShowCalls] = useState(true);
   const [showTrades, setShowTrades] = useState(true);
-  const [hoverCalls, setHoverCalls] = useState<Callout[] | null>(null);
+  // The call pill under the cursor, with its centre in the chart pane (CSS pixels).
+  const [hoverCall, setHoverCall] = useState<{ call: Callout; x: number; y: number; others: number } | null>(null);
+  const callsById = useRef(new Map<string, Callout>());
   const callMarks = useRef<CallMarks | null>(null);
   // Calls by candle for hover and click (read inside chart callbacks, so kept in a ref).
   const callsByBar = useRef(new Map<number, Callout[]>());
@@ -148,10 +152,16 @@ export function PriceChart({
       const bar = p.time == null ? null : bars.current.get(p.time as number);
       setHovering(!!bar);
       if (bar) setLegend(bar);
-      setHoverCalls(p.time == null ? null : (callsByBar.current.get(p.time as number) ?? null));
+      const hit = p.point ? callMarks.current?.hit(p.point.x, p.point.y) : null;
+      const call = hit ? callsById.current.get(hit.item.id) : undefined;
+      setHoverCall(
+        hit && call ? { call, x: hit.x, y: hit.y, others: Math.max(0, (callsByBar.current.get(hit.item.time)?.length ?? 1) - 1) } : null,
+      );
     };
-    // Clicking a candle with calls selects the newest one there (the feed scrolls to it).
+    // Clicking a call pill selects it; clicking elsewhere on a candle with calls selects the newest.
     const onClick = (p: MouseEventParams) => {
+      const hit = p.point ? callMarks.current?.hit(p.point.x, p.point.y) : null;
+      if (hit) return onSelectRef.current?.(hit.item.id);
       const here = p.time == null ? undefined : callsByBar.current.get(p.time as number);
       if (here?.length) onSelectRef.current?.(here[0]!.id);
     };
@@ -311,10 +321,20 @@ export function PriceChart({
         const bucket = Math.floor(new Date(c.createdAt).getTime() / 1000 / step) * step;
         if (!bars.current.has(bucket)) continue;
         byBar.set(bucket, [...(byBar.get(bucket) ?? []), c]);
-        out.push({ id: c.id, time: bucket, value: price * scale, stance: c.stance, initial: (c.author.handle[0] ?? '?').toUpperCase(), selected: c.id === selectedCall });
+        out.push({
+          id: c.id,
+          time: bucket,
+          value: price * scale,
+          stance: c.stance,
+          handle: c.author.handle,
+          seed: avatarSeed(c.author),
+          imageSrc: c.author.avatarUrl ? iconSrc(c.author.avatarUrl) : null,
+          selected: c.id === selectedCall,
+        });
       }
     }
     callsByBar.current = byBar;
+    callsById.current = new Map((calls ?? []).map((c) => [c.id, c]));
     api.set(out);
   }, [calls, selectedCall, showCalls, interval, base, scale, lastBar]);
 
@@ -381,7 +401,7 @@ export function PriceChart({
             {ownHere && <OwnLegend g={ownHere} scale={scale} />}
           </div>
         )}
-        {hoverCalls?.length ? <CallsHover list={hoverCalls} scale={scale} /> : null}
+        {hoverCall && <CallHover hover={hoverCall} scale={scale} />}
         {loading && <div className="absolute inset-x-6 bottom-10 top-10 animate-pulse rounded-xl bg-white/[0.025]" />}
         {hydrating ? (
           <HydratingPill hydration={hydration!} />
@@ -536,19 +556,54 @@ function ChipToggle({ on, onClick, label, short }: { on: boolean; onClick: () =>
   );
 }
 
-/** Hover card for the calls on the candle under the cursor. */
-function CallsHover({ list, scale }: { list: Callout[]; scale: number }) {
-  const c = list[0]!;
+const HOVER_W = 288;
+/** Gap between the pill's edge and the card, so the card never covers the pill. */
+const HOVER_GAP = CALL_RADIUS + 8;
+
+/**
+ * Hover card for one call, anchored to its pill: above it, or below when there's no room at the
+ * top of the chart, and kept inside the chart horizontally.
+ */
+function CallHover({ hover, scale }: { hover: { call: Callout; x: number; y: number; others: number }; scale: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const c = hover.call;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const box = el?.parentElement;
+    if (!el || !box) return;
+    const h = el.offsetHeight;
+    const w = box.clientWidth;
+    const left = Math.min(Math.max(4, hover.x - HOVER_W / 2), Math.max(4, w - HOVER_W - 4));
+    const above = hover.y - HOVER_GAP - h;
+    setPos({ left, top: above >= 4 ? above : hover.y + HOVER_GAP });
+  }, [hover.x, hover.y, c.id]);
   const at = c.atPost.priceUsd != null ? (scale > 1 ? `${usd(c.atPost.priceUsd * scale)} MC` : usdPrecise(c.atPost.priceUsd)) : null;
+  const since = c.result.sincePostPct;
+  const bull = c.stance === 'bullish';
   return (
-    <div className="pointer-events-none absolute left-3 top-7 z-10 max-w-[280px] rounded-xl border border-white/[0.08] bg-surface-2/95 px-3 py-2 text-xs shadow-xl">
-      <div className="flex items-center gap-1.5">
-        <span className="font-medium text-ink">@{c.author.handle}</span>
-        <span className={c.stance === 'bullish' ? 'text-go' : 'text-risk-high'}>{c.stance === 'bullish' ? 'Bullish' : 'Bearish'}</span>
-        {at && <span className="ml-auto font-mono text-muted">called at {at}</span>}
+    <div
+      ref={ref}
+      className="pointer-events-none absolute z-20 rounded-xl border border-white/[0.1] bg-surface-2/95 p-3 text-xs shadow-2xl backdrop-blur-sm"
+      style={{ width: HOVER_W, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+      role="tooltip"
+    >
+      <div className="flex items-center gap-2">
+        <MemberAvatar member={c.author} size={22} />
+        <span className="min-w-0 truncate font-medium text-ink">@{c.author.handle}</span>
+        <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bull ? 'bg-go/15 text-go' : 'bg-risk-high/15 text-risk-high'}`}>
+          {bull ? 'Bullish' : 'Bearish'}
+        </span>
       </div>
-      <p className="mt-1 line-clamp-2 text-ink/85">{c.body}</p>
-      {list.length > 1 && <p className="mt-1 text-muted">+{list.length - 1} more call{list.length > 2 ? 's' : ''} on this candle</p>}
+      <p className="mt-2 line-clamp-4 whitespace-pre-line break-words text-[13px] leading-snug text-ink/90">{c.body}</p>
+      {(at || since != null) && (
+        <p className="mt-2 font-mono text-[11px] text-muted">
+          {at && <>called at {at}</>}
+          {at && since != null && ' · '}
+          {since != null && <span className={since >= 0 ? 'text-go' : 'text-risk-high'}>{`${since >= 0 ? '+' : ''}${since.toFixed(0)}% since`}</span>}
+        </p>
+      )}
+      {hover.others > 0 && <p className="mt-1 text-[11px] text-muted">+{hover.others} more call{hover.others > 1 ? 's' : ''} on this candle</p>}
     </div>
   );
 }

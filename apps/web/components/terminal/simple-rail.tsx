@@ -10,8 +10,8 @@ import { useMe } from '@/lib/members';
 import { CALL_MAX, postCallout } from '@/lib/callouts';
 import type { LivePosition } from '@/lib/position';
 import { TRADE_LIMIT, WINDOWS, type Tx, type WindowId, type WindowStats } from '@/lib/trades';
-import { GeneratedAvatar } from './avatar';
-import { iconSrc, TokenAvatar } from './bits';
+import { MemberAvatar } from './member-avatar';
+import { TokenAvatar } from './bits';
 
 /* ------------------------------------------------------------------ position */
 
@@ -114,10 +114,7 @@ export function ThesisBox({ t, position }: { t: TokenDetail; position: LivePosit
       <div className="flex items-center gap-2">
         {member ? (
           <Link href={`/u/${member.handle}`} className="flex min-w-0 items-center gap-2 hover:opacity-90">
-            <span className="relative block size-7 shrink-0 overflow-hidden rounded-full">
-              <GeneratedAvatar address={member.wallet} symbol={member.handle} size={28} />
-              {member.avatarUrl && <img src={iconSrc(member.avatarUrl)} alt="" className="absolute inset-0 size-full object-cover" />}
-            </span>
+            <MemberAvatar member={member} size={28} />
             <span className="min-w-0 truncate text-sm font-medium">@{member.handle}</span>
           </Link>
         ) : (

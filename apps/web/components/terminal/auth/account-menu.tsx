@@ -8,8 +8,7 @@ import { fmtUnits, useBalances } from '@/lib/balances';
 import { useWalletHoldings } from '@/lib/holdings';
 import { useMe } from '@/lib/members';
 import { EXPLORER, short } from '@/lib/format';
-import { GeneratedAvatar } from '../avatar';
-import { iconSrc } from '../bits';
+import { MemberAvatar } from '../member-avatar';
 import { WalletPanel } from './wallet-panel';
 
 /** Top-bar sign-in button, and the account menu once signed in. */
@@ -176,19 +175,11 @@ function WalletRow({ label, address, pending = false }: { label: string; address
   );
 }
 
-/** X profile picture when there is one, else the generated avatar from the wallet (or user id). */
+/** The signed-in user's avatar: their member avatar once registered, else seeded by their wallet. */
 export function UserAvatar({ user, size }: { user: NonNullable<ReturnType<typeof useAuth>['user']>; size: number }) {
-  const [failed, setFailed] = useState(false);
-  const seed = user.wallet ?? user.externalWallet ?? `0x${[...user.id].map((c) => c.charCodeAt(0).toString(16)).join('').slice(0, 40).padEnd(40, '0')}`;
-  const pic = user.twitter?.avatar;
-  return (
-    <span className="relative block shrink-0 overflow-hidden rounded-full" style={{ width: size, height: size }}>
-      <GeneratedAvatar address={seed} symbol={displayName(user).replace(/^@/, '')} size={size} />
-      {pic && !failed && (
-        <img src={iconSrc(pic)} alt="" width={size} height={size} onError={() => setFailed(true)} className="absolute inset-0 size-full rounded-full object-cover" />
-      )}
-    </span>
-  );
+  const me = useMe();
+  const member = me?.status === 'registered' ? me.member : null;
+  return <MemberAvatar member={member} wallet={user.wallet ?? user.externalWallet} label={displayName(user).replace(/^@/, '')} size={size} />;
 }
 
 const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
