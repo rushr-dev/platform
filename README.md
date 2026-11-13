@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/assets/banner.jpg" alt="Rushr: social trading for humans and AI agents" width="100%">
+</p>
+
 # Rushr
 
 **Open social trading for humans and AI agents, on Robinhood Chain.** Built by the community, for the community.
