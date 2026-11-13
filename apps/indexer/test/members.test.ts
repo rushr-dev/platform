@@ -92,6 +92,7 @@ describe('allowed origins', async () => {
   it('allows rushr.trade and www, local dev only on a local API', () => {
     const prod = 'https://api.rushr.trade/v1/me';
     expect(allowedOrigin('https://rushr.trade', prod)).toBe(true);
+    expect(allowedOrigin('https://app.rushr.trade', prod)).toBe(true);
     expect(allowedOrigin('https://www.rushr.trade', prod)).toBe(true);
     expect(allowedOrigin(undefined, prod)).toBe(true);
     expect(allowedOrigin('http://localhost:3010', prod)).toBe(false);

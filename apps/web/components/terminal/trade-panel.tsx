@@ -9,9 +9,9 @@ import { tradingAvailable } from '@/components/trade/flag';
 import { Status } from '@/components/trade/trade-box';
 import { chainClient, useQuickTrade, type TradeToken } from '@/components/trade/use-quick-trade';
 import { compact, pctSigned, short, usd } from '@/lib/format';
-import { useEthUsd, useWalletPnl, type Position } from '@/lib/profile';
+import type { LivePosition } from '@/lib/position';
+import { useEthUsd } from '@/lib/profile';
 import { updateSettings, useSettings, type TradePreset, type TradeSettings } from '@/lib/settings';
-import type { Tx } from '@/lib/trades';
 import { DepositPanel } from './profile/funding';
 import { Modal } from './profile/modal';
 
@@ -22,7 +22,7 @@ import { Modal } from './profile/modal';
  * this file only arranges them. Balances are read on-chain, updated optimistically when the swap is
  * broadcast, and re-read on confirmation and whenever the live feed shows a trade from this wallet.
  */
-export function TradePanel(props: { token: TradeToken; priceUsd: number | null; trades: Tx[] | null }) {
+export function TradePanel(props: { token: TradeToken; priceUsd: number | null; position: LivePosition }) {
   if (!tradingAvailable()) return null;
   return <Panel {...props} />;
 }
@@ -56,7 +56,7 @@ function useTokenBalance(wallet: Address | undefined, token: Address, tick: numb
   return bal;
 }
 
-function Panel({ token, priceUsd, trades }: { token: TradeToken; priceUsd: number | null; trades: Tx[] | null }) {
+function Panel({ token, priceUsd, position }: { token: TradeToken; priceUsd: number | null; position: LivePosition }) {
   const q = useQuickTrade(token);
   const settings = useSettings();
   const ethUsd = useEthUsd();
@@ -68,8 +68,6 @@ function Panel({ token, priceUsd, trades }: { token: TradeToken; priceUsd: numbe
   // Applied when the swap is broadcast, dropped once the chain is re-read.
   const [optimistic, setOptimistic] = useState<Bal | null>(null);
   const bal = optimistic ?? chainBal;
-  const pnl = useWalletPnl(q.wallet ?? null, tick);
-  const position = pnl.state === 'ready' ? (pnl.data.positions.find((p) => p.token.toLowerCase() === token.address.toLowerCase()) ?? null) : null;
   const [modal, setModal] = useState<'deposit' | 'presets' | 'share' | null>(null);
 
   const busy = q.status.kind === 'sending' || q.status.kind === 'pending';
@@ -150,15 +148,13 @@ function Panel({ token, priceUsd, trades }: { token: TradeToken; priceUsd: numbe
   // A fresh chain read replaces the optimistic numbers.
   useEffect(() => setOptimistic(null), [chainBal]);
 
-  // Live feed: a trade from this wallet (here or anywhere else) re-reads the balance and position.
-  const seen = useRef<string | null>(null);
+  // A new confirmed trade from this wallet (here, another device or the feed) re-reads the balance.
+  const settled = position.trades.filter((x) => !x.pending).length;
+  const seen = useRef<number | null>(null);
   useEffect(() => {
-    if (!q.wallet || !trades?.length) return;
-    const mine = trades.find((x) => x.trader.toLowerCase() === q.wallet!.toLowerCase());
-    if (!mine) return;
-    if (seen.current && seen.current !== mine.id) refresh();
-    seen.current = mine.id;
-  }, [trades, q.wallet, refresh]);
+    if (seen.current !== null && settled !== seen.current) refresh();
+    seen.current = settled;
+  }, [settled, refresh]);
 
   const t = q.trade;
   const needsAck = t?.blockers.some((b) => b.code === 'RISK_ACK_REQUIRED');
@@ -358,15 +354,15 @@ function Panel({ token, priceUsd, trades }: { token: TradeToken; priceUsd: numbe
 
 /* ------------------------------------------------------------------ position strip */
 
-function positionNumbers(token: TradeToken, bal: Bal | null, position: Position | null, priceUsd: number | null) {
-  const held = bal ? whole(bal.token, token.decimals) : position ? whole(BigInt(position.held_tokens || '0'), position.decimals ?? token.decimals) : 0;
+/**
+ * Strip numbers from the live position (repriced on every tick, own trades applied as soon as they're
+ * signed). Before the first server read, the on-chain balance stands in for the amount held.
+ */
+function positionNumbers(token: TradeToken, bal: Bal | null, p: LivePosition, priceUsd: number | null) {
+  const held = p.loaded ? p.held : bal ? whole(bal.token, token.decimals) : 0;
   const heldUsd = priceUsd != null ? held * priceUsd : null;
-  const bought = position?.bought_usd ?? null;
-  const sold = position?.sold_usd ?? null;
-  // Live PnL: what came out plus what's still held at today's price, minus what went in.
-  const pnl = bought != null && heldUsd != null ? (sold ?? 0) + heldUsd - bought : null;
-  const pnlPct = pnl != null && bought ? (pnl / bought) * 100 : null;
-  return { held, heldUsd, bought, sold, pnl, pnlPct };
+  const has = p.loaded && (p.boughtUsd > 0 || p.held > 0);
+  return { held, heldUsd, bought: has ? p.boughtUsd : null, sold: has ? p.soldUsd : null, pnl: has ? p.pnlUsd : null, pnlPct: has ? p.pnlPct : null };
 }
 
 function PositionStrip({
@@ -381,7 +377,7 @@ function PositionStrip({
 }: {
   token: TradeToken;
   bal: Bal | null;
-  position: Position | null;
+  position: LivePosition;
   priceUsd: number | null;
   ethUsd: number | null;
   busy: boolean;
@@ -802,7 +798,7 @@ function PresetEditor({ settings, onClose }: { settings: TradeSettings; onClose:
 
 /* ------------------------------------------------------------------ share card */
 
-function ShareCard({ token, position, bal, priceUsd, onClose }: { token: TradeToken; position: Position | null; bal: Bal | null; priceUsd: number | null; onClose: () => void }) {
+function ShareCard({ token, position, bal, priceUsd, onClose }: { token: TradeToken; position: LivePosition; bal: Bal | null; priceUsd: number | null; onClose: () => void }) {
   const n = positionNumbers(token, bal, position, priceUsd);
   const [copied, setCopied] = useState(false);
   const up = (n.pnl ?? 0) >= 0;
