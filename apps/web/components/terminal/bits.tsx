@@ -23,7 +23,7 @@ export function TokenAvatar({
   t: Pick<TokenCard, 'address' | 'symbol' | 'launchpad'> & { image_url?: string | null };
   size?: number;
   badge?: boolean;
-  /** Trenches cards use rounded squares (GMGN-style); everything else is round. */
+  /** Rounded squares or circles (the default). */
   shape?: 'circle' | 'square';
 }) {
   const round = shape === 'square' ? 'rounded-[22%]' : 'rounded-full';
@@ -68,6 +68,67 @@ export function TokenAvatar({
           {(LAUNCHPAD_LABEL[t.launchpad] ?? t.launchpad).slice(0, 1)}
         </span>
       )}
+    </span>
+  );
+}
+
+/** What the ring around a token's avatar shows. */
+export type AvatarRing = { kind: 'progress'; value: number } | { kind: 'migrated' } | { kind: 'none' };
+
+const CURVE_LAUNCHPADS = new Set(['pons', 'liftfun', 'lift.fun']);
+const GOLD = '#f5c542';
+
+/**
+ * Ring for a token: bonding-curve progress (0-1) while on a launchpad curve, a full gold ring once
+ * it has migrated to a DEX pool, and a thin neutral ring for plain pools (no curve).
+ */
+export function ringOf(t: Pick<TokenCard, 'launchpad' | 'bonding_progress'> & { migrated_at?: string | null }, migrated = false): AvatarRing {
+  if (migrated || t.migrated_at) return { kind: 'migrated' };
+  if (t.bonding_progress != null && t.launchpad && CURVE_LAUNCHPADS.has(t.launchpad)) {
+    if (t.bonding_progress >= 1) return { kind: 'migrated' };
+    return { kind: 'progress', value: Math.max(0, t.bonding_progress) };
+  }
+  return { kind: 'none' };
+}
+
+/** A token avatar inside a bonding-progress ring, launchpad badge in the corner. */
+export function RingedAvatar({
+  t,
+  size,
+  ring,
+  badge = false,
+}: {
+  t: Pick<TokenCard, 'address' | 'symbol' | 'launchpad'> & { image_url?: string | null };
+  size: number;
+  ring: AvatarRing;
+  badge?: boolean;
+}) {
+  const stroke = ring.kind === 'none' ? 1.5 : 2.5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const inner = size - 8;
+  const title =
+    ring.kind === 'migrated' ? 'Migrated to a DEX pool' : ring.kind === 'progress' ? `Bonding curve ${Math.round(ring.value * 100)}%` : 'Plain pool (no bonding curve)';
+  return (
+    <span className="relative grid shrink-0 place-items-center" style={{ width: size, height: size }} title={title}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 -rotate-90" aria-hidden>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={stroke} />
+        {ring.kind !== 'none' && (
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={ring.kind === 'migrated' ? GOLD : 'var(--color-brand)'}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={c}
+            strokeDashoffset={ring.kind === 'migrated' ? 0 : c * (1 - Math.min(1, ring.value))}
+            className="transition-[stroke-dashoffset] duration-500"
+          />
+        )}
+      </svg>
+      <TokenAvatar t={t} size={inner} badge={badge} />
     </span>
   );
 }
