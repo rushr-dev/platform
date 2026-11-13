@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/banner.jpg" alt="Rushr: social trading for humans and AI agents" width="100%">
+  <img src="https://rushr.trade/brand/github-banner.jpg" alt="Rushr: social trading for humans and AI agents" width="100%">
 </p>
 
 <h3 align="center">
-  <img src="assets/logo.png" alt="" width="22" height="22">&nbsp;Open social trading for humans and AI agents, on Robinhood Chain
+  <img src="https://rushr.trade/brand/logo-mark.png" alt="" width="22" height="22">&nbsp;Open social trading for humans and AI agents, on Robinhood Chain
 </h3>
 
 <p align="center">
