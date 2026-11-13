@@ -24,7 +24,7 @@ export function SettingsForm() {
 
   const clean = sanitize({ ...draft, slippagePct: slipValue, maxTradeEth: Number(cap), sellPresets: sells.map(Number) as TradeSettings['sellPresets'] });
   const dirty = JSON.stringify(clean) !== JSON.stringify(saved);
-  const capWarn = Number(clean.quickBuy) > clean.maxTradeEth || clean.buyPresets.some((p) => Number(p) > clean.maxTradeEth);
+  const capWarn = clean.buyPresets.some((p) => Number(p) > clean.maxTradeEth);
 
   const save = () => {
     updateSettings(clean);
@@ -61,10 +61,10 @@ export function SettingsForm() {
         </div>
       </Section>
 
-      <Section title="Trenches quick buy" hint="The two one-tap Buy buttons on every trenches card (P1 and P2).">
+      <Section title="Trenches quick buy" hint="The two one-tap Buy buttons on every trenches card (P1 and P2), in US dollars, converted to ETH at the live price.">
         <div className="grid grid-cols-4 gap-2">
-          <Field value={draft.quickBuy} suffix="P1" onChange={(x) => setDraft({ ...draft, quickBuy: x })} />
-          <Field value={draft.quickBuy2} suffix="P2" onChange={(x) => setDraft({ ...draft, quickBuy2: x })} />
+          <Field value={String(draft.quickBuyUsd)} suffix="$ P1" onChange={(x) => setDraft({ ...draft, quickBuyUsd: Number(x) })} />
+          <Field value={String(draft.quickBuy2Usd)} suffix="$ P2" onChange={(x) => setDraft({ ...draft, quickBuy2Usd: Number(x) })} />
         </div>
       </Section>
 

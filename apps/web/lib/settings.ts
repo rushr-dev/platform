@@ -24,6 +24,13 @@ export interface TradeSettings {
   /** The second one-tap Buy on trenches cards (P2), in ETH. */
   quickBuy2: string;
   /**
+   * Trenches one-tap Buy amounts in US dollars (P1, P2), converted to ETH at the live ETH price when
+   * the trade is built. These are what the trenches cards use; the ETH fields above remain for the
+   * token page's Pro panel.
+   */
+  quickBuyUsd: number;
+  quickBuy2Usd: number;
+  /**
    * Slippage: 'auto' (5–15% from the token's age, volatility and price impact, plus its measured
    * tax) or a fixed percentage.
    */
@@ -45,6 +52,8 @@ export const DEFAULT_SETTINGS: TradeSettings = {
   sellPresets: [5, 25, 50, 100],
   quickBuy: '0.01',
   quickBuy2: '0.05',
+  quickBuyUsd: 10,
+  quickBuy2Usd: 50,
   slippagePct: 'auto',
   // A conservative default cap: 0.25 ETH per trade unless the user raises it.
   maxTradeEth: 0.25,
@@ -58,7 +67,10 @@ export const DEFAULT_SETTINGS: TradeSettings = {
 };
 
 /** Hard bounds the settings page enforces. */
-export const LIMITS = { slippagePct: [0.1, 50], maxTradeEth: [0.001, 5] } as const;
+export const LIMITS = { slippagePct: [0.1, 50], maxTradeEth: [0.001, 5], quickBuyUsd: [1, 10000] } as const;
+
+/** Dollar quick-buy choices offered in the trenches toolbar (any other amount can be typed). */
+export const QUICK_USD_PRESETS = [10, 50, 100, 500] as const;
 
 /**
  * v2: slippage 'auto' and a 0.25 ETH cap became the defaults. Saves under the first key held the old
@@ -71,6 +83,9 @@ const LEGACY_QUICK_KEY = 'rushr.quickbuy';
 
 let current: TradeSettings = DEFAULT_SETTINGS;
 let loaded = false;
+// A save from before dollar quick-buy amounts, with ETH amounts that weren't the defaults: they are
+// converted to the nearest dollar preset once the ETH price is known (migrateQuickBuyToUsd).
+let usdMigration: { quickBuy: string; quickBuy2: string } | null = null;
 const listeners = new Set<() => void>();
 
 function load() {
@@ -80,6 +95,8 @@ function load() {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? 'null') as Partial<TradeSettings> | null;
     if (raw) {
       current = sanitize({ ...DEFAULT_SETTINGS, ...raw });
+      const custom = (raw.quickBuy && raw.quickBuy !== DEFAULT_SETTINGS.quickBuy) || (raw.quickBuy2 && raw.quickBuy2 !== DEFAULT_SETTINGS.quickBuy2);
+      if (raw.quickBuyUsd == null && custom) usdMigration = { quickBuy: current.quickBuy, quickBuy2: current.quickBuy2 };
       // A save from before P1–P3: its flat presets and slippage become P1.
       if (!raw.presets) current = mirror(current, { buyPresets: current.buyPresets });
     } else {
@@ -100,6 +117,12 @@ function load() {
 const num = (v: unknown, lo: number, hi: number, fallback: number) => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+};
+/** Whole cents within the quick-buy bounds; anything unreadable falls back. */
+const dollars = (v: unknown, fallback: number) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.round(Math.min(LIMITS.quickBuyUsd[1], Math.max(LIMITS.quickBuyUsd[0], n)) * 100) / 100;
 };
 const ethStr = (v: unknown, fallback: string) => {
   const s = String(v ?? '').trim();
@@ -131,6 +154,8 @@ export function sanitize(s: TradeSettings): TradeSettings {
     sellPresets: [0, 1, 2, 3].map((i) => num(sells[i], 1, 100, DEFAULT_SETTINGS.sellPresets[i]!)) as TradeSettings['sellPresets'],
     quickBuy: ethStr(s.quickBuy, DEFAULT_SETTINGS.quickBuy),
     quickBuy2: ethStr(s.quickBuy2, DEFAULT_SETTINGS.quickBuy2),
+    quickBuyUsd: dollars(s.quickBuyUsd, DEFAULT_SETTINGS.quickBuyUsd),
+    quickBuy2Usd: dollars(s.quickBuy2Usd, DEFAULT_SETTINGS.quickBuy2Usd),
     slippagePct: slippageOf(s.slippagePct),
     maxTradeEth: num(s.maxTradeEth, LIMITS.maxTradeEth[0], LIMITS.maxTradeEth[1], DEFAULT_SETTINGS.maxTradeEth),
     presets: [0, 1, 2].map((i) => presetOf(s.presets?.[i], DEFAULT_SETTINGS.presets[i]!)) as TradeSettings['presets'],
@@ -155,6 +180,22 @@ function mirror(s: TradeSettings, patch: Partial<TradeSettings>): TradeSettings 
     return { ...s, presets };
   }
   return s;
+}
+
+/**
+ * Convert a saved ETH quick-buy amount to the nearest dollar preset, once, at the given ETH price.
+ * Saves that only ever held the default ETH amounts just start at the dollar defaults.
+ */
+export function migrateQuickBuyToUsd(ethUsd: number | null) {
+  load();
+  if (!usdMigration || !ethUsd || !(ethUsd > 0)) return;
+  const nearest = (eth: string) => {
+    const usd = Number(eth) * ethUsd;
+    return QUICK_USD_PRESETS.reduce((best, p) => (Math.abs(p - usd) < Math.abs(best - usd) ? p : best), QUICK_USD_PRESETS[0]);
+  };
+  const m = usdMigration;
+  usdMigration = null;
+  updateSettings({ quickBuyUsd: nearest(m.quickBuy), quickBuy2Usd: nearest(m.quickBuy2) });
 }
 
 export function getSettings(): TradeSettings {

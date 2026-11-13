@@ -3,12 +3,17 @@
 import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ChefHat,
+  Crosshair,
+  Crown,
+  Detective,
   Funnel,
   Lightning,
   MagnifyingGlass,
   PauseCircle,
   Plant,
   RocketLaunch,
+  Package,
   Sparkle,
   X,
 } from '@phosphor-icons/react';
@@ -21,7 +26,8 @@ import { useNow } from '@/lib/now';
 import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
 
-import { updateSettings, useSettings } from '@/lib/settings';
+import { migrateQuickBuyToUsd, QUICK_USD_PRESETS, updateSettings, useSettings } from '@/lib/settings';
+import { useEthUsd } from '@/lib/profile';
 import { RingedAvatar, ringOf, SocialLinks } from './bits';
 
 /** Loaded only when trading is on (one chunk shared by every row). */
@@ -151,8 +157,11 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   const [mobileCol, setMobileCol] = useState<Column>('new');
   const [showSpam, setShowSpam] = useState(false);
   const [showPlain, setShowPlain] = useState(false);
-  // One-tap buy amounts (P1/P2): shared with the settings page.
-  const { quickBuy: quick, quickBuy2: quick2 } = useSettings();
+  // One-tap buy amounts in dollars (P1/P2): shared with the settings page.
+  const { quickBuyUsd: quick, quickBuy2Usd: quick2 } = useSettings();
+  // Saves from before dollar amounts move to the nearest dollar preset once the ETH price is in.
+  const ethUsd = useEthUsd();
+  useEffect(() => migrateQuickBuyToUsd(ethUsd), [ethUsd]);
   const [sorts, setSorts] = useState<Record<Column, SortKey>>({ new: 'default', almost: 'default', migrated: 'default' });
   useEffect(() => {
     try {
@@ -175,7 +184,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   }, []);
 
   useEffect(() => setFilters(loadFilters()), []);
-  const changeQuick = useCallback((v: string) => updateSettings({ quickBuy: v }), []);
+  const changeQuick = useCallback((v: number) => updateSettings({ quickBuyUsd: v }), []);
   useEffect(() => {
     // Only the max-age filter needs this; row ages tick on their own clock.
     const id = setInterval(() => setNow(Date.now()), 5000);
@@ -308,12 +317,12 @@ function Toolbar({
   onShowSpam: (v: boolean) => void;
   showPlain: boolean;
   onShowPlain: (v: boolean) => void;
-  quick: string;
-  onQuick: (v: string) => void;
+  quick: number;
+  onQuick: (v: number) => void;
 }) {
-  // Local text so partial input ("0.") can be typed; valid amounts are saved as they're entered.
-  const [quickText, setQuickText] = useState(quick);
-  useEffect(() => setQuickText(quick), [quick]);
+  // Local text so partial input ("12.") can be typed; valid amounts are saved as they're entered.
+  const [quickText, setQuickText] = useState(String(quick));
+  useEffect(() => setQuickText(String(quick)), [quick]);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
       <h1 className="text-lg font-semibold tracking-[-0.03em]">Trenches</h1>
@@ -334,35 +343,40 @@ function Toolbar({
       </label>
       <div
         className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#121315] py-1 pl-3 pr-1 text-xs"
-        title="Sets the amount on every Buy button. Trading opens soon."
+        title="The first Buy amount on every card, in US dollars (converted to ETH at the live price)"
       >
         <Lightning size={14} weight="fill" className="text-brand" />
         <span className="hidden text-muted sm:inline">Quick buy</span>
-        <input
-          value={quickText}
-          onChange={(e) => {
-            const v = e.target.value.replace(/[^0-9.]/g, '').slice(0, 8);
-            setQuickText(v);
-            if (/^\d*\.?\d+$/.test(v) && Number(v) > 0) onQuick(v);
-          }}
-          onBlur={() => setQuickText(quick)}
-          className="w-12 bg-transparent text-right font-mono text-sm text-ink outline-none"
-          inputMode="decimal"
-          aria-label="Quick buy amount in ETH"
-        />
-        <span className="font-mono text-muted">ETH</span>
         <span className="ml-1 hidden gap-0.5 sm:flex">
-          {['0.05', '0.1', '0.5', '1'].map((v) => (
+          {QUICK_USD_PRESETS.map((v) => (
             <button
               key={v}
               type="button"
               onClick={() => onQuick(v)}
               className={`rounded-lg px-1.5 py-1 font-mono text-[11px] ${quick === v ? 'bg-white/[0.1] text-ink' : 'text-muted hover:text-ink'}`}
             >
-              {v}
+              ${v}
             </button>
           ))}
         </span>
+        <label
+          className={`flex items-center rounded-lg px-1.5 py-0.5 font-mono ${(QUICK_USD_PRESETS as readonly number[]).includes(quick) ? '' : 'sm:bg-white/[0.1]'}`}
+          title="Custom amount"
+        >
+          <span className="text-muted">$</span>
+          <input
+            value={quickText}
+            onChange={(e) => {
+              const v = e.target.value.replace(/[^0-9.]/g, '').slice(0, 7);
+              setQuickText(v);
+              if (/^\d*\.?\d+$/.test(v) && Number(v) >= 1) onQuick(Number(v));
+            }}
+            onBlur={() => setQuickText(String(quick))}
+            className="w-11 bg-transparent font-mono text-sm text-ink outline-none"
+            inputMode="decimal"
+            aria-label="Quick buy amount in US dollars"
+          />
+        </label>
       </div>
     </div>
   );
@@ -396,8 +410,8 @@ function ColumnPanel({
   flashed: Map<string, number>;
   entering: Set<string>;
   serverNow: number;
-  quick: string;
-  quick2: string;
+  quick: number;
+  quick2: number;
   sort: SortKey;
   onSort: (k: SortKey) => void;
   filters: Filters;
@@ -577,12 +591,28 @@ const taxOf = (t: TokenCard) => {
   return null;
 };
 
-/** One small stat ("Top 10 12%"): muted, red only once it usually means trouble. */
-function Stat({ label, value, bad, digits = 0, title }: { label: string; value: number | null; bad: number; digits?: number; title: string }) {
+/**
+ * Bordered stat chip with an icon (GMGN-style): amber from half the "bad" level, red past it, so
+ * trouble stands out while healthy values stay quiet.
+ */
+function Pill({ icon: Icon, value, bad, title, digits = 0 }: { icon: typeof Crown; value: number | null; bad: number; title: string; digits?: number }) {
   const hot = value != null && value >= bad;
+  const warm = !hot && value != null && value >= bad / 2;
   return (
-    <span title={title} className={hot ? 'text-risk-high' : ''}>
-      {label} <span className={`font-mono ${hot ? '' : value != null && value > 0 ? 'text-ink/75' : ''}`}>{value == null ? '–' : pct(value, digits)}</span>
+    <span
+      title={`${title}: ${value == null ? 'unknown' : pct(value, digits)}`}
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-md border px-1.5 py-px ${
+        hot
+          ? 'border-risk-high/30 text-risk-high'
+          : warm
+            ? 'border-risk-medium/30 text-risk-medium'
+            : value != null && value > 0
+              ? 'border-white/[0.07] text-ink/80'
+              : 'border-white/[0.05] text-muted'
+      }`}
+    >
+      <Icon size={11} weight="bold" />
+      {value == null ? '–' : pct(value, digits)}
     </span>
   );
 }
@@ -603,8 +633,8 @@ const Row = memo(function Row({
   serverNow: number;
   flashAt: number;
   enter: boolean;
-  quick: string;
-  quick2: string;
+  quick: number;
+  quick2: number;
 }) {
   const created = ts(t.created_at);
   const ref = useRef<HTMLLIElement>(null);
@@ -640,9 +670,10 @@ const Row = memo(function Row({
     <li ref={ref} className="relative overflow-hidden border-b border-white/[0.05] transition-colors hover:border-white/[0.1]">
       {/* Keyed by the update time, so the flash replays on each change and fades out on its own. */}
       {flashAt > 0 && <span key={flashAt} className="trench-flash pointer-events-none absolute inset-0" />}
-      <div className="group relative flex items-center gap-2.5 px-3 py-3 transition-colors hover:bg-white/[0.03] sm:gap-3 sm:px-4 md:px-5">
+      <div className="group relative px-3 pb-2.5 pt-3 transition-colors hover:bg-white/[0.03] sm:px-4 md:px-5">
         {/* Whole-row link sits underneath; links and buttons above it stay clickable. */}
         <Link href={`/token/${t.address}`} aria-label={`${t.symbol} token page`} className="absolute inset-0" />
+        <div className="flex items-center gap-2.5 sm:gap-3">
         <span className="flex shrink-0 flex-col items-center gap-1">
           <span className="sm:hidden">
             <RingedAvatar t={t} size={44} ring={ringOf(t, col === 'migrated')} badge />
@@ -659,6 +690,21 @@ const Row = memo(function Row({
             <SocialLinks t={t} size={12} className="relative z-10 hidden shrink-0 self-center sm:flex" />
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-xs text-muted">
+            {flags.length > 0 && (
+              <>
+                <span className="shrink-0 font-medium text-risk-high" title={flags.join(' · ')}>
+                  {flags[0]}
+                  {flags.length > 1 && ` +${flags.length - 1}`}
+                </span>
+                <Dot />
+              </>
+            )}
+            {!flags.length && t.risk === 'medium' && (
+              <>
+                <span className="shrink-0 font-medium text-risk-medium">Medium risk</span>
+                <Dot />
+              </>
+            )}
             <Age created={created} serverNow={serverNow} />
             <Dot />
             <span>
@@ -702,19 +748,6 @@ const Row = memo(function Row({
               </>
             )}
           </div>
-          <div className="mt-1 flex min-w-0 items-center gap-x-2.5 overflow-hidden whitespace-nowrap text-[11px] text-muted">
-            {flags.length > 0 && (
-              <span className="shrink-0 font-medium text-risk-high" title={flags.join(' · ')}>
-                {flags.join(' · ')}
-              </span>
-            )}
-            {!flags.length && t.risk === 'medium' && <span className="shrink-0 font-medium text-risk-medium">Medium risk</span>}
-            <Stat label="Top 10" value={t.top10_pct} bad={30} title="Share held by the top 10 holders" />
-            <Stat label="Dev" value={t.dev_pct} bad={10} title="Share the deployer holds" />
-            <Stat label="Snipers" value={t.snipers_pct} bad={20} title="Bought by snipers in the first blocks" />
-            <Stat label="Bundle" value={t.bundled_pct} bad={20} title="Bought in the launch bundle" />
-            {tax != null && tax > 0 && <Stat label="Tax" value={tax} bad={10} digits={1} title="Transfer tax" />}
-          </div>
         </div>
         <div className="shrink-0 text-right">
           <div
@@ -732,28 +765,40 @@ const Row = memo(function Row({
             </span>
           )}
         </div>
-        <div className="relative z-10 flex shrink-0 flex-col items-stretch gap-1">
-          {tradingAvailable() ? (
-            <>
-              <QuickBuyButton token={tradeToken} amountEth={quick} variant="subtle" />
-              {/* Phones keep one amount; wider screens show both, as before. */}
-              <span className="hidden sm:inline-flex">
-                <QuickBuyButton token={tradeToken} amountEth={quick2} variant="subtle" />
+        </div>
+        <div className="mt-2 flex items-center gap-1 font-mono text-[10px]">
+          <span className="flex min-w-0 items-center gap-1 overflow-hidden">
+            <Pill icon={Crown} value={t.top10_pct} bad={30} title="Top 10 holders" />
+            <Pill icon={ChefHat} value={t.dev_pct} bad={10} title="Dev holds" />
+            <Pill icon={Crosshair} value={t.snipers_pct} bad={20} title="Snipers bought" />
+            <Pill icon={Detective} value={t.insiders_pct} bad={20} title="Insiders hold" />
+            <Pill icon={Package} value={t.bundled_pct} bad={20} title="Launch bundle" />
+            {tax != null && tax > 0 && (
+              <span className={`shrink-0 rounded-md px-1.5 py-px font-semibold ${tax >= 10 ? 'bg-risk-high/15 text-risk-high' : 'bg-white/[0.07] text-ink/80'}`} title="Transfer tax">
+                Tax {pct(tax, 1)}
               </span>
-            </>
-          ) : (
-            [quick, quick2].map((q, i) => (
-              <button
-                key={i}
-                type="button"
-                disabled
-                title={`Quick buy ${q || '0'} ETH of $${t.symbol}. Trading opens soon.`}
-                className={`cursor-not-allowed items-center gap-1 rounded-full bg-brand/15 px-3 py-1.5 font-mono text-xs font-semibold text-brand opacity-80 ${i ? 'hidden sm:flex' : 'flex'}`}
-              >
-                <Lightning size={11} weight="fill" /> {q || '0'}
-              </button>
-            ))
-          )}
+            )}
+          </span>
+          <span className="relative z-10 ml-auto flex shrink-0 items-center gap-1">
+            {tradingAvailable() ? (
+              <>
+                <QuickBuyButton token={tradeToken} amountUsd={quick} variant="subtle" />
+                <QuickBuyButton token={tradeToken} amountUsd={quick2} variant="subtle" />
+              </>
+            ) : (
+              [quick, quick2].map((q, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  disabled
+                  title={`Quick buy $${q} of $${t.symbol}. Trading opens soon.`}
+                  className="flex cursor-not-allowed items-center gap-0.5 rounded-lg bg-brand/15 px-2 py-1 font-mono text-[11px] font-semibold text-brand opacity-75"
+                >
+                  <Lightning size={10} weight="fill" /> ${q}
+                </button>
+              ))
+            )}
+          </span>
         </div>
       </div>
     </li>
