@@ -10,8 +10,8 @@ const NAME_MAX = 40;
 const https = (v: string) => !v || /^https:\/\/\S+$/i.test(v.trim());
 
 /**
- * Edit display name, one-line bio, avatar and banner. Images upload to the Agents API when that's
- * on; otherwise (feature_disabled) an https image URL works as the fallback.
+ * Edit display name, one-line bio, avatar and banner. Images upload to the API (/v1/me/avatar|banner)
+ * when uploads are enabled; otherwise (feature_disabled) an https image URL works as the fallback.
  */
 export function EditProfile({ member, onClose, onSaved }: { member: ProfileMember; onClose: () => void; onSaved: () => void }) {
   const [displayName, setDisplayName] = useState(member.displayName ?? '');

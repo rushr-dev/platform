@@ -6,8 +6,8 @@ import { auth } from './auth';
 import { V1 } from './members';
 
 /**
- * Profile data. Members, follows, suggestions and callouts come from the Agents API (/v1); positions
- * and PnL from Data (/wallets/:w/pnl). Every hook degrades to `unavailable` while an endpoint is
+ * Profile data. Members, follows, suggestions and callouts come from the API's /v1 routes; positions
+ * and PnL from /wallets/:w/pnl. Every hook degrades to `unavailable` while an endpoint is
  * missing or off, and the page shows an empty state.
  */
 
@@ -273,7 +273,7 @@ function loadEth(): Promise<EthQuote | null> {
 }
 
 /**
- * ETH/USD and its 24h change. The Rushr API doesn't expose one yet (requested from Data), so this
+ * ETH/USD and its 24h change. The Rushr API doesn't expose one yet, so this
  * reads the deepest WETH pool on DexScreener (already allowed by the CSP), cached for a minute.
  */
 export function useEthQuote(): EthQuote | null {
