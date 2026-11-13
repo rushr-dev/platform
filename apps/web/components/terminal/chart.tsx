@@ -34,6 +34,10 @@ type Interval = keyof typeof INTERVALS;
 const FROM_TRADES = new Set<Interval>(['1s', '30s']);
 const HOURS: Partial<Record<Interval, number>> = { '1m': 24, '5m': 72, '15m': 168, '1h': 168, '4h': 168 };
 
+/** Candle width plus gap, in CSS pixels, when a view is framed; and empty bars kept right of the latest. */
+const BAR_SPACING = 7;
+const RIGHT_OFFSET = 6;
+
 const UP = '#36d42a';
 const DOWN = '#ff6b5b';
 
@@ -137,8 +141,10 @@ export function PriceChart({
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8a958a', fontFamily: 'var(--font-geist-mono)', fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
-      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.14, bottom: 0.22 } },
-      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: 4 },
+      // Top margin keeps the highest candle clear of the OHLC legend; entireTextOnly drops a corner
+      // label that would be cut by the pane edge; minimumWidth fits labels like "$136.0K".
+      rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.18, bottom: 0.22 }, entireTextOnly: true, minimumWidth: 64 },
+      timeScale: { borderVisible: false, timeVisible: true, secondsVisible: false, rightOffset: RIGHT_OFFSET, barSpacing: BAR_SPACING },
       crosshair: { horzLine: { color: 'rgba(255,255,255,0.2)' }, vertLine: { color: 'rgba(255,255,255,0.2)' } },
       localization: { priceFormatter: (p: number) => usdPrecise(p) },
     });
@@ -146,12 +152,18 @@ export function PriceChart({
       upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN,
       priceFormat: { type: 'custom', formatter: (p: number) => usdPrecise(p), minMove: 1e-12 },
     });
-    volume.current = c.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' } });
+    // Volume sits on its own hidden scale with no last-value tag, so it never crowds the price axis.
+    volume.current = c.addSeries(HistogramSeries, {
+      priceScaleId: 'vol',
+      priceFormat: { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
     pills.current = new TradePills((time) => bars.current.get(time));
     candles.current.attachPrimitive(pills.current);
     callMarks.current = new CallMarks();
     candles.current.attachPrimitive(callMarks.current);
-    c.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    c.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 }, visible: false });
     const onMove = (p: MouseEventParams) => {
       const bar = p.time == null ? null : bars.current.get(p.time as number);
       setHovering(!!bar);
@@ -239,19 +251,22 @@ export function PriceChart({
     appliedTop.current = trades ? (trades[0]?.id ?? '') : null;
     const n = series.length;
     const fitKey = `${interval}:${n > 1 ? 'data' : 'seed'}`;
+    // Frame at a fixed candle width with the latest candle near the right and history to its left.
+    // A few candles stay at that width on the right instead of being stretched across the pane.
     const fit = () => {
-      // Show the most recent ~120 bars rather than squeezing the whole history in.
-      if (n > 150) chart.current?.timeScale().setVisibleLogicalRange({ from: n - 120, to: n + 4 });
-      else chart.current?.timeScale().fitContent();
+      const ts = chart.current?.timeScale();
+      ts?.applyOptions({ barSpacing: BAR_SPACING, rightOffset: RIGHT_OFFSET });
+      ts?.scrollToRealTime();
     };
     if (fitted.current !== fitKey) {
       fitted.current = fitKey;
       fit();
     } else {
-      // The series can get shorter after the first fit (e.g. the live feed's window replacing the
-      // 24h history): a kept zoom would then start before the first bar and leave the left empty.
+      // The series can change length after the first fit (e.g. the live feed's window replacing the
+      // 24h history). Empty space on the left is fine while every candle is in view; empty space
+      // on the left with the latest candle off to the right is not.
       const vr = chart.current?.timeScale().getVisibleLogicalRange();
-      if (vr && vr.from < -2) fit();
+      if (vr && vr.from < -2 && vr.to < n - 1) fit();
     }
     // trades intentionally excluded: they are applied incrementally below
   }, [base, scale]);
@@ -409,7 +424,8 @@ export function PriceChart({
       <div className="relative min-h-0 flex-1">
         <div ref={box} className="absolute inset-0" />
         {legend && (
-          <div className="pointer-events-none absolute left-3 top-1 z-10 flex flex-wrap gap-x-2.5 font-mono text-[11px] text-muted">
+          // right-[76px]: stays clear of the price axis column, so it never covers the top label.
+          <div className="pointer-events-none absolute left-3 right-[76px] top-1 z-10 flex flex-wrap gap-x-2.5 font-mono text-[11px] text-muted">
             <span>
               O <span className={up ? 'text-brand' : 'text-risk-high'}>{usdPrecise(legend.open)}</span>
             </span>
@@ -511,6 +527,8 @@ function continuous(data: Candle[]): Bar[] {
 function usdPrecise(n: number) {
   if (!Number.isFinite(n) || n < 0) return '';
   if (n === 0) return '$0';
+  // Two decimals under $100K so a narrow range still gets distinct ticks ($3.44K, $3.46K).
+  if (n >= 1000 && n < 1e5) return `$${(n / 1e3).toFixed(2)}K`;
   if (n >= 1000) return usd(n);
   if (n >= 1) return `$${n.toFixed(2)}`;
   if (n >= 0.01) return `$${n.toFixed(4)}`;
