@@ -308,7 +308,7 @@ function Portfolio({ total, summary, loading }: { total: number | null; summary:
           </button>
         ))}
       </div>
-      {/* The PnL curve needs per-day history (requested from Data); a flat guide until then. */}
+      {/* The PnL curve needs per-day history the API doesn't serve yet; a flat guide until then. */}
       <div className="relative mt-3 h-28 overflow-hidden rounded-xl border border-white/[0.04] bg-bg">
         <svg viewBox="0 0 300 100" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
           <defs>

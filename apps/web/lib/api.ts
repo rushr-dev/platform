@@ -37,8 +37,7 @@ export interface TokenCard {
   migrated_at?: string | null;
   /** Sum of the pools the API has measured (v3/v2 today); absent before the pools API deploy. */
   liquidity_usd?: number | null;
-  // Trenches card fields requested from Data (requests to Data). All optional: the
-  // cards hide whatever isn't there yet.
+  // Trenches card fields. All optional: the cards hide whatever the API doesn't send (yet).
   /** Transfer tax in percent (the larger of buy/sell when they differ). */
   tax_pct?: number | null;
   buy_tax_pct?: number | null;
@@ -54,7 +53,7 @@ export interface TokenCard {
   fees_24h_usd?: number | null;
   /** Market cap at launch: shown until the first trade gives a live one. */
   initial_market_cap_usd?: number | null;
-  // Data's names (1863313): taxes in basis points, fees paid, 24h trade count, the token's X handle.
+  // The API's names for taxes in basis points, fees paid, 24h trade count and the token's X handle.
   buy_tax_bps?: number | null;
   sell_tax_bps?: number | null;
   fees_paid_usd?: number | null;

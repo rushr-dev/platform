@@ -9,9 +9,9 @@ import { privyAppId, setAuthActions, setAuthState, type AuthUser } from '@/lib/a
  * Privy, loaded lazily by AuthRoot. It wraps only a bridge component (never the page), so loading
  * it doesn't remount anything: the bridge copies Privy's state into lib/auth and exposes its actions.
  *
- * Sign-in: email or an external EVM wallet (founder decision: no X for now). Every user gets an embedded wallet on Robinhood Chain
+ * Sign-in: email or an external EVM wallet (no X sign-in for now). Every user gets an embedded wallet on Robinhood Chain
  * at sign-up; Privy's own wallet prompts are off because quick trades must not ask for
- * confirmation (beta spec), and the trade UI shows status itself.
+ * confirmation, and the trade UI shows status itself.
  */
 export default function PrivyHost() {
   return (

@@ -44,7 +44,7 @@ export const DEFAULT_SETTINGS: TradeSettings = {
   quickBuy: '0.01',
   quickBuy2: '0.05',
   slippagePct: 'auto',
-  // Founder spec: 0.25 ETH per trade unless the user raises it.
+  // A conservative default cap: 0.25 ETH per trade unless the user raises it.
   maxTradeEth: 0.25,
   presets: [
     { buy: ['0.01', '0.05', '0.1', '0.5'], sell: [5, 25, 50, 100], slippagePct: 'auto' },

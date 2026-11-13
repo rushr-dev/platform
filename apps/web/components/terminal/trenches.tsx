@@ -628,7 +628,7 @@ const Row = memo(function Row({
   const quote = quoteText.startsWith('0x') ? null : quoteText;
   const buys = t.buys_24h ?? null;
   const sells = t.sells_24h ?? null;
-  // A buy/sell split draws the ratio bar; a plain 24h count (Data's trades_24h) shows the number only.
+  // A buy/sell split draws the ratio bar; a plain 24h count (the API's trades_24h) shows the number only.
   const split = buys != null || sells != null;
   const txns = split ? (buys ?? 0) + (sells ?? 0) : (t.trades_24h ?? null);
   const fees = t.fees_24h_usd ?? t.fees_paid_usd ?? null;
