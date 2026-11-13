@@ -1,0 +1,34 @@
+/*
+ * Thin, quiet scrollbars for every scroll area in the terminal: a rounded thumb (white at 15%,
+ * brighter while the area is hovered) on a transparent track.
+ * In the base layer, so utilities such as [scrollbar-width:none] still win.
+ */
+@layer base {
+  .terminal-ui,
+  .terminal-ui * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(255 255 255 / 0.15) transparent;
+  }
+
+  .terminal-ui *:hover {
+    scrollbar-color: rgb(255 255 255 / 0.28) transparent;
+  }
+
+  /* Browsers without the standard properties (older Safari) use the WebKit pseudo-elements. */
+  @supports not (scrollbar-color: auto) {
+    .terminal-ui ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .terminal-ui ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .terminal-ui ::-webkit-scrollbar-thumb {
+      background: rgb(255 255 255 / 0.15);
+      border-radius: 999px;
+    }
+    .terminal-ui ::-webkit-scrollbar-thumb:hover {
+      background: rgb(255 255 255 / 0.3);
+    }
+  }
+}

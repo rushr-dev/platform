@@ -12,7 +12,7 @@ import { aggregate, usePairs, type Pair } from '@/lib/pairs';
 import { mergePools, useApiPools } from '@/lib/pools';
 
 import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId, type WindowStats as WindowStatsT } from '@/lib/trades';
-import { RiskTag, SocialLinks, TokenAvatar, riskText } from './bits';
+import { RingedAvatar, RiskTag, ringOf, SocialLinks, riskText } from './bits';
 import { hydrationLabel, isHydrating, PriceChart } from './chart';
 import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
@@ -379,7 +379,7 @@ function Header({ t, pools, priceNow, serverNow }: { t: TokenDetail; pools: Pool
   return (
     <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-2xl border border-white/[0.06] bg-surface px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
-        <TokenAvatar t={t} size={44} badge />
+        <RingedAvatar t={t} size={52} ring={ringOf(t)} badge />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold tracking-[-0.02em]">{t.symbol}</h1>
