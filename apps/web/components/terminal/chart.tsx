@@ -14,6 +14,8 @@ import {
 import { API_URL, type Candle } from '@/lib/api';
 import { usd } from '@/lib/format';
 import type { Hydration } from '@/lib/feed/protocol';
+import type { OwnTrade } from '@/lib/position';
+import { TradePills, type Pill } from './trade-pills';
 import type { Tx } from '@/lib/trades';
 
 /**
@@ -49,6 +51,7 @@ export function PriceChart({
   trades,
   priceUsd = null,
   hydration,
+  marks = null,
 }: {
   address: string;
   /** 1m candles for the last 24h; null while they load. */
@@ -63,11 +66,14 @@ export function PriceChart({
   priceUsd?: number | null;
   /** Server-side backfill state (feed v2): shows "fetching from chain" while history streams in. */
   hydration?: Hydration;
+  /** The signed-in wallet's trades on this token: B/S markers snapped to the interval's candles. */
+  marks?: OwnTrade[] | null;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const candles = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volume = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const pills = useRef<TradePills | null>(null);
   const last = useRef<Bar | null>(null);
   const bars = useRef(new Map<number, Bar>());
   const appliedTop = useRef<string | null>(null);
@@ -112,6 +118,8 @@ export function PriceChart({
       priceFormat: { type: 'custom', formatter: (p: number) => usdPrecise(p), minMove: 1e-12 },
     });
     volume.current = c.addSeries(HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' } });
+    pills.current = new TradePills((time) => bars.current.get(time));
+    candles.current.attachPrimitive(pills.current);
     c.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
     const onMove = (p: MouseEventParams) => {
       const bar = p.time == null ? null : bars.current.get(p.time as number);
@@ -122,6 +130,7 @@ export function PriceChart({
     chart.current = c;
     return () => {
       c.unsubscribeCrosshairMove(onMove);
+      pills.current = null;
       c.remove();
     };
   }, []);
@@ -225,6 +234,37 @@ export function PriceChart({
     if (!hovering && last.current) setLegend(scaled(last.current, scale));
   }, [trades, interval, scale, base, hovering]);
 
+  // Own trades grouped per candle of this interval (buys and sells apart), for markers and the legend.
+  const ownByBar = useMemo(() => {
+    const m = new Map<number, { buys: OwnTrade[]; sells: OwnTrade[] }>();
+    if (!marks?.length) return m;
+    const step = INTERVALS[interval];
+    for (const x of marks) {
+      const bucket = Math.floor(x.time / step) * step;
+      const g = m.get(bucket) ?? { buys: [], sells: [] };
+      (x.side === 'buy' ? g.buys : g.sells).push(x);
+      m.set(bucket, g);
+    }
+    return m;
+  }, [marks, interval]);
+
+  // Pills: green B under the candle for buys, red S over it for sells, on candles the series has
+  // (a pending trade whose candle isn't drawn yet appears when its trade reaches the chart).
+  // Re-applied when trades, the interval's bars or the live candle change.
+  const lastBar = last.current?.time ?? 0;
+  useEffect(() => {
+    const api = pills.current;
+    if (!api) return;
+    const out: Pill[] = [];
+    for (const [bucket, g] of ownByBar) {
+      if (!bars.current.has(bucket)) continue;
+      if (g.buys.length) out.push({ time: bucket, side: 'buy', count: g.buys.length, pending: g.buys.some((x) => x.pending) });
+      if (g.sells.length) out.push({ time: bucket, side: 'sell', count: g.sells.length, pending: g.sells.some((x) => x.pending) });
+    }
+    api.set(out);
+  }, [ownByBar, base, scale, lastBar]);
+
+  const ownHere = legend ? ownByBar.get(legend.time) : undefined;
   const empty = base != null && base.length === 0 && !(trades?.length && FROM_TRADES.has(interval));
   const hydrating = isHydrating(hydration);
   const loading = base == null;
@@ -278,6 +318,7 @@ export function PriceChart({
             <span>
               Vol <span className="text-ink/80">{usd(legend.volume)}</span>
             </span>
+            {ownHere && <OwnLegend g={ownHere} scale={scale} />}
           </div>
         )}
         {loading && <div className="absolute inset-x-6 bottom-10 top-10 animate-pulse rounded-xl bg-white/[0.025]" />}
@@ -394,6 +435,22 @@ export function HydratingPill({ hydration, className = '' }: { hydration: Hydrat
       </span>
       {title}
       {detail && <span className="font-mono text-muted">· {detail}</span>}
+    </span>
+  );
+}
+
+/** "You: B $250 @ $146K · S $90" for the hovered candle. */
+function OwnLegend({ g, scale }: { g: { buys: OwnTrade[]; sells: OwnTrade[] }; scale: number }) {
+  const part = (list: OwnTrade[]) => {
+    const total = list.reduce((t, x) => t + (x.usd ?? 0), 0);
+    const priced = list.filter((x) => x.priceUsd != null);
+    const avg = priced.length ? priced.reduce((t, x) => t + x.priceUsd!, 0) / priced.length : null;
+    return `${usd(total)}${avg != null ? ` @ ${usdPrecise(avg * scale)}` : ''}${list.some((x) => x.pending) ? ' (pending)' : ''}`;
+  };
+  return (
+    <span className="text-ink/80">
+      You{g.buys.length > 0 && <span className="ml-1 text-brand">B {part(g.buys)}</span>}
+      {g.sells.length > 0 && <span className="ml-1 text-risk-high">S {part(g.sells)}</span>}
     </span>
   );
 }

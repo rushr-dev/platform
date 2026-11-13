@@ -150,3 +150,11 @@ The wallet drawer and the profile's wallet card list every token a wallet holds.
 - `GET /wallets/:w/holdings` → `{ items: [{ token, symbol, name, image_url, decimals, balance (raw string), price_usd, price_change_24h_pct, value_usd }], eth_usd, eth_change_24h_pct }`, covering every token with a non-zero balance (not capped at 100), sorted by value.
 - Until then, adding `price_change_24h_pct` and `decimals` to the positions entries would cover per-token 24h % in the list. The wallet's total 24h change only shows when most of its value has a known change.
 - `held_tokens` in `/wallets/:w/pnl` can be wrong. Wallet `0x8876…0904` lists 100 positions with held_tokens > 0, but `balanceOf` is 0 for all of them (likely transfers out that aren't tracked). The wallet views trust the chain for amounts.
+
+### Terminal → Swap: live position (2026-11-13)
+The token page's position (trade panel strip, chart pills) listens to `rushr:trade`:
+- `submitted` applies the trade optimistically. Buys use `amountIn` as ETH wei and `expectedOut` as token units; sells use `amountIn` as token units and `expectedOut` as ETH wei.
+- `confirmed` refetches `/wallets/:w/positions/:token` until the indexer has the hash.
+- `failed` drops the optimistic trade.
+
+Keep those fields and phases stable, or tell Terminal (`apps/web/lib/position.ts`).
