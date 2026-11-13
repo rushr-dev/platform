@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { appShare } from '@/lib/share';
 import { notFound } from 'next/navigation';
 import { cache } from 'react';
 import { TokenPending } from '@/components/terminal/token-pending';
@@ -17,7 +18,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const address = (await params).address.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(address)) return { title: 'Token' };
   const t = await detailOf(address);
-  return { title: t && !isPending(t) ? `$${t.symbol}` : 'Token' };
+  if (!t || isPending(t)) return { title: 'Token' };
+  return appShare(`$${t.symbol}`, `/token/${address}`, `$${t.symbol} (${t.name}) on Robinhood Chain: live chart, safety check and calls on Rushr.`);
 }
 
 export default async function TokenPage({ params }: Props) {
