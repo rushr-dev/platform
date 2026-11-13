@@ -42,7 +42,7 @@ sync() {
   echo "pushed"
 }
 fill_registry() { node packages/core/scripts/export-registry.ts "$1" >/dev/null; cp oss/registry/README.md "$1/"; }
-fill_profile() { cp oss/profile/README.md "$1/"; }
+fill_profile() { cp -R oss/profile/. "$1/"; }
 
 sync registry fill_registry "Update registry"
 sync rushr-dev fill_profile "Update profile"

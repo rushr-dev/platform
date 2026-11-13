@@ -18,8 +18,8 @@ import { Modal } from './profile/modal';
 /**
  * GMGN-style trade panel for the token page: your position in this token (balance, bought, sold,
  * PnL in $ or ETH, Sell All, share), P1/P2/P3 presets, Buy/Sell with preset amounts and sell
- * percentages with previews, then slippage and gas. Quoting and signing are Swap's useQuickTrade;
- * this file only arranges them. Balances are read on-chain, updated optimistically when the swap is
+ * percentages with previews, then slippage and gas. Quoting and signing live in
+ * components/trade/use-quick-trade.ts; this file only arranges them. Balances are read on-chain, updated optimistically when the swap is
  * broadcast, and re-read on confirmation and whenever the live feed shows a trade from this wallet.
  */
 export function TradePanel(props: { token: TradeToken; priceUsd: number | null; position: LivePosition }) {

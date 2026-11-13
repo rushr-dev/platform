@@ -4,7 +4,7 @@ import { BPS } from './fees';
 import type { Quote, Referral, TradeSource } from './types';
 
 /**
- * Referrals are accounted OFF-CHAIN (founder decision 2026-11-12): a referred trader pays the discounted
+ * Referrals are accounted OFF-CHAIN (decided 2026-11-12): a referred trader pays the discounted
  * rate on-chain (the router simply charges fewer bps), the whole fee still goes to the treasury, and the
  * referrer's share accrues in our database for a later payout. No payouts are built yet.
  */

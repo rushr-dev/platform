@@ -83,7 +83,7 @@ export const db: MiddlewareHandler<Ctx> = async (c, next) => {
 /**
  * Top-level fields that may look like a key on specific routes, because the handler verifies them
  * against the chain before storing anything. POST /v1/trades: `txHash` must be a real tx sent from the
- * member's wallet (Data's trade ledger).
+ * member's wallet (the trade ledger, apps/indexer/src/ledger.ts).
  */
 const KEY_SHAPED_ALLOWED: { method: string; path: RegExp; fields: readonly string[] }[] = [
   { method: 'POST', path: /^(\/v1)?\/trades\/?$/, fields: ['txHash'] },

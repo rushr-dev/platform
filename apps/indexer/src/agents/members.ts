@@ -52,16 +52,25 @@ export function normalizeInvite(raw: unknown): string | null {
   return /^[A-Z0-9-]{4,32}$/.test(code) ? code : null;
 }
 
-export type InviteStatus = 'valid' | 'used' | 'expired' | 'revoked' | 'unknown';
+/** `used`: a single-use code already taken. `full`: every seat of a shared code is taken. */
+export type InviteStatus = 'valid' | 'used' | 'full' | 'expired' | 'revoked' | 'unknown';
+
+export const INVITE_FULL_MESSAGE = 'All beta seats are taken. Follow @rushrtrade for the next drop.';
 
 export async function inviteStatus(sql: Sql | TransactionSql, code: string): Promise<InviteStatus> {
-  const [row] = await sql<{ used_at: Date | null; revoked_at: Date | null; expires_at: Date | null }[]>`
-    select used_at, revoked_at, expires_at from invite_codes where code = ${code}`;
+  const [row] = await sql<{ uses: number; max_uses: number; revoked_at: Date | null; expires_at: Date | null }[]>`
+    select uses, max_uses, revoked_at, expires_at from invite_codes where code = ${code}`;
   if (!row) return 'unknown';
   if (row.revoked_at) return 'revoked';
-  if (row.used_at) return 'used';
+  if (row.uses >= row.max_uses) return row.max_uses > 1 ? 'full' : 'used';
   if (row.expires_at && row.expires_at.getTime() <= Date.now()) return 'expired';
   return 'valid';
+}
+
+function inviteError(status: InviteStatus) {
+  if (status === 'full') return fail(403, 'invite_full', INVITE_FULL_MESSAGE, { inviteStatus: status });
+  if (status === 'used') return fail(403, 'invite_used', 'That invite code has already been used.', { inviteStatus: status });
+  return fail(403, 'invite_invalid', 'That invite code is not valid.', { inviteStatus: status });
 }
 
 export const members = new Hono<Ctx>();
@@ -78,7 +87,8 @@ members.get('/invites/:code', async (c) => {
   await limit(c, 'nonce');
   const code = normalizeInvite(c.req.param('code'));
   const status: InviteStatus = code ? await inviteStatus(c.var.sql, code) : 'unknown';
-  return c.json({ code, valid: status === 'valid', status, invitesRequired: on(c.env.INVITES_REQUIRED) }, 200, PRIVATE);
+  const message = status === 'full' ? INVITE_FULL_MESSAGE : null;
+  return c.json({ code, valid: status === 'valid', status, message, invitesRequired: on(c.env.INVITES_REQUIRED) }, 200, PRIVATE);
 });
 
 members.get('/me', async (c) => {
@@ -119,16 +129,15 @@ members.post('/me', async (c) => {
   const member = await sql.begin(async (tx) => {
     let claimedCode: string | null = null;
     if (code) {
-      // One code, one human sign-up: claim it in the same transaction as the account.
+      // Take one seat in the same transaction as the account. The row lock serialises concurrent
+      // claims and `uses < max_uses` is re-checked after it, so the last seat goes to exactly one
+      // sign-up; a sign-up that fails later rolls its seat back. Single-use codes have max_uses = 1.
       const [claimed] = await tx<{ code: string }[]>`
-        update invite_codes set used_at = now()
-        where code = ${code} and used_at is null and revoked_at is null and (expires_at is null or expires_at > now())
+        update invite_codes set uses = uses + 1, used_at = coalesce(used_at, now())
+        where code = ${code} and uses < max_uses and revoked_at is null and (expires_at is null or expires_at > now())
         returning code`;
       if (claimed) claimedCode = claimed.code;
-      else if (inviteRequired) {
-        const status = await inviteStatus(tx, code);
-        throw fail(403, status === 'used' ? 'invite_used' : 'invite_invalid', status === 'used' ? 'That invite code has already been used.' : 'That invite code is not valid.', { inviteStatus: status });
-      }
+      else if (inviteRequired) throw inviteError(await inviteStatus(tx, code));
     }
     const [taken] = await tx<{ id: string }[]>`select id from members where wallet = ${profile.wallet}`;
     if (taken) throw fail(409, 'wallet_taken', 'This wallet already belongs to another account.');
@@ -137,7 +146,7 @@ members.post('/me', async (c) => {
        values ($1, 'human', $2, $3, $4, $5, $6, $7, $8, $9, $10) returning ${memberColumns}`,
       [id, h.handle, profile.wallet, v.privyDid!, displayName, bio, profile.xAvatarUrl, profile.xUsername, Boolean(profile.xUsername), claimedCode],
     );
-    if (claimedCode) await tx`update invite_codes set used_by = ${id} where code = ${claimedCode}`;
+    if (claimedCode) await tx`update invite_codes set used_by = ${id} where code = ${claimedCode} and used_by is null`; // first user
     const referral = await recordReferral(tx, { id, wallet: profile.wallet! }, b.referralCode);
     await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: claimedCode, referral: referral?.code ?? null })})`;
     return { ...row!, referral };

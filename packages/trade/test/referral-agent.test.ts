@@ -114,7 +114,7 @@ describe('prepareSwap (server / agent entry point)', () => {
     const pools = { pools: [v2Pool] };
     await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { config: { feeRecipient: PLACEHOLDER_FEE_RECIPIENT }, discover: pools, forSigning: true })).rejects.toMatchObject({ code: 'FEE_RECIPIENT_PLACEHOLDER' });
     expect(() => assertSignable(cfg)).not.toThrow();
-    // The default config (real founder treasury) is fine for user-confirmed signing...
+    // The default config (the real treasury) is fine for user-confirmed signing...
     await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { discover: pools, forSigning: true })).resolves.toBeTruthy();
     // ...but never for one-click: no RushrRouter yet, then not audited.
     await expect(prepareSwap(noRpc, req('buy', 10n ** 18n), { discover: pools, oneClick: true })).rejects.toThrow(/RushrRouter deployed/);

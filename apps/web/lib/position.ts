@@ -7,9 +7,9 @@ import type { Tx } from './trades';
 /**
  * A wallet's live position in one token, for the token page (trade panel numbers, chart markers).
  *
- * - Server truth: Data's `GET /wallets/:w/positions/:token` (position + that wallet's trades).
+ * - Server truth: the API's `GET /wallets/:w/positions/:token` (position + that wallet's trades).
  * - Price: recomputed on every price tick the page passes in, so value and PnL move with the chart.
- * - Own trades: the `rushr:trade` event (Swap's useQuickTrade) applies a trade optimistically the
+ * - Own trades: the `rushr:trade` event (from components/trade/use-quick-trade.ts) applies a trade optimistically the
  *   moment its hash is final; on `confirmed` the position is refetched until the indexer has the
  *   hash, then the optimistic copy drops. Trades from this wallet seen on the live feed (another
  *   device, a bot) trigger the same refetch.
@@ -73,7 +73,7 @@ export interface LivePosition {
   trades: OwnTrade[];
 }
 
-/** Mirrors Swap's TradeEventDetail (components/trade/use-quick-trade.ts). */
+/** Mirrors TradeEventDetail in components/trade/use-quick-trade.ts. */
 interface TradeEvent {
   phase: 'submitting' | 'submitted' | 'confirmed' | 'failed';
   token: string;

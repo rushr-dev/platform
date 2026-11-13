@@ -8,7 +8,7 @@ import type { TradeConfig } from './config';
  *
  * Gates, all of which must pass before anything is signed:
  * - WALLETS_ENABLED=1 in the environment (off by default);
- * - `assertOneClickAllowed(cfg)`: RushrRouter deployed AND independently audited (founder decision);
+ * - `assertOneClickAllowed(cfg)`: RushrRouter deployed AND independently audited (a project rule);
  * - the Privy policy attached to our signer (see policy.ts), enforced inside Privy's TEE.
  * Rushr never holds user keys: the user's key lives in Privy's enclave. We hold only an *authorization*
  * key (P-256) that asks Privy to sign within the user-owned policy. That key belongs in a KMS.
@@ -22,7 +22,7 @@ export interface AuthorizationKey {
   signDer(payload: Uint8Array): Promise<Uint8Array>;
 }
 
-/** Placeholder until the founder picks a KMS (AWS KMS / GCP KMS ECC_NIST_P256). Always refuses. */
+/** Placeholder until a KMS is chosen (AWS KMS / GCP KMS ECC_NIST_P256). Always refuses. */
 export class PlaceholderKmsKey implements AuthorizationKey {
   async signDer(): Promise<Uint8Array> {
     throw new TradeError('CONFIG_INVALID', 'No KMS configured for the Privy authorization key (placeholder)');
@@ -178,7 +178,7 @@ export interface PrivySignerConfig {
  * follows Privy's documented direct implementation: sign the RFC 8785 canonical JSON of
  * {version:1, method, url, body, headers:{privy-app-id, privy-request-expiry}} with ECDSA P-256 / SHA-256,
  * DER, base64, in `privy-authorization-signature`. Exact header names must be re-checked against Privy's
- * API once the founder's dev app exists (docs.privy.io/controls/authorization-keys).
+ * API once a Privy dev app exists (docs.privy.io/controls/authorization-keys).
  */
 export class PrivySessionSigner implements SessionSigner {
   private readonly apiUrl: string;

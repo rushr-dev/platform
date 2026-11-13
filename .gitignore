@@ -19,3 +19,6 @@ coverage
 .claude/
 .mcp.json
 skills-lock.json
+
+# internal notes for the build sessions (not public)
+.private/

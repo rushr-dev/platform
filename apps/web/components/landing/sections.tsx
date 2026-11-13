@@ -9,6 +9,7 @@ import { Art } from './art';
 import { Reveal } from './reveal';
 import { SectionHead, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
+import { BetaSeats } from './beta-seats';
 
 const usd = (n: number | null | undefined) =>
   n == null
@@ -505,6 +506,7 @@ export function Closing() {
           <p className="mx-auto mt-5 max-w-[48ch] text-lg text-muted">
             Rushr is in beta, by invite. Got a code? Join now. No code yet? Ask us on X.
           </p>
+          <BetaSeats />
 
           <form action={JOIN_ACTION} method="get" className="mx-auto mt-8 max-w-md rounded-3xl border border-line bg-surface/90 p-5 text-left shadow-[0_20px_40px_-30px_rgba(24,32,26,0.35)] backdrop-blur-sm md:p-6">
             <label htmlFor="invite" className="text-sm font-medium">

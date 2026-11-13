@@ -76,7 +76,8 @@ export interface ApiJson {
   quote: Record<string, unknown>;
   referral: { referrer: { id: string; handle: string }; code: string } | null;
   codes: string[];
-  invites: { code: string; used_by: string | null }[];
+  invites: { code: string; used_by: string | null; uses: number; max_uses: number; public: boolean }[];
+  invite: { code: string; max_uses: number; uses: number; public: boolean };
   reports: { target_id: string }[];
   feedback: { message: string; handle: string | null; page: string | null }[];
   trades: unknown[];

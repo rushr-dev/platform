@@ -5,7 +5,7 @@ import type { QuoteAsset } from './types';
 import type { PoolKey } from './universal-router';
 
 /**
- * Adapter for the Rushr indexer's `GET /tokens/:a/pools` (Data stream, branch claude/data-7d2c0a 0c61362).
+ * Adapter for the Rushr indexer's `GET /tokens/:a/pools` (added in 0c61362).
  * Response: `{ pools: ApiPoolRow[] }`, busiest first. Keys come from Initialize events, so hook-managed
  * v4 pools (Doppler) resolve without any RPC on our side. Until the endpoint is deployed, callers get
  * `null` and discovery falls back to on-chain lookups plus `main_pool`.
