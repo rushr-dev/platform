@@ -7,9 +7,9 @@ import { useEffect, useRef, useState } from 'react';
 import { MagnifyingGlass } from '@phosphor-icons/react';
 import { useTokenSearch } from '@/lib/search';
 import { usd } from '@/lib/format';
-import { useLiveStatus } from '@/lib/live';
 import { TokenAvatar, RiskDot } from './bits';
 import { AccountMenu } from './auth/account-menu';
+import { FeedbackButton } from './feedback';
 
 const NAV = [
   { href: '/trenches', label: 'Trenches' },
@@ -43,31 +43,10 @@ export function TopBar() {
       </nav>
       <Search />
       <div className="ml-auto flex items-center gap-2">
-        <LivePill />
+        <FeedbackButton />
         <AccountMenu />
       </div>
     </header>
-  );
-}
-
-/** Live connection and how far behind the chain the last update arrived. */
-function LivePill() {
-  const { connected, latencyMs } = useLiveStatus();
-  const s = latencyMs == null ? null : Math.max(0, latencyMs) / 1000;
-  return (
-    <div
-      className="hidden items-center gap-2 rounded-xl border border-white/[0.06] bg-surface px-3 py-2 font-mono text-xs sm:flex"
-      title={
-        connected
-          ? s == null
-            ? 'Live: updates stream as blocks are produced.'
-            : `Live. Last update arrived ${s < 10 ? s.toFixed(1) : Math.round(s)}s after its block (block timestamps are whole seconds, so this reads up to 1s high).`
-          : 'Reconnecting to the live feed…'
-      }
-    >
-      <span className={`size-2 rounded-full ${connected ? 'bg-brand shadow-[0_0_8px] shadow-brand' : 'bg-risk-high'}`} />
-      {connected ? 'live' : 'reconnecting'}
-    </div>
   );
 }
 
