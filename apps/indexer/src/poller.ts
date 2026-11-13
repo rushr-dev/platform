@@ -4,7 +4,7 @@ import { PAIR_SWAP_TOPICS, ROBINHOOD_CHAIN, tradeTopics, type RawLog } from '@ru
 import { dbUrl, poolHistory, type Env } from './env';
 import { Pipeline, type BatchStats, type RangeStats } from './pipeline';
 import { tokenSummaries } from './api';
-import { columnOf, tokenStats, type Column } from './data';
+import { columnOf, liftfunOn, tokenStats, type Column } from './data';
 import { updateCurveProgress } from './curves';
 import { GATEWAY_COUNT, gateway, type DeltaEvent } from './gateway';
 import type { FeedEvent } from './feed';
@@ -262,7 +262,7 @@ export class ChainPoller extends DurableObject<Env> {
       if (!fresh.has(address) && this.lastCards.get(address) === key) continue;
       this.lastCards.set(address, key);
       out.push({ topic: `token:${address}`, type: 'token', source: 'index', data: card });
-      const col = columnOf(card);
+      const col = columnOf(card, liftfunOn(this.env));
       const prev = this.columns.has(address) ? this.columns.get(address)! : undefined;
       this.columns.set(address, col);
       if (fresh.has(address) && col === 'new') out.push({ topic: 'trenches:new', type: 'launch', source: 'index', data: card });

@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import postgres, { type Sql } from 'postgres';
 import { dbUrl, poller as pollerOf, type Env } from './env';
-import { tokenSnapshot, trenchesList, TRENCHES_DEFAULTS, COLUMNS, type Column } from './data';
+import { liftfunOn, tokenSnapshot, trenchesList, TRENCHES_DEFAULTS, COLUMNS, type Column } from './data';
 import { hydrator } from './hydrator';
 
 /**
@@ -248,7 +248,7 @@ export class Gateway extends DurableObject<Env> {
     }
     const column = topic.slice('trenches:'.length) as Column;
     if (!COLUMNS.includes(column)) return null;
-    return { tokens: await trenchesList(sql, { ...TRENCHES_DEFAULTS, column }) };
+    return { tokens: await trenchesList(sql, { ...TRENCHES_DEFAULTS, column, liftfun: liftfunOn(this.env) }) };
   }
 
   /** From the poller (and hydrators): deliver events to the sockets subscribed to their topic. */

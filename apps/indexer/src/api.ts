@@ -5,6 +5,7 @@ import { dbUrl, type Env } from './env';
 import { hydrator } from './hydrator';
 import {
   POOL_TVL_TTL_S, walletPnl, minuteCandles, subMinuteCandles, tokenDetail, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
+  liftfunOn,
 } from './data';
 
 export { tokenSummaries } from './data';
@@ -46,6 +47,7 @@ api.get('/tokens', async (c) => {
   const column = q('column') ?? 'new';
   const tokens = await trenchesList(c.var.sql, {
     column,
+    liftfun: liftfunOn(c.env),
     limit: Math.min(Number(q('limit') ?? 50), 100),
     minMcap: Number(q('minMcap') ?? 0),
     maxMcap: Number(q('maxMcap') ?? 1e15),

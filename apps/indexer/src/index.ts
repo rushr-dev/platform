@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
 import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
-import { refreshWalletPnl } from './data';
+import { liftfunOn, refreshWalletPnl } from './data';
 import { checkGraduations, updateCurveProgress } from './curves';
 import { Rpc } from './rpc';
 import { ensureFunding, recomputeSignals } from './signals';
@@ -162,6 +162,7 @@ app.post('/admin/pools/backfill', async (c) => {
 // lift.fun graduations (its API decides them; see liftfun.ts): adopt graduated tokens we don't track yet,
 // then mark them migrated at lift.fun's graduation time. Re-run after hydration finishes to mark the adopted ones.
 app.post('/admin/liftfun/graduations', async (c) => {
+  if (!liftfunOn(c.env)) return c.json({ error: 'lift.fun sync is off (LIFTFUN_ENABLED)' }, 409);
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
     const grads = await liftGraduated();
@@ -179,6 +180,7 @@ app.post('/admin/liftfun/graduations', async (c) => {
 
 // lift.fun bonding progress now: tokens traded in the last ?window= minutes (default 30), at most ?max= (default 25).
 app.post('/admin/liftfun/progress', async (c) => {
+  if (!liftfunOn(c.env)) return c.json({ error: 'lift.fun sync is off (LIFTFUN_ENABLED)' }, 409);
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
     return c.json(await syncLiftProgress(sql, Math.min(Number(c.req.query('max') ?? 25), 100), Number(c.req.query('window') ?? 30)));
@@ -317,9 +319,9 @@ export default {
         await sql.end({ timeout: 5 });
       }
     }
-    // lift.fun: bonding progress of traded tokens every 2 minutes; graduations of every token every 10.
+    // lift.fun (only with LIFTFUN_ENABLED=1): bonding progress of traded tokens every 2 minutes; graduations every 10.
     const minute = new Date(event.scheduledTime).getUTCMinutes();
-    if (minute % 2 === 0) {
+    if (liftfunOn(env) && minute % 2 === 0) {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
       try {
         const r = await syncLiftProgress(sql);

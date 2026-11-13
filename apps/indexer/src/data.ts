@@ -44,6 +44,14 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
 /** Launchpads whose tokens trade on a bonding curve before graduating. */
 export const CURVE_LAUNCHPADS = ['pons', 'liftfun'];
 /**
+ * Curve launchpads whose progress we keep current, so they can show in Almost bonded. lift.fun's
+ * progress only updates while LIFTFUN_ENABLED=1; otherwise a frozen value would leave stale cards there.
+ */
+export function almostLaunchpads(liftfun: boolean) {
+  return liftfun ? CURVE_LAUNCHPADS : CURVE_LAUNCHPADS.filter((l) => l !== 'liftfun');
+}
+export const liftfunOn = (env: { LIFTFUN_ENABLED?: string }) => env.LIFTFUN_ENABLED === '1';
+/**
  * Bonding progress at which a curve token moves from New to Almost bonded. GMGN's Robinhood column
  * (2026-11-12) started at ~23% once progress was read from real curve reserves (AME 72%, PIZZA 59%,
  * TARMAC 32%, AGENTIX 29%, CHEEK 26%, FATHER 23%).
@@ -59,12 +67,12 @@ export const COLUMNS: Column[] = ['new', 'almost', 'migrated'];
  */
 export function columnOf(card: {
   status?: unknown; launchpad?: unknown; bonding_progress?: unknown; spam?: unknown; market_cap_usd?: unknown; holders?: unknown; volume_24h_usd?: unknown;
-}): Column | null {
+}, liftfun = false): Column | null {
   if (card.spam === true) return null;
   // Migrated = graduated from a launchpad curve. Direct-to-DEX launches never had a curve: they stay in New
   // (behind the plain-pool toggle), or thousands of copycat pools would bury the real graduations.
   if (card.status === 'migrated') return isDust(card) ? null : 'migrated';
-  const almost = CURVE_LAUNCHPADS.includes(String(card.launchpad)) && Number(card.bonding_progress ?? 0) >= ALMOST_BONDED;
+  const almost = almostLaunchpads(liftfun).includes(String(card.launchpad)) && Number(card.bonding_progress ?? 0) >= ALMOST_BONDED;
   return almost ? 'almost' : 'new';
 }
 
@@ -79,6 +87,8 @@ const ALMOST_STALE = '24 hours';
 
 export interface TrenchesQuery {
   column: string;
+  /** LIFTFUN_ENABLED: lift.fun tokens may show in Almost bonded. */
+  liftfun?: boolean;
   limit: number;
   minMcap: number;
   maxMcap: number;
@@ -102,7 +112,7 @@ export const TRENCHES_DEFAULTS: TrenchesQuery = {
 export async function trenchesList(sql: Sql, q: TrenchesQuery) {
   // Almost bonded = launchpad tokens still on their bonding curve and at least halfway there,
   // like GMGN. Plain-pool tokens have no curve, so they never land here (whatever their market cap).
-  const almost = sql`(t.launchpad = any(${CURVE_LAUNCHPADS}) and coalesce(t.bonding_progress, 0) >= ${ALMOST_BONDED})`;
+  const almost = sql`(t.launchpad = any(${almostLaunchpads(q.liftfun ?? false)}) and coalesce(t.bonding_progress, 0) >= ${ALMOST_BONDED})`;
   // Migrated: tokens that graduated from a launchpad curve (not direct-to-DEX launches), dust hidden.
   const notDust = sql`(coalesce(t.market_cap_usd, 0) >= ${DUST.minMcapUsd}
     and (t.holders >= ${DUST.minHolders} or coalesce(t.volume_24h_usd, 0) >= ${DUST.minVolume24hUsd}))`;
