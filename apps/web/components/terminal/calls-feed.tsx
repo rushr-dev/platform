@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ChatCircle, Heart, Robot } from '@phosphor-icons/react';
 import { auth, useAuth } from '@/lib/auth';
-import { COMMENT_MAX, getComments, postComment, setLike, type Callout, type CalloutComment } from '@/lib/callouts';
+import { COMMENT_MAX, getComments, mcapNow, postComment, setLike, type Callout, type CalloutComment } from '@/lib/callouts';
 import { age, pctSigned, usd } from '@/lib/format';
 import { useMe } from '@/lib/members';
+import { TokenAvatar } from './bits';
 import { MemberAvatar } from './member-avatar';
 
 /**
@@ -54,7 +55,25 @@ export function CallsFeed({
   );
 }
 
-function CallCard({ c, active, onSelect, nowMs }: { c: Callout; active: boolean; onSelect: () => void; nowMs: number }) {
+/**
+ * One call. On the token page it can be selected (its chart marker lights up); in the feed it also
+ * shows which token it is about and, for other members, a Follow button.
+ */
+export function CallCard({
+  c,
+  nowMs,
+  active = false,
+  onSelect,
+  showToken = false,
+  follow = null,
+}: {
+  c: Callout;
+  nowMs: number;
+  active?: boolean;
+  onSelect?: () => void;
+  showToken?: boolean;
+  follow?: { following: boolean; onToggle: () => void } | null;
+}) {
   const session = useAuth();
   const me = useMe();
   const member = me?.status === 'registered';
@@ -87,7 +106,7 @@ function CallCard({ c, active, onSelect, nowMs }: { c: Callout; active: boolean;
     <li
       ref={ref}
       onClick={onSelect}
-      className={`cursor-pointer rounded-xl border p-3 transition ${active ? 'border-brand/50 bg-brand/[0.05]' : 'border-white/[0.06] bg-bg/40 hover:border-white/15'}`}
+      className={`rounded-xl border p-3 transition ${onSelect ? 'cursor-pointer' : ''} ${active ? 'border-brand/50 bg-brand/[0.05]' : 'border-white/[0.06] bg-bg/40 hover:border-white/15'}`}
     >
       <div className="flex items-center gap-2">
         <Link href={`/u/${c.author.handle}`} onClick={(e) => e.stopPropagation()} className="flex min-w-0 items-center gap-2 hover:opacity-90">
@@ -99,17 +118,43 @@ function CallCard({ c, active, onSelect, nowMs }: { c: Callout; active: boolean;
             <Robot size={10} /> Agent
           </span>
         )}
+        {follow && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              follow.onToggle();
+            }}
+            className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-semibold transition ${
+              follow.following ? 'border border-white/[0.12] text-muted hover:border-risk-high/40 hover:text-risk-high' : 'bg-white/[0.08] text-ink hover:bg-white/[0.14]'
+            }`}
+          >
+            {follow.following ? 'Following' : 'Follow'}
+          </button>
+        )}
         <span className="ml-auto shrink-0 text-[11px] text-muted">{age(new Date(c.createdAt).getTime(), nowMs)}</span>
       </div>
-      <div className="mt-2 flex items-start gap-2">
-        <span className={`mt-px shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bull ? 'bg-go/15 text-go' : 'bg-risk-high/15 text-risk-high'}`}>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${bull ? 'bg-go/15 text-go' : 'bg-risk-high/15 text-risk-high'}`}>
           {bull ? 'Bullish' : 'Bearish'}
         </span>
+        {showToken && (
+          <Link
+            href={`/token/${c.token.address}`}
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-white/[0.08] py-0.5 pl-0.5 pr-2.5 text-xs hover:border-white/20"
+          >
+            <TokenAvatar t={{ address: c.token.address, symbol: c.token.symbol ?? '?', launchpad: null, image_url: c.token.imageUrl }} size={18} />
+            <span className="font-semibold">${c.token.symbol ?? '?'}</span>
+            {mcapNow(c) != null && <span className="font-mono text-muted">{usd(mcapNow(c))} MC</span>}
+          </Link>
+        )}
       </div>
       <p className="mt-1.5 whitespace-pre-line break-words text-sm text-ink/90">{c.body}</p>
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-muted">
         {c.atPost.marketCapUsd != null && <span>called at {usd(c.atPost.marketCapUsd)} MC</span>}
-        {since != null && <span className={since >= 0 ? 'text-go' : 'text-risk-high'}>{pctSigned(since, 0)} since call</span>}
+        {c.atPost.marketCapUsd != null && since != null && <span className="text-muted/50">·</span>}
+        {since != null && <span className={since >= 0 ? 'text-go' : 'text-risk-high'}>{pctSigned(since, 0)} since</span>}
         {c.entry && <span className="font-sans">{c.entry.when === 'before_post' ? 'Bought before calling' : 'Bought after calling'}</span>}
       </div>
       <div className="mt-2 flex items-center gap-4 text-xs text-muted">

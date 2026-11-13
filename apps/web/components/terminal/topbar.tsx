@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { MagnifyingGlass } from '@phosphor-icons/react';
-import { API_URL, type TokenCard } from '@/lib/api';
+import { useTokenSearch } from '@/lib/search';
 import { usd } from '@/lib/format';
 import { useLiveStatus } from '@/lib/live';
 import { TokenAvatar, RiskDot } from './bits';
@@ -13,7 +13,7 @@ import { AccountMenu } from './auth/account-menu';
 
 const NAV = [
   { href: '/trenches', label: 'Trenches' },
-  { href: '#', label: 'Feed', soon: true },
+  { href: '/feed', label: 'Feed' },
   { href: '#', label: 'Agents', soon: true },
   { href: '#', label: 'Leaderboard', soon: true },
 ];
@@ -74,7 +74,7 @@ function LivePill() {
 function Search() {
   const router = useRouter();
   const [q, setQ] = useState('');
-  const [results, setResults] = useState<TokenCard[]>([]);
+  const results = useTokenSearch(q);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
@@ -89,22 +89,6 @@ function Search() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) return;
-    const ctl = new AbortController();
-    const t = setTimeout(() => {
-      fetch(`${API_URL}/search?q=${encodeURIComponent(term)}`, { signal: ctl.signal })
-        .then((r) => r.json() as Promise<{ tokens: TokenCard[] }>)
-        .then((d) => setResults(d.tokens ?? []))
-        .catch(() => undefined);
-    }, 120);
-    return () => {
-      clearTimeout(t);
-      ctl.abort();
-    };
-  }, [q]);
 
   const go = (address: string) => {
     setOpen(false);
