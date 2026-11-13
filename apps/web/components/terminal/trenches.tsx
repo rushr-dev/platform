@@ -333,7 +333,7 @@ function Toolbar({
         Plain pools
       </label>
       <div
-        className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface py-1 pl-3 pr-1 text-xs"
+        className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#121315] py-1 pl-3 pr-1 text-xs"
         title="Sets the amount on every Buy button. Trading opens soon."
       >
         <Lightning size={14} weight="fill" className="text-brand" />
@@ -409,7 +409,7 @@ function ColumnPanel({
   const Icon = col.icon;
   const n = activeCount(filters);
   return (
-    <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-surface ${className}`}>
+    <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[#121315] ${className}`}>
       <header className="flex items-center gap-2 border-b border-white/[0.05] px-4 py-3">
         <Icon size={16} weight="fill" className="text-brand" />
         <h2 className="text-sm font-semibold">{col.title}</h2>
@@ -507,12 +507,12 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
         placeholder={placeholder}
         value={(value[k] as number) || ''}
         onChange={(e) => onChange({ ...value, [k]: Number(e.target.value.replace(/[^0-9]/g, '')) || 0 })}
-        className="w-full rounded-lg border border-white/[0.06] bg-bg px-2 py-1.5 font-mono text-xs outline-none focus:border-white/20"
+        className="w-full rounded-lg border border-white/[0.06] bg-black/30 px-2 py-1.5 font-mono text-xs outline-none focus:border-white/20"
       />
     </label>
   );
   return (
-    <div className="grid max-h-[55%] grid-cols-2 gap-2 overflow-y-auto border-b border-white/[0.05] bg-surface-2/50 p-3 lg:grid-cols-4">
+    <div className="grid max-h-[55%] grid-cols-2 gap-2 overflow-y-auto border-b border-white/[0.05] bg-white/[0.02] p-3 lg:grid-cols-4">
       {num('minMcap', 'Min MC $', '0')}
       {num('maxMcap', 'Max MC $', 'any')}
       {num('minVolume', 'Min 24h vol $', '0')}
@@ -525,7 +525,7 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
         <select
           value={value.launchpad}
           onChange={(e) => onChange({ ...value, launchpad: e.target.value })}
-          className="rounded-lg border border-white/[0.06] bg-bg px-2 py-1.5 text-xs outline-none"
+          className="rounded-lg border border-white/[0.06] bg-black/30 px-2 py-1.5 text-xs outline-none"
         >
           <option value="">All</option>
           {['pons', 'doppler', 'lift.fun', 'uniswap-v4'].map((l) => (
