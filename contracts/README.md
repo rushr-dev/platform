@@ -45,7 +45,7 @@ This lets the treasury move from an EOA to a Safe without redeploying, with ever
 | Uniswap Universal Router v2.1.2 | `0x204faca1764b154221e35c0d20abb3c525710498` |
 | WETH | `0x0bd7d308f8e1639fab988df18a8011f41eacad73` |
 | PONS launch factory | `0x7ed598bcef8bd9edd8c97a195c6d13f40801ec7e` |
-| Treasury (constructor argument; founder's EOA, planned move to a Safe) | `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` |
+| Treasury (constructor argument; currently a single EOA, moving to a Safe) | `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` |
 
 ## Build and test
 Requires [Foundry](https://book.getfoundry.sh/).

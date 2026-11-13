@@ -5,9 +5,9 @@ Status 2026-11-12: **decided.**
 - Model: a policy-limited, user-revocable session signer. Our authorization key sits in a KMS (provider to be chosen, behind an interface).
 - `RushrRouter`: approved to build, **audit-gated**. One-click server signing stays off until an independent audit; until then every trade needs a wallet confirmation.
 - Default caps: **0.25 ETH per trade, 1 ETH per rolling 24 h, 30-day grants**, adjustable per user.
-- Nothing has been signed. No account exists until the founder creates the Privy dev app.
+- Nothing has been signed with a real user wallet. A Privy dev app exists for testing.
 
-## Questions for Privy (founder to ask when creating the dev app)
+## Questions for Privy
 1. **Chain 4663 tier:** are transaction policies (`ethereum_transaction` and `ethereum_calldata` conditions) enforced for embedded wallets on Robinhood Chain (`eip155:4663`, custom RPC)? If 4663 is below Tier 2, what does it take to raise it?
 2. **User-owned policies:** can a policy's `owner_id` be the **user's own key quorum** (the embedded wallet's owner)? We need it so that neither our app secret nor our authorization key can edit or delete the policy attached to our signer.
 3. **Per-signer revoke:** can the user remove **one** signer (e.g. a single agent) while keeping the others? The client SDK's `removeSigners` appears to remove all of them.
@@ -18,7 +18,7 @@ Status 2026-11-12: **decided.**
 8. **Exit:** if Privy is unavailable, what is the recovery path besides user export? Is there an SLA?
 
 ### Answers from the live dev app (2026-11-12)
-`packages/trade/scripts/privy-dev-check.ts` was run against the founder's Privy dev app with throwaway P-256 keys:
+`packages/trade/scripts/privy-dev-check.ts` was run against a Privy dev app with throwaway P-256 keys:
 - a "user" key quorum owning the wallet and the policy
 - Rushr's signer key quorum
 - an "agent" key quorum
@@ -42,7 +42,7 @@ Schema corrections made after reading Privy's OpenAPI spec:
 
 Both are reflected in `packages/trade/src/policy.ts`. The test artifacts (one wallet with no funds, one policy, one aggregation, three key quorums) remain in the dev app.
 
-**Direction (founder):** every user gets an embedded, self-custodial, exportable wallet. Once, the user grants Rushr's server a **revocable, policy-limited signer**, so quick-buy needs no popup. Provider-enforced policies fence that signer, so a compromised Rushr server can't drain users.
+**Direction:** every user gets an embedded, self-custodial, exportable wallet. Once, the user grants Rushr's server a **revocable, policy-limited signer**, so quick-buy needs no popup. Provider-enforced policies fence that signer, so a compromised Rushr server can't drain users.
 
 **Recommendation in one line:** use **Privy** embedded wallets with one **session signer** (P-256 authorization key, held in a cloud KMS) per purpose: quick-trade and each in-app agent. Each signer carries a per-user Privy **policy owned by the user**: only Rushr's two router contracts, approvals only to those routers, value caps per tx and per rolling 24 h, an expiry, and everything else denied. The routers force the output to the trader. **Turnkey** is a close second and the fallback. The design depends on one Rushr contract being audited: a router that builds Uniswap routes itself (see the threat model).
 
@@ -168,7 +168,7 @@ Sources were checked on 2026-11-12. "Unverified" marks claims we couldn't confir
 
 ## 4. Option: server-side "one-click mode" on the Universal Router, before the RushrRouter audit
 
-For the founder to decide; **not built**. Asked on 2026-11-12 because client-side signing still waits for Privy's signing round trip (~380 ms from Asia), while GMGN signs server-side.
+An open decision; **not built**. Asked on 2026-11-12 because client-side signing still waits for Privy's signing round trip (~380 ms from Asia), while GMGN signs server-side.
 
 **What it would be:**
 - The user opts in once (user present) to a Privy **session signer**: Rushr's quick-trade key quorum is added to their embedded wallet with a user-owned policy.
@@ -202,7 +202,7 @@ For the founder to decide; **not built**. Asked on 2026-11-12 because client-sid
 
 **Recommendation:**
 - Don't ship server-side signing on the Universal Router.
-- Ship the client-side fast path. Read the real timings from the founder's next trades (`window.__rushrTradeTimings`).
+- Ship the client-side fast path. Read the real timings from the next real trades (`window.__rushrTradeTimings`).
 - If it still feels slow, go for RushrRouter's audit (recipient and fee enforced on-chain), then one-click via session signers on RushrRouter, as section 3 describes.
 - If an earlier step is needed anyway, use buys-only with low caps, as above.
 
@@ -216,26 +216,26 @@ For the founder to decide; **not built**. Asked on 2026-11-12 because client-sid
 
 Each one is revocable on its own from the Permissions page. Quick-trade and agents use the **same mechanism**, so one integration, one audit surface and one revoke UI cover both.
 
-**Against the Agents stream's recommendation** (Kernel/ZeroDev session keys held only by user-controlled software, with "Rushr must never hold any key"):
+**Against the earlier agents design** (`docs/agents.md`: Kernel/ZeroDev session keys held only by user-controlled software, with "Rushr must never hold any key"):
 - **Where they agree:**
   - A target/selector allowlist on the Universal Router alone is unsafe, so recipient forcing needs a Rushr router contract.
   - Caps, expiry and independent revocation per agent.
-- **Where they differ:** the founder's new direction accepts that **Rushr holds a policy-limited signer**, which reverses the Agents stream's hard rule. The trade is: always-on hosted agents and popup-free trading, in exchange for trusting the provider's policy enforcement plus our KMS. On-chain enforcement (Kernel) would also survive a provider compromise.
+- **Where they differ:** this direction accepts that **Rushr holds a policy-limited signer**, which reverses that design's hard rule. The trade is: always-on hosted agents and popup-free trading, in exchange for trusting the provider's policy enforcement plus our KMS. On-chain enforcement (Kernel) would also survive a provider compromise.
 - **Single approach covering both:** **Privy signers + Rushr routers** for quick-trade and hosted in-app agents. ZeroDev/Kernel stays as:
   1. an opt-in "on-chain enforced" mode for users who want guarantees independent of the provider (7702 → Kernel on their EOA, with the session key from the same KMS service)
   2. the route for external wallets, which can't get Privy signers
 - **External / self agents** (SIWE-registered, their own wallets) are unchanged: they get unsigned transactions from `prepareSwap` and sign themselves.
-- **Agents session should update `docs/agents.md`:**
+- **`docs/agents.md` should change accordingly:**
   - In-app option B becomes "Privy signer per agent under the owner's wallet".
   - The "Rushr holds no key" rule becomes "Rushr holds only provider-policy-limited, user-revocable signer keys, in KMS, never able to transfer, approve other spenders, or exceed caps".
 
 ---
 
-## Decisions for the founder
-1. **Provider:** Privy (recommended) or Turnkey. Then create the dev account and app ID yourself, since we never create accounts or handle credentials, and ask the vendor:
+## Decisions (open items marked)
+1. **Provider:** Privy (recommended) or Turnkey. Ask the vendor:
    - **Privy:** the 4663 tier (transaction policies), user-owned policies, and an Enterprise quote at ~1M signatures/month
    - **Turnkey:** an Enterprise quote
-2. **Accept the key-holding model** (policy-limited, revocable, KMS-held) as replacing the Agents stream's "no key" rule.
+2. **Accept the key-holding model** (policy-limited, revocable, KMS-held) as replacing the earlier "no key" rule.
 3. **Approve `RushrRouter`** (structured Uniswap routes, recipient forced, pool allowlist with timelock, guardian pause) for build and independent audit. It's required before server signing on Uniswap routes. Until then, quick-buy needs a wallet confirmation per trade.
 4. **Default caps and expiry:** proposed 0.25 ETH per trade, 1 ETH per day, 30-day grants, user-adjustable.
 5. **KMS:** which cloud (AWS KMS P-256 or GCP KMS) holds the authorization keys.
@@ -272,12 +272,12 @@ Each one is revocable on its own from the Permissions page. Quick-trade and agen
 Verified:
 - 63 unit tests pass. The signature produced by `PrivySessionSigner` verifies with WebCrypto against the canonical payload. Canonical JSON, DER conversion, policy contents, the gates and policy-denial handling are all covered.
 - `signer`, `policy` and `agent` bundle for Workers (`workerd` conditions) with no Node built-ins.
-- Verified live against the founder's Privy dev app (see "Answers from the live dev app" at the top): request signing, policy enforcement, user-owned policies, per-signer revoke and the 24 h cap.
+- Verified live against a Privy dev app (see "Answers from the live dev app" at the top): request signing, policy enforcement, user-owned policies, per-signer revoke and the 24 h cap.
 
 ### Next
 1. Ask Privy the remaining questions: signer and policy limits, pricing, SLA and exit.
 2. Pick the KMS and implement `AuthorizationKey` for it.
 3. Build the user-side grant flow in the web app: the client SDK `addSigners` with the user as policy owner. The dev check used a key quorum to stand in for the user.
-4. Add a Permissions page (grant, caps, revoke, export) in the terminal (Terminal stream), behind `NEXT_PUBLIC_SWAP_ENABLED`.
+4. Add a Permissions page (grant, caps, revoke, export) in the terminal, behind `NEXT_PUBLIC_SWAP_ENABLED`.
 
 One-click trading stays off until RushrRouter's independent audit; until then trades go through the wallet confirmation flow.

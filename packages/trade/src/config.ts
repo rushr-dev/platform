@@ -5,7 +5,7 @@ import { TradeError } from './errors';
 /**
  * Platform fee configuration.
  *
- * Treasury (founder decision 2026-11-12): the founder's own wallet, an EOA with no code on 4663. Known
+ * Treasury (decided 2026-11-12): currently a single EOA (no code on 4663), moving to a Safe. Known
  * risk (docs/trading.md): a single key. Mitigations: hardware-wallet key, regular sweeps, move to a Safe
  * before volume grows. The on-chain routers can switch to a Safe later through their guardian timelock
  * (TreasuryTimelock); this default must then be updated to match.
@@ -22,7 +22,7 @@ export const PLACEHOLDER_FEE_RECIPIENT: Address = '0x000000000000000000000000000
 export const MAX_FEE_BPS = 300;
 
 export interface TradeConfig {
-  /** Platform fee in basis points of the quote-side amount (50 = 0.5%). Founder decision 2026-11-12: 0.5%. */
+  /** Platform fee in basis points of the quote-side amount (50 = 0.5%). Decided 2026-11-12: 0.5%. */
   feeBps: number;
   /** Referee discount, in bps OF THE FEE (1000 = 10% off, so 0.5% becomes 0.45%). */
   referralDiscountBps: number;

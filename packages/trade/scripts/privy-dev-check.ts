@@ -1,5 +1,5 @@
 /**
- * Live check of the one-click signer design against Privy's API with the founder's DEV app.
+ * Live check of the one-click signer design against Privy's API with a Privy DEV app.
  * SIGNING ONLY: it calls eth_signTransaction and never broadcasts (no eth_sendTransaction, no RPC send).
  * The test wallet holds no funds. Keys are throwaway P-256 keys generated in memory for this run:
  * - "user" key  -> simulates the end user's owner key quorum (owns the wallet and the policy);

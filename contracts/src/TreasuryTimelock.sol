@@ -7,7 +7,7 @@ pragma solidity 0.8.26;
 ///         1. the guardian queues a new treasury (`queueTreasury`), which emits `TreasuryQueued` with its eta;
 ///         2. after the immutable `delay`, anyone activates it (`activateTreasury`), emitting `TreasuryChanged`;
 ///         3. until then the guardian can cancel (`cancelTreasury`).
-///         Lets the founder move from an EOA treasury to a Safe without redeploying, while every change
+///         Lets the treasury move from a single EOA to a Safe without redeploying, while every change
 ///         is public for the whole delay.
 abstract contract TreasuryTimelock {
     uint256 public constant MIN_DELAY = 10 minutes;

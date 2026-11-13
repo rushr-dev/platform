@@ -14,8 +14,8 @@ contract TreasuryTimelockTest is Test {
     event TreasuryChanged(address indexed previous, address indexed treasury);
     event TreasuryCancelled(address indexed treasury);
 
-    // The founder's EOA treasury (2026-11-12) and a stand-in for a later Safe.
-    address constant FOUNDER_EOA = 0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40;
+    // The treasury (currently a single EOA, moving to a Safe) and a stand-in for that Safe.
+    address constant TREASURY_EOA = 0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40;
     address safe = makeAddr("safe");
     address guardian = makeAddr("guardian");
     address alice = makeAddr("alice");
@@ -33,10 +33,10 @@ contract TreasuryTimelockTest is Test {
         token.mint(address(curve), 1e27);
         factory = new MockFactory();
         factory.set(address(token), address(curve));
-        pons = new RushrPonsRouter(IPonsFactory(address(factory)), FOUNDER_EOA, 50, 45, guardian, DELAY);
+        pons = new RushrPonsRouter(IPonsFactory(address(factory)), TREASURY_EOA, 50, 45, guardian, DELAY);
         address[] memory hooks = new address[](0);
         router = new RushrRouter(
-            IUniversalRouter(address(0xBEEF)), address(0xE7), FOUNDER_EOA, 50, 45, guardian, guardian, DELAY, hooks
+            IUniversalRouter(address(0xBEEF)), address(0xE7), TREASURY_EOA, 50, 45, guardian, guardian, DELAY, hooks
         );
         vm.deal(alice, 10 ether);
     }
@@ -46,10 +46,10 @@ contract TreasuryTimelockTest is Test {
         r[1] = router;
     }
 
-    function test_startsAtFounderEoa() public view {
+    function test_startsAtTreasuryEoa() public view {
         TreasuryTimelock[2] memory rs = _routers();
         for (uint256 i; i < 2; ++i) {
-            assertEq(rs[i].treasury(), FOUNDER_EOA);
+            assertEq(rs[i].treasury(), TREASURY_EOA);
             assertEq(rs[i].guardian(), guardian);
             assertEq(rs[i].delay(), DELAY);
             assertEq(rs[i].pendingTreasury(), address(0));
@@ -84,7 +84,7 @@ contract TreasuryTimelockTest is Test {
             rs[i].queueTreasury(safe);
             assertEq(rs[i].pendingTreasury(), safe);
             assertEq(rs[i].pendingTreasuryEta(), eta);
-            assertEq(rs[i].treasury(), FOUNDER_EOA, "no instant change");
+            assertEq(rs[i].treasury(), TREASURY_EOA, "no instant change");
 
             vm.expectRevert(abi.encodeWithSelector(TreasuryTimelock.TreasuryTooEarly.selector, eta));
             rs[i].activateTreasury();
@@ -94,7 +94,7 @@ contract TreasuryTimelockTest is Test {
 
             vm.warp(eta);
             vm.expectEmit(true, true, false, false, address(rs[i]));
-            emit TreasuryChanged(FOUNDER_EOA, safe);
+            emit TreasuryChanged(TREASURY_EOA, safe);
             vm.prank(alice); // anyone can activate once the delay has passed
             rs[i].activateTreasury();
             assertEq(rs[i].treasury(), safe);
@@ -119,7 +119,7 @@ contract TreasuryTimelockTest is Test {
             vm.warp(block.timestamp + DELAY);
             vm.expectRevert(TreasuryTimelock.NoPendingTreasury.selector);
             rs[i].activateTreasury();
-            assertEq(rs[i].treasury(), FOUNDER_EOA);
+            assertEq(rs[i].treasury(), TREASURY_EOA);
 
             // A new queue replaces the old one and restarts the clock.
             vm.prank(guardian);
@@ -139,17 +139,17 @@ contract TreasuryTimelockTest is Test {
     }
 
     function test_feesFollowTheTreasuryAfterActivation() public {
-        uint256 eoaBefore = FOUNDER_EOA.balance;
+        uint256 eoaBefore = TREASURY_EOA.balance;
         vm.prank(alice);
         uint256 bought = pons.buy{value: 1 ether}(address(token), 0, alice, block.timestamp + 60, false);
-        assertEq(FOUNDER_EOA.balance - eoaBefore, 0.005 ether, "fee to the EOA before the change");
+        assertEq(TREASURY_EOA.balance - eoaBefore, 0.005 ether, "fee to the EOA before the change");
 
         vm.prank(guardian);
         pons.queueTreasury(safe);
         // While queued, fees still go to the current treasury.
         vm.prank(alice);
         pons.buy{value: 1 ether}(address(token), 0, alice, block.timestamp + 60, false);
-        assertEq(FOUNDER_EOA.balance - eoaBefore, 0.01 ether);
+        assertEq(TREASURY_EOA.balance - eoaBefore, 0.01 ether);
         assertEq(safe.balance, 0);
 
         vm.warp(block.timestamp + DELAY);
@@ -157,7 +157,7 @@ contract TreasuryTimelockTest is Test {
         vm.prank(alice);
         pons.buy{value: 1 ether}(address(token), 0, alice, block.timestamp + 60, false);
         assertEq(safe.balance, 0.005 ether, "buy fee to the new treasury");
-        assertEq(FOUNDER_EOA.balance - eoaBefore, 0.01 ether, "old treasury gets nothing more");
+        assertEq(TREASURY_EOA.balance - eoaBefore, 0.01 ether, "old treasury gets nothing more");
 
         vm.startPrank(alice);
         token.approve(address(pons), bought);
@@ -169,9 +169,9 @@ contract TreasuryTimelockTest is Test {
 
     function test_constructorRejectsBadTimelockParams() public {
         vm.expectRevert(TreasuryTimelock.DelayTooShort.selector);
-        new RushrPonsRouter(IPonsFactory(address(factory)), FOUNDER_EOA, 50, 45, guardian, 5 minutes);
+        new RushrPonsRouter(IPonsFactory(address(factory)), TREASURY_EOA, 50, 45, guardian, 5 minutes);
         vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
-        new RushrPonsRouter(IPonsFactory(address(factory)), FOUNDER_EOA, 50, 45, address(0), DELAY);
+        new RushrPonsRouter(IPonsFactory(address(factory)), TREASURY_EOA, 50, 45, address(0), DELAY);
         vm.expectRevert(TreasuryTimelock.ZeroAddress.selector);
         new RushrPonsRouter(IPonsFactory(address(factory)), address(0), 50, 45, guardian, DELAY);
     }

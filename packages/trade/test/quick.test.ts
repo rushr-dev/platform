@@ -56,7 +56,7 @@ describe('guards', () => {
 });
 
 describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
-  it('buy: one swap call to the Universal Router, fee to the founder treasury, recipient = user', async () => {
+  it('buy: one swap call to the Universal Router, fee to the treasury, recipient = user', async () => {
     const t = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts());
     expect(t.ok).toBe(true);
     expect(t.calls.map((c) => c.label)).toEqual(['swap']);

@@ -39,8 +39,8 @@ import { useRiskAck } from './risk-ack';
  *   signed tx goes to the chain's RPC with eth_sendRawTransactionSync: one round trip to the receipt.
  * - The UI shows "Sending" on click, "Submitted" when the hash is final, then "Confirmed".
  *
- * One Privy setup: sign-in state and signing come from Terminal's `lib/auth`. This module never imports
- * Privy. Settings (presets, slippage, per-trade cap) are Terminal's `lib/settings`. Nothing is signed by
+ * One Privy setup: sign-in state and signing come from `lib/auth`. This module never imports
+ * Privy. Settings (presets, slippage, per-trade cap) come from `lib/settings`. Nothing is signed by
  * Rushr's servers.
  */
 
@@ -137,7 +137,7 @@ function logTimings(t: TradeTimings) {
 }
 
 /**
- * Trade ledger (Data's POST /v1/trades, Privy access token). Sent as soon as the swap hash is final;
+ * Trade ledger (POST /v1/trades, Privy access token). Sent as soon as the swap hash is final;
  * the server derives trader, side, amounts and the treasury fee from the chain, and the referrer from
  * the member's signup attribution, so only the hash goes up. 404 tx_not_found right after broadcast is
  * retried once. Idempotent per hash. Errors are ignored: it never blocks or fails a trade.
@@ -175,7 +175,7 @@ function friendly(e: unknown): string {
 }
 
 /**
- * Slippage from Terminal's settings: 'auto' (the planned default) → automatic 5–15% by token age,
+ * Slippage from the user's settings: 'auto' (the planned default) → automatic 5–15% by token age,
  * volatility and impact, plus the measured tax; a number → exactly that fixed percentage.
  */
 function slippageFor(s: TradeSettings, auto: number): number {

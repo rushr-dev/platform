@@ -51,10 +51,10 @@ describe('fee math', () => {
 });
 
 describe('config', () => {
-  it('defaults to the founder treasury; a placeholder treasury is still refused', () => {
+  it('defaults to the treasury; a placeholder treasury is still refused', () => {
     const cfg = resolveConfig();
     expect(cfg.feeBps).toBe(DEFAULT_TRADE_CONFIG.feeBps);
-    expect(cfg.feeBps).toBe(50); // founder decision: 0.5%
+    expect(cfg.feeBps).toBe(50); // decided: 0.5%
     expect([cfg.referralDiscountBps, cfg.referrerShareBps]).toEqual([1_000, 2_000]);
     expect(cfg.feeRecipient).toBe('0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40');
     expect(() => assertSignable(cfg)).not.toThrow();

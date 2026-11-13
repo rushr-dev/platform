@@ -9,7 +9,7 @@ export function isSwapEnabled(): boolean {
   return process.env.NEXT_PUBLIC_SWAP_ENABLED === '1';
 }
 
-/** Trading needs the flag AND sign-in (a Privy app id): Terminal's lib/auth provides the session. */
+/** Trading needs the flag AND sign-in (a Privy app id): lib/auth provides the session. */
 export function tradingAvailable(): boolean {
   return isSwapEnabled() && privyAppId().length > 0;
 }

@@ -7,7 +7,7 @@ import { tradingAvailable } from './flag';
 import { useKeepWarm, useQuickTrade, type TradeToken } from './use-quick-trade';
 
 /**
- * One-click quick buy for trenches rows (Terminal places it). Uses the trenches quick-buy amount from
+ * One-click quick buy for trenches rows. Uses the trenches quick-buy amount from
  * /settings unless `amountEth` is given. The buy is prebuilt while the pointer is over the button (or it
  * has focus) and refreshed every few seconds, so a click only signs and broadcasts; a cold click quotes
  * first. Sends silently if every guard passes, otherwise shows why. High-risk tokens need
