@@ -639,7 +639,7 @@ const Row = memo(function Row({
   return (
     <li ref={ref} className="relative overflow-hidden border-b border-white/[0.05] transition-colors hover:border-white/[0.1]">
       {/* Keyed by the update time, so the flash replays on each change and fades out on its own. */}
-      {flashAt > 0 && <span key={flashAt} className="row-flash pointer-events-none absolute inset-0" />}
+      {flashAt > 0 && <span key={flashAt} className="trench-flash pointer-events-none absolute inset-0" />}
       <div className="group relative flex items-center gap-2.5 px-3 py-3 transition-colors hover:bg-white/[0.03] sm:gap-3 sm:px-4 md:px-5">
         {/* Whole-row link sits underneath; links and buttons above it stay clickable. */}
         <Link href={`/token/${t.address}`} aria-label={`${t.symbol} token page`} className="absolute inset-0" />

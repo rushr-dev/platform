@@ -32,3 +32,16 @@
     }
   }
 }
+
+/* Trenches row update: a soft gray lift that fades out (instead of a green tint). */
+@keyframes trench-flash {
+  from {
+    background: rgb(255 255 255 / 0.07);
+  }
+  to {
+    background: transparent;
+  }
+}
+.trench-flash {
+  animation: trench-flash 1.2s ease-out forwards;
+}
