@@ -5,7 +5,7 @@ import { quotePool } from '../src/quote';
 import { resolveConfig, RUSHR_TREASURY } from '../src/config';
 import { TRADE_ADDRESSES } from '../src/addresses';
 import { universalRouterAbi } from '../src/universal-router';
-import { erc20Abi, permit2Abi } from '../src/abis';
+import { erc20Abi, permit2Abi, ponsCurveAbi } from '../src/abis';
 import type { PonsPool, V2Pool } from '../src/types';
 
 const TRADER: Address = '0x2222222222222222222222222222222222222222';
@@ -86,12 +86,48 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     expect(decodeFunctionData({ abi: universalRouterAbi, data: t.calls[2]!.data }).args[0]).toBe('0x080c0604'); // V2 swap, UNWRAP, PAY_PORTION, SWEEP
   });
 
-  it('PONS curve tokens: tradable after graduation, even if other pools exist; no pools: clear message', async () => {
-    const c = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ discover: { pools: [curve] } }));
-    expect(c).toMatchObject({ ok: false, calls: [], blockers: [{ code: 'CURVE_NOT_GRADUATED', message: expect.stringContaining('Tradable after graduation') }] });
-    // Found live: a token still on its curve also had a stray 89%-fee v4 pool. Never route it.
-    const both = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ discover: { pools: [v2, curve] } }));
-    expect(both.blockers[0]!.code).toBe('CURVE_NOT_GRADUATED');
+  it('PONS curve tokens trade directly on the curve (never on a stray pool), with no Rushr fee', async () => {
+    // State of a live curve (AEON, 2026-11-13): 1% curve fee + 2% creator tax, 2.17 of 4.2 ETH raised.
+    const live = {
+      ...curve, curve: curve.id, token: TOKEN, quote: '0x0000000000000000000000000000000000000000', nativeQuote: true, snipeTaxBps: 0,
+      quoteReserve: 3849605092614506915n, tokenReserve: 436408400233855505010127109n, feeBps: 100, creatorTaxBps: 200,
+      realQuoteReserve: 2169605092614506915n, graduationThreshold: 4200000000000000000n, sellableTokens: 150694114519569790724412824n,
+      venueFeeBps: 300, venueFeeLabel: 'PONS curve · 1.00% fee + 2.00% creator tax',
+    } as PonsPool;
+    // Found live: a token still on its curve also had a stray 89%-fee v4 pool. Only the curve is used.
+    const b = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ discover: { pools: [v2, live] }, settings: { slippageBps: 500 } }));
+    expect(b.blockers).toEqual([]);
+    expect(b.quote!.pool.venue).toBe('pons-curve');
+    expect(b.calls).toHaveLength(1);
+    expect(b.calls[0]).toMatchObject({ label: 'swap', to: live.curve, value: E(0.1) });
+    const net = E(0.1) - (E(0.1) * 300n) / 10_000n; // curve fee and creator tax come off the input first
+    const out = (live.tokenReserve * net) / (live.quoteReserve + net);
+    expect(b.quote!.amountOut).toBe(out);
+    expect(b.quote!.fee.feeAmount).toBe(0n);
+    expect(feeLine(b.quote!)).toBe('Rushr fee: free on curve trades during beta');
+    expect(decodeFunctionData({ abi: ponsCurveAbi, data: b.calls[0]!.data }).args).toEqual([E(0.1), (out * 9_500n) / 10_000n, TRADER]);
+    expect(b.sellApprovals.map((c) => c.label)).toEqual(['approve token for the curve']);
+    expect(b.record).toMatchObject({ venue: 'pons-curve', feeBps: 0, feeAmount: 0n, router: live.curve });
+
+    // Sell: approve the curve, then curve.sell; min received is net of the curve fee and creator tax.
+    const amount = 10n ** 24n;
+    const sl = await quickSell(fake, { token: TOKEN, trader: TRADER, amount }, opts({ discover: { pools: [live] }, settings: { slippageBps: 500 } }));
+    expect(sl.calls.map((c) => c.label)).toEqual(['approve token for the curve', 'swap']);
+    const gross = (live.quoteReserve * amount) / (live.tokenReserve + amount);
+    const netOut = gross - (gross * 100n) / 10_000n - (gross * 200n) / 10_000n;
+    expect(sl.quote!.amountOut).toBe(netOut);
+    expect(decodeFunctionData({ abi: ponsCurveAbi, data: sl.calls[1]!.data })).toMatchObject({ functionName: 'sell', args: [amount, (netOut * 9_500n) / 10_000n, TRADER] });
+
+    // A buy bigger than what's left completes the curve: capped at the remaining tokens, rest refunded.
+    const big = await quickBuy(fake, { token: TOKEN, ethWei: E(3), trader: TRADER }, opts({ discover: { pools: [live] }, settings: { slippageBps: 500, maxTradeWei: E(5) }, assume: { ethWei: E(10) } }));
+    expect(big.quote!.amountOut).toBe(live.sellableTokens);
+    expect(big.quote!.expectedRefund).toBeGreaterThan(0n);
+    expect(big.calls[0]!.gas).toBe(1_000_000n);
+    expect(big.warnings.join(' ')).toContain('completes the bonding curve');
+
+    // Launch snipe tax: buys wait; the old behaviour stays available behind a flag.
+    expect((await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ discover: { pools: [{ ...live, snipeTaxBps: 9_900 }] } }))).blockers[0]!.code).toBe('SNIPE_TAX_ACTIVE');
+    expect((await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ discover: { pools: [live] }, curveTrading: false }))).blockers[0]!.code).toBe('CURVE_NOT_GRADUATED');
     const n = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ discover: { pools: [] } }));
     expect(n.blockers[0]!.code).toBe('NO_ROUTE');
   });

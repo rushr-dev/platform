@@ -129,7 +129,7 @@ async function discoverPons(client: PublicClient, token: Address, trader?: Addre
     const [, curveRaw] = await client.readContract({ address: TRADE_ADDRESSES.pons.factory, abi: ponsFactoryAbi, functionName: 'getLaunchedToken', args: [token] });
     if (curveRaw === zeroAddress) return null;
     const curve = lc(curveRaw);
-    const [reserves, feeBps, creatorTaxBps, graduated, snipe, realQuoteReserve, graduationThreshold, sellableTokens] = await Promise.all([
+    const [reserves, feeBps, creatorTaxBps, graduated, snipe, realQuoteReserve, graduationThreshold, sellableTokens, nativeQuote] = await Promise.all([
       client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'getReserves' }),
       client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'feeBps' }),
       client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'creatorTaxBps' }),
@@ -138,6 +138,7 @@ async function discoverPons(client: PublicClient, token: Address, trader?: Addre
       client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'realQuoteReserve' }).catch(() => 0n),
       client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'graduationThreshold' }).catch(() => 0n),
       client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'sellableTokens' }).catch(() => 0n),
+      client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'isNativeQuote' }).catch(() => true),
     ]);
     const fee = Number(feeBps);
     const tax = Number(creatorTaxBps);
@@ -153,6 +154,7 @@ async function discoverPons(client: PublicClient, token: Address, trader?: Addre
       creatorTaxBps: tax,
       snipeTaxBps: Number(snipe),
       graduated,
+      nativeQuote,
       realQuoteReserve,
       graduationThreshold,
       sellableTokens,
