@@ -101,13 +101,23 @@ app.post('/admin/signals/all', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
     // ?active: only tokens traded in the last 24h (the ones on cards), missing or oldest signals first.
-    const rows = c.req.query('active') !== undefined
+    // ?flagged&days=N: tokens of the last N days flagged farm or serial dev, newest first, recomputed even if
+    // fresh (after a rule change that can only clear those flags).
+    const flagged = c.req.query('flagged') !== undefined;
+    const days = Math.min(Number(c.req.query('days') ?? 7), 30);
+    const rows = flagged
       ? await sql<{ address: string }[]>`
-          select t.address from tokens t left join signals g on g.token = t.address
-          where t.volume_24h_usd > 0 order by g.updated_at nulls first`
-      : await sql<{ address: string }[]>`select address from tokens`;
+          select t.address from tokens t join signals g on g.token = t.address
+          where t.created_at > now() - ${days} * interval '1 day'
+            and ((g.data->'dev'->>'farm')::bool or (g.data->'dev'->>'serialLauncher')::bool)
+          order by t.created_at desc`
+      : c.req.query('active') !== undefined
+        ? await sql<{ address: string }[]>`
+            select t.address from tokens t left join signals g on g.token = t.address
+            where t.volume_24h_usd > 0 order by g.updated_at nulls first`
+        : await sql<{ address: string }[]>`select address from tokens`;
     for (let i = 0; i < rows.length; i += 100) {
-      await c.env.ENRICH_QUEUE.sendBatch(rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-signals' as const, token: r.address } })));
+      await c.env.ENRICH_QUEUE.sendBatch(rows.slice(i, i + 100).map((r) => ({ body: { kind: 'token-signals' as const, token: r.address, force: flagged } })));
     }
     return c.json({ queued: rows.length });
   } finally {
@@ -452,7 +462,7 @@ export default {
       for (const msg of batch.messages) {
         const body = msg.body;
         if (body.kind === 'token-metadata' || body.kind === 'wallet-funding' || body.kind === 'trade-confirm') continue;
-        if (body.kind !== 'token-signals' || done.has(body.token) || fresh.has(body.token)) {
+        if (body.kind !== 'token-signals' || done.has(body.token) || (fresh.has(body.token) && !body.force)) {
           msg.ack();
           continue;
         }

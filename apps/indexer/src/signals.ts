@@ -121,12 +121,13 @@ export async function loadSnapshot(
   const [counts] = await sql<{ buys: number; sells: number }[]>`
     select count(*) filter (where side = 'buy')::int as buys, count(*) filter (where side = 'sell')::int as sells
     from swaps where token = ${token}`;
-  // Launch farms: the same name and symbol from several different wallets within a day.
+  // Launch farms: the same name and symbol from other wallets in the day *before* this token (earlier
+  // copies only; an original isn't blamed for the copycats that follow it).
   const [farm] = await sql<{ n: number }[]>`
     select count(distinct deployer)::int as n from tokens
     where lower(symbol) = lower(${t.symbol}) and lower(name) = lower(${t.name}) and address <> ${token}
-      and deployer <> ${t.deployer} and created_at > ${t.created_at}::timestamptz - interval '24 hours'
-      and created_at < ${t.created_at}::timestamptz + interval '24 hours'`;
+      and deployer <> ${t.deployer} and created_at >= ${t.created_at}::timestamptz - interval '24 hours'
+      and created_at < ${t.created_at}::timestamptz`;
 
   const snapshot: TokenSnapshot = {
     address: t.address,

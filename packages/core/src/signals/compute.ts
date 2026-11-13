@@ -68,7 +68,10 @@ export interface TokenSnapshot {
   taxSamples?: { side: 'buy' | 'sell'; swapAmount: bigint; traderNet: bigint }[];
   /** Buys and sells so far (honeypot check). Optional. */
   tradeCounts?: { buys: number; sells: number };
-  /** Other tokens with this exact name and symbol launched in the last 24h by different deployers (farms). */
+  /**
+   * Different deployers that launched a token with this exact name and symbol in the 24h *before* this one
+   * (a farm's earlier copies). Later copies don't count: the original isn't blamed for its copycats.
+   */
   sameNameDeployers24h?: number;
 }
 
@@ -172,6 +175,17 @@ export function measureTax(samples: TokenSnapshot['taxSamples'] = []): { buyTaxB
   // Rounding dust (a few wei) isn't tax.
   const clean = (v: number | null) => (v === null ? null : v < 5 ? 0 : v);
   return { buyTaxBps: clean(median(buys)), sellTaxBps: clean(median(sells)) };
+}
+
+/**
+ * A copy in a launch farm: at least `farmDeployers24h` other wallets launched this exact name+symbol in the
+ * day before it, and it doesn't lead its ticker by organic holders (tickers get squatted before the real
+ * launch, so the token people actually hold is the original, whatever its launch order). Ties count as copies.
+ */
+function isFarmCopy(s: TokenSnapshot) {
+  if ((s.sameNameDeployers24h ?? 0) < THRESHOLDS.farmDeployers24h) return false;
+  const own = Math.max(0, s.holderCount - s.airdropped.length);
+  return own <= s.twinOrganicHolders;
 }
 
 /** Another token with this ticker has a far bigger organic community: this one rides its name. */
@@ -278,8 +292,9 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     launches7d,
     rugs,
     migrated: s.devTokens.filter((t) => t.migrated).length,
-    serialLauncher: launches7d >= THRESHOLDS.serialLaunches7d || (s.sameNameDeployers24h ?? 0) >= THRESHOLDS.farmDeployers24h,
-    farm: (s.sameNameDeployers24h ?? 0) >= THRESHOLDS.farmDeployers24h,
+    // Serial dev: this deployer (or its funding cluster) launched many tokens this week. Nothing else.
+    serialLauncher: launches7d >= THRESHOLDS.serialLaunches7d,
+    farm: isFarmCopy(s),
     bestAthMarketCapUsd: athValues.length ? Math.max(...athValues) : null,
   };
   const tax = measureTax(s.taxSamples);
@@ -317,8 +332,8 @@ function judge(
   const add = (level: Reason['level'], text: string) => reasons.push({ level, text });
 
   if (x.copycat) add('high', `copycat: another $${s.symbol} has ${x.twinOrganicHolders} real holders`);
-  if (x.dev.farm) add('high', `launch farm: ${s.sameNameDeployers24h} copies of $${s.symbol} by fresh wallets in 24h`);
-  else if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
+  if (x.dev.farm) add('high', `launch farm copy: ${s.sameNameDeployers24h} other wallets launched $${s.symbol} in the 24h before it`);
+  if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
   if (x.noSells) add('high', `${s.tradeCounts!.buys} buys and no sells: may not be sellable`);
   if (x.sellTaxBps != null && x.sellTaxBps >= 5_000) add('high', `sell tax ${x.sellTaxBps / 100}%`);
   else if (x.sellTaxBps != null && x.sellTaxBps >= 1_000) add('medium', `sell tax ${x.sellTaxBps / 100}%`);

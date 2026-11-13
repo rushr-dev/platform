@@ -161,10 +161,38 @@ describe('tax, no-sells and launch farms', () => {
     expect(computeSignals(base({ tradeCounts: { buys: 40, sells: 0 }, now: T0 + 120 })).noSells).toBe(false);
   });
 
-  it('marks a launch farm (same token relaunched by fresh wallets) as a serial launcher', () => {
-    const s = computeSignals(base({ symbol: 'TURBO', sameNameDeployers24h: 14 }));
-    expect(s.dev).toMatchObject({ serialLauncher: true, farm: true });
+  // Fixtures shaped on prod PONS tokens (2026-11-13): GIRAFF's original has 338 holders and squatters
+  // launched before it; its copies have 1-5 holders.
+  const holdersOf = (n: number) => Array.from({ length: n }, (_, i) => ({ wallet: `h${i}`, amount: SUPPLY / 1000n }));
+
+  it('an original with only later copies is neither a farm nor a serial dev', () => {
+    // Copies came after it, so the loader counts no earlier same-name deployers.
+    const s = computeSignals(base({ symbol: 'AEON', holders: holdersOf(124), holderCount: 124, sameNameDeployers24h: 0, twinOrganicHolders: 2 }));
+    expect(s.dev).toMatchObject({ serialLauncher: false, farm: false });
+    expect(s.reasons.map((r) => r.text).join(' ')).not.toMatch(/farm|tokens this week/);
+  });
+
+  it('an original launched after squatters is not a farm when it leads its ticker by organic holders', () => {
+    const s = computeSignals(base({ symbol: 'GIRAFF', holders: holdersOf(338), holderCount: 338, sameNameDeployers24h: 7, twinOrganicHolders: 5 }));
+    expect(s.dev).toMatchObject({ serialLauncher: false, farm: false });
+  });
+
+  it('a copy of a farm is flagged farm (high risk) but not serial dev', () => {
+    const s = computeSignals(base({ symbol: 'GIRAFF', holders: holdersOf(3), holderCount: 3, sameNameDeployers24h: 7, twinOrganicHolders: 338 }));
+    expect(s.dev).toMatchObject({ serialLauncher: false, farm: true });
     expect(s.risk).toBe('high');
-    expect(s.reasons[0]!.text).toContain('launch farm: 14 copies');
+    expect(s.reasons.map((r) => r.text)).toContain('launch farm copy: 7 other wallets launched $GIRAFF in the 24h before it');
+  });
+
+  it('fresh farm copies tied at a holder or two still count as farm', () => {
+    const s = computeSignals(base({ symbol: 'TURBO', holders: holdersOf(1), holderCount: 1, sameNameDeployers24h: 14, twinOrganicHolders: 1 }));
+    expect(s.dev.farm).toBe(true);
+  });
+
+  it('a deployer with 158 launches this week is a serial dev (and not a farm by that alone)', () => {
+    const devTokens = Array.from({ length: 158 }, (_, i) => ({ address: `t${i}`, createdAt: T0 - i * 3600, athMarketCapUsd: null, marketCapUsd: null, migrated: false }));
+    const s = computeSignals(base({ devTokens }));
+    expect(s.dev).toMatchObject({ serialLauncher: true, farm: false, launches7d: 158 });
+    expect(s.reasons.map((r) => r.text)).toContain('dev launched 158 tokens this week');
   });
 });
