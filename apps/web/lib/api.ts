@@ -37,7 +37,7 @@ export interface TokenCard {
   migrated_at?: string | null;
   /** Sum of the pools the API has measured (v3/v2 today); absent before the pools API deploy. */
   liquidity_usd?: number | null;
-  // Trenches card fields requested from Data (docs/team-plan.md, Requests). All optional: the
+  // Trenches card fields requested from Data (requests to Data). All optional: the
   // cards hide whatever isn't there yet.
   /** Transfer tax in percent (the larger of buy/sell when they differ). */
   tax_pct?: number | null;

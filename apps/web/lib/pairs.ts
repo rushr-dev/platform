@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 /**
  * Pools for a token from DexScreener's public API, read in the browser. Our indexer only sees
  * Uniswap v4 and launchpad curves today and has no liquidity figure, so the pool panel and the
- * "all venues" numbers come from here until the API serves them (see Requests in docs/team-plan.md).
+ * "all venues" numbers come from here until the API serves them.
  */
 
 export interface Pair {

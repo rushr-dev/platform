@@ -8,7 +8,7 @@ import { useEthQuote, useWalletPnl, type Position } from './profile';
 /**
  * A wallet's holdings for the wallet views: ETH and USDG plus every token it holds, valued in $.
  *
- * Stopgap until Data ships a holdings endpoint (requested in docs/team-plan.md): the token list
+ * Stopgap until Data ships a holdings endpoint: the token list
  * comes from the wallet's positions (/wallets/:w/pnl), amounts and decimals are read on-chain in one
  * multicall, and prices are the positions' `price_usd`. ETH's price and 24h change come from
  * DexScreener. Per-token 24h change is null until the API provides it.
