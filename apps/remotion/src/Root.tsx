@@ -1,5 +1,5 @@
 import { Composition, Still } from 'remotion';
-import { Announce } from './video/Announce';
+import { Announce, ANNOUNCE_DEFAULTS } from './video/Announce';
 import { OgCard } from './banner/OgCard';
 import { XBanner } from './banner/XBanner';
 
@@ -10,6 +10,6 @@ export const Root = () => (
     {/* Link preview card for X, Telegram and Discord: 1200×630. */}
     <Still id="OgCard" component={OgCard} width={1200} height={630} />
     {/* X announcement loop: 1920×1080, 15 s at 30 fps. */}
-    <Composition id="Announce" component={Announce} width={1920} height={1080} fps={30} durationInFrames={450} />
+    <Composition id="Announce" component={Announce} defaultProps={ANNOUNCE_DEFAULTS} width={1920} height={1080} fps={30} durationInFrames={450} />
   </>
 );
