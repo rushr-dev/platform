@@ -1,1 +1,3 @@
 out/
+# Generated media (Replicate: Kling background loop, ElevenLabs music). Regenerate with scripts/replicate.mjs.
+public/media/
