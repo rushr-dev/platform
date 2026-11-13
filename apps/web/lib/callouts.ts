@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { auth } from './auth';
 import { V1 } from './members';
 
@@ -127,4 +127,189 @@ export async function postComment(id: string, body: string): Promise<{ ok: true 
   } catch {
     return { ok: false, message: 'Network error. Try again.' };
   }
+}
+
+/* ------------------------------------------------------------------ feeds */
+
+export type FeedKind = 'global' | 'following';
+const FEED_PAGE = 20;
+const feedUrl = (kind: FeedKind) => `${V1}/${kind === 'global' ? 'feed' : 'me/feed'}`;
+
+async function fetchFeed(kind: FeedKind, before: string | null): Promise<{ items: Callout[]; next: string | null } | null> {
+  const qs = `limit=${FEED_PAGE}${before ? `&before=${encodeURIComponent(before)}` : ''}&r=${Date.now()}`;
+  const r = await fetch(`${feedUrl(kind)}?${qs}`, { headers: kind === 'following' ? await authHeaders() : undefined });
+  if (!r.ok) {
+    await r.body?.cancel();
+    return null;
+  }
+  const b = (await r.json()) as { items?: Callout[]; next?: string | null };
+  return { items: b.items ?? [], next: b.next ?? null };
+}
+
+export interface Feed {
+  /** Null until the first page (or the cached one) is in. */
+  items: Callout[] | null;
+  /** Newer calls fetched by the poll, shown only when the reader asks (no jumpy inserts). */
+  incoming: Callout[];
+  showIncoming: () => void;
+  loadMore: () => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  failed: boolean;
+}
+
+/**
+ * A newest-first feed: the first page paints from this tab's cache, then refreshes; every 10s new
+ * calls are collected into `incoming` for a "N new calls" pill; older pages load with the cursor.
+ * A call posted from this browser goes straight to the top.
+ */
+export function useFeed(kind: FeedKind, enabled = true): Feed {
+  const [items, setItems] = useState<Callout[] | null>(null);
+  const [incoming, setIncoming] = useState<Callout[]>([]);
+  const [next, setNext] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const cacheKey = `rushr.feed.${kind}`;
+  // The poll reads the shown and pending calls through refs (no state updates nested in updaters).
+  const shown = useRef<Callout[] | null>(null);
+  shown.current = items;
+  const pending = useRef<Callout[]>([]);
+  pending.current = incoming;
+
+  useEffect(() => {
+    setItems(null);
+    setIncoming([]);
+    setNext(null);
+    setFailed(false);
+    if (!enabled) return;
+    let live = true;
+    try {
+      const cached = JSON.parse(sessionStorage.getItem(cacheKey) ?? 'null') as { items: Callout[]; next: string | null } | null;
+      if (cached) {
+        setItems(cached.items);
+        setNext(cached.next);
+      }
+    } catch {
+      // storage unavailable
+    }
+    const first = async () => {
+      const page = await fetchFeed(kind, null).catch(() => null);
+      if (!live) return;
+      if (!page) return setFailed(true);
+      setItems(page.items);
+      setNext(page.next);
+      try {
+        sessionStorage.setItem(cacheKey, JSON.stringify(page));
+      } catch {
+        // storage unavailable or full
+      }
+    };
+    void first();
+    const poll = window.setInterval(async () => {
+      const page = await fetchFeed(kind, null).catch(() => null);
+      if (!live || !page || shown.current == null) return;
+      const known = new Set([...(shown.current ?? []), ...pending.current].map((c) => c.id));
+      const fresh = page.items.filter((c) => !known.has(c.id));
+      if (fresh.length) setIncoming((inc) => [...fresh, ...inc]);
+    }, 10_000);
+    const onPosted = (e: Event) => {
+      const c = (e as CustomEvent<Callout>).detail;
+      if (c) setItems((cur) => [c, ...(cur ?? []).filter((x) => x.id !== c.id)]);
+    };
+    window.addEventListener(CALL_POSTED, onPosted);
+    return () => {
+      live = false;
+      window.clearInterval(poll);
+      window.removeEventListener(CALL_POSTED, onPosted);
+    };
+  }, [kind, enabled, cacheKey]);
+
+  return {
+    items,
+    incoming,
+    showIncoming: () => {
+      setItems((cur) => {
+        const seen = new Set((cur ?? []).map((c) => c.id));
+        return [...incoming.filter((c) => !seen.has(c.id)), ...(cur ?? [])];
+      });
+      setIncoming([]);
+    },
+    loadMore: () => {
+      if (!next || loadingMore) return;
+      setLoadingMore(true);
+      void fetchFeed(kind, next)
+        .then((page) => {
+          if (!page) return;
+          setItems((cur) => {
+            const seen = new Set((cur ?? []).map((c) => c.id));
+            return [...(cur ?? []), ...page.items.filter((c) => !seen.has(c.id))];
+          });
+          setNext(page.next);
+        })
+        .catch(() => undefined)
+        .finally(() => setLoadingMore(false));
+    },
+    hasMore: !!next,
+    loadingMore,
+    failed,
+  };
+}
+
+/* ------------------------------------------------------------------ follows */
+
+/**
+ * Which of these members the signed-in member follows (GET /v1/me/following?ids=, 100 at a time),
+ * with an optimistic toggle (POST/DELETE /v1/follows/:ref).
+ */
+export function useFollowing(ids: string[], enabled: boolean) {
+  const [set, setSet] = useState<Set<string>>(new Set());
+  const key = [...new Set(ids)].sort().join(',');
+  useEffect(() => {
+    if (!enabled || !key) return;
+    let live = true;
+    void (async () => {
+      const found = new Set<string>();
+      const all = key.split(',');
+      for (let i = 0; i < all.length; i += 100) {
+        try {
+          const r = await fetch(`${V1}/me/following?ids=${all.slice(i, i + 100).join(',')}`, { headers: await authHeaders() });
+          if (!r.ok) continue;
+          for (const id of ((await r.json()) as { following?: string[] }).following ?? []) found.add(id);
+        } catch {
+          // keep what we have
+        }
+      }
+      if (live) setSet((cur) => new Set([...cur, ...found]));
+    })();
+    return () => {
+      live = false;
+    };
+  }, [key, enabled]);
+  const toggle = async (id: string, on: boolean) => {
+    setSet((cur) => {
+      const n = new Set(cur);
+      if (on) n.add(id);
+      else n.delete(id);
+      return n;
+    });
+    try {
+      const r = await fetch(`${V1}/follows/${encodeURIComponent(id)}`, { method: on ? 'POST' : 'DELETE', headers: await authHeaders() });
+      if (!r.ok) throw new Error(String(r.status));
+    } catch {
+      setSet((cur) => {
+        const n = new Set(cur);
+        if (on) n.delete(id);
+        else n.add(id);
+        return n;
+      });
+    }
+  };
+  return { isFollowing: (id: string) => set.has(id), toggle };
+}
+
+/** Market cap now, from the market cap at the call and the price move since. */
+export function mcapNow(c: Callout): number | null {
+  const { priceUsd: p0, marketCapUsd: m0 } = c.atPost;
+  const p1 = c.result.priceUsd;
+  return p0 && m0 && p1 ? (m0 * p1) / p0 : null;
 }
