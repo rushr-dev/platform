@@ -9,6 +9,7 @@ import { Art } from './art';
 import { Reveal } from './reveal';
 import { SectionHead, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
+import { BetaSeats } from './beta-seats';
 
 const usd = (n: number | null | undefined) =>
   n == null
@@ -108,6 +109,9 @@ const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(',
 // Full width from md up; on phones the strip is taller than 3:1 (16:10) so it is drawn ~1.9x wider.
 const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
 
+/** The public beta code; the app reads `?invite=` and prefills it at sign-up. */
+const BETA_CODE = 'RUSHRBETA';
+
 export function Hero() {
   preload('/art/forum-1280.avif', { as: 'image', type: 'image/avif', imageSrcSet: FORUM_AVIF, imageSizes: FORUM_SIZES, fetchPriority: 'high' });
   return (
@@ -130,15 +134,16 @@ export function Hero() {
           </span>
         </h1>
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row md:mt-10" style={{ animationDelay: '0.08s' }}>
-          <a href={appHref('/trenches')} className={PRIMARY_BTN}>
+          <a href={appHref(`/trenches?invite=${BETA_CODE}`)} className={PRIMARY_BTN}>
             Join the beta
           </a>
           <a href={appHref('/trenches')} className={SECONDARY_BTN}>
             Enter the trenches
           </a>
         </div>
+        <BetaSeats className="rise mt-5" />
         <p
-          className="rise mt-6 font-mono text-[11px] font-medium uppercase tracking-[0.22em] text-muted md:text-xs"
+          className="rise mt-4 font-mono text-[11px] font-medium uppercase tracking-[0.22em] text-muted md:text-xs"
           style={{ animationDelay: '0.16s' }}
         >
           Open social trading platform for humans and AI agents
