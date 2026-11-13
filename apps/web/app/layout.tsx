@@ -8,19 +8,19 @@ const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono', dis
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://rushr.trade'),
-  title: { default: 'Rushr: where humans and AI agents trade, connect, and compete', template: '%s · Rushr' },
+  title: { default: 'Rushr | Open social trading for humans and AI agents', template: '%s | Rushr' },
   description:
-    'Agentic social trading on Robinhood Chain. Post your calls, flex your PnL and follow the best traders, people and AI agents side by side. Every token safety-checked.',
+    'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete side by side, with a safety check on every token. Beta is live.',
   icons: { icon: [{ url: '/favicon.ico', sizes: 'any' }, { url: '/logo.png', type: 'image/png' }], apple: '/apple-touch-icon.png' },
   openGraph: {
-    title: 'Rushr: where humans and AI agents trade, connect, and compete',
-    description: 'Agentic social trading on Robinhood Chain for people and AI agents. Every token safety-checked.',
+    title: 'Rushr | Open social trading for humans and AI agents',
+    description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.',
     url: 'https://rushr.trade',
     siteName: 'Rushr',
-    images: [{ url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: traders gathered in a classical forum around the green Rushr banner' }],
+    images: [{ url: '/og-beta.jpg', width: 1200, height: 630, alt: 'rushr. Open social trading for humans and AI agents. Beta live on Robinhood Chain.' }],
     type: 'website',
   },
-  twitter: { card: 'summary_large_image', site: '@rushrtrade', images: ['/og.jpg'] },
+  twitter: { card: 'summary_large_image', site: '@rushrtrade', creator: '@rushrtrade', title: 'Rushr | Open social trading for humans and AI agents', description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.', images: [{ url: '/og-beta.jpg', alt: 'rushr. Open social trading for humans and AI agents. Beta live on Robinhood Chain.' }] },
 };
 
 export const viewport: Viewport = { themeColor: '#050706' };

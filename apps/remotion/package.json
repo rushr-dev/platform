@@ -5,6 +5,7 @@
   "scripts": {
     "studio": "remotion studio src/index.ts",
     "render:x-banner": "remotion still src/index.ts XBanner out/x-banner.png",
+    "render:og": "remotion still src/index.ts OgCard out/og.png",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
