@@ -6,12 +6,13 @@ import { CaretDown, Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phospho
 import type { TokenDetail } from '@/lib/api';
 import { auth, useAuth } from '@/lib/auth';
 import { compact, countFmt, pctSigned, usd } from '@/lib/format';
-import { useMe } from '@/lib/members';
+import { getMe, setMe, useMe } from '@/lib/members';
 import { CALL_MAX, postCallout } from '@/lib/callouts';
+import { useHint } from '@/lib/session-hint';
 import type { LivePosition } from '@/lib/position';
 import { TRADE_LIMIT, WINDOWS, type Tx, type WindowId, type WindowStats } from '@/lib/trades';
-import { GeneratedAvatar } from './avatar';
-import { iconSrc, TokenAvatar } from './bits';
+import { MemberAvatar } from './member-avatar';
+import { TokenAvatar } from './bits';
 
 /* ------------------------------------------------------------------ position */
 
@@ -103,7 +104,12 @@ export function ThesisBox({ t, position }: { t: TokenDetail; position: LivePosit
     } else setMsg({ ok: false, text: r.message });
   };
 
-  const canPost = session.authenticated && !!member;
+  // While the session or the member is still loading, show a neutral state, never "Sign up".
+  const hint = useHint();
+  const loading = !member && (hint === undefined || (!session.ready && !!hint) || (session.authenticated && me == null));
+  // A member painted from the session hint can write; posting waits for the real session.
+  const canPost = !!member;
+  const live = session.ready && session.authenticated;
 
   return (
     <section
@@ -114,10 +120,7 @@ export function ThesisBox({ t, position }: { t: TokenDetail; position: LivePosit
       <div className="flex items-center gap-2">
         {member ? (
           <Link href={`/u/${member.handle}`} className="flex min-w-0 items-center gap-2 hover:opacity-90">
-            <span className="relative block size-7 shrink-0 overflow-hidden rounded-full">
-              <GeneratedAvatar address={member.wallet} symbol={member.handle} size={28} />
-              {member.avatarUrl && <img src={iconSrc(member.avatarUrl)} alt="" className="absolute inset-0 size-full object-cover" />}
-            </span>
+            <MemberAvatar member={member} size={28} />
             <span className="min-w-0 truncate text-sm font-medium">@{member.handle}</span>
           </Link>
         ) : (
@@ -160,13 +163,23 @@ export function ThesisBox({ t, position }: { t: TokenDetail; position: LivePosit
             <button
               type="button"
               onClick={() => void post()}
-              disabled={busy || !text.trim()}
+              disabled={busy || !text.trim() || !live}
+              title={live ? undefined : 'Signing you in…'}
               className="ml-auto rounded-lg bg-ink px-3 py-1.5 text-xs font-semibold text-bg hover:bg-white disabled:opacity-40"
             >
               {busy ? 'Posting…' : 'Post call'}
             </button>
           </div>
         </>
+      ) : loading ? (
+        <div className="mt-2 h-[86px] animate-pulse rounded-xl bg-white/[0.03]" aria-busy aria-label="Loading" />
+      ) : session.authenticated && me?.status === 'unavailable' ? (
+        <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-white/[0.08] px-3 py-3 text-sm text-muted">
+          <span>Couldn’t check your Rushr profile.</span>
+          <button type="button" onClick={() => void getMe().then(setMe)} className="rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs font-semibold text-ink hover:bg-white/10">
+            Retry
+          </button>
+        </div>
       ) : (
         <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-dashed border-white/[0.08] px-3 py-3 text-sm text-muted">
           <span>Sign up to post your call.</span>

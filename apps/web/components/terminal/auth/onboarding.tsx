@@ -46,13 +46,15 @@ export function LegalLine({ className = '' }: { className?: string }) {
  * to finish sign-up (handle + invite) before they use the terminal as a member.
  */
 export function MemberGate() {
-  const { authenticated, user } = useAuth();
+  const { ready, authenticated, user } = useAuth();
   const me = useMe();
   const checked = useRef<string | null>(null);
 
   useEffect(() => captureInviteFromUrl(), []);
 
   useEffect(() => {
+    // Until the SDK has answered, keep whatever member the page painted from the session hint.
+    if (!ready) return;
     if (!authenticated || !user) {
       checked.current = null;
       setMe(null);
@@ -61,7 +63,7 @@ export function MemberGate() {
     if (checked.current === user.id) return;
     checked.current = user.id;
     void getMe().then(setMe);
-  }, [authenticated, user]);
+  }, [ready, authenticated, user]);
 
   if (!authenticated || !user || me?.status !== 'unregistered') return null;
   return <Onboarding user={user} invitesRequired={me.invitesRequired} />;

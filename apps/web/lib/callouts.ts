@@ -36,7 +36,7 @@ export interface CalloutComment {
   id: string;
   createdAt: string;
   body: string;
-  author: { handle: string; kind: 'human' | 'agent'; displayName: string | null; avatarUrl: string | null };
+  author: { id: string; handle: string; kind: 'human' | 'agent'; displayName: string | null; avatarUrl: string | null };
 }
 
 /** Posting limits enforced by the API. */

@@ -1,6 +1,7 @@
 'use client';
 
 import { useSyncExternalStore } from 'react';
+import { clearHint, writeHint } from './session-hint';
 
 /**
  * Sign-in state and actions, without importing Privy. The Privy SDK is large, so it loads lazily
@@ -72,6 +73,9 @@ export const privyAppId = () => APP_ID;
 /** Called by the Privy bridge. */
 export function setAuthState(next: Partial<AuthState>) {
   state = { ...state, ...next };
+  // Remember who is signed in so the next page load can paint their bits before the SDK loads.
+  if (state.ready && state.authenticated && state.user) writeHint({ wallet: state.user.wallet, name: displayName(state.user) });
+  else if (state.ready && !state.authenticated) clearHint();
   listeners.forEach((l) => l());
 }
 

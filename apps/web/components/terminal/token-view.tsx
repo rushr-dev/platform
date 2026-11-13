@@ -18,6 +18,7 @@ import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
 import { useAuth } from '@/lib/auth';
 import { usePosition } from '@/lib/position';
+import { useHint } from '@/lib/session-hint';
 import { updateSettings, useSettings } from '@/lib/settings';
 import { AboutCard, PositionCard, ThesisBox } from './simple-rail';
 import { useTokenCallouts, type Callout } from '@/lib/callouts';
@@ -104,7 +105,10 @@ export function TokenView({
   // drawn on the chart as B/S markers.
   const session = useAuth();
   const ethUsd = useEthUsd();
-  const myWallet = session.authenticated ? (session.user?.wallet ?? null) : null;
+  // Positions and trades are public reads, so the wallet from the session hint fetches them while
+  // the auth SDK is still loading; the real session takes over once it answers.
+  const hint = useHint();
+  const myWallet = session.authenticated ? (session.user?.wallet ?? null) : !session.ready ? (hint?.wallet ?? null) : null;
   const position = usePosition({ wallet: myWallet, token: t.address, decimals: t.decimals, priceUsd: priceNow, ethUsd, feed: trades });
   // Simple rail by default; Pro mode (remembered per browser) shows the full panel and stats.
   const pro = useSettings().proMode;
@@ -221,6 +225,7 @@ export function TokenView({
               hydration={live.hydration}
               marks={myWallet ? position.trades : null}
               calls={calls.items}
+              avgBuy={myWallet && position.loaded && position.held > 0 && position.boughtTokens > 0 ? position.boughtUsd / position.boughtTokens : null}
               selectedCall={selectedCall}
               onSelectCall={(id) => {
                 setSelectedCall(id);

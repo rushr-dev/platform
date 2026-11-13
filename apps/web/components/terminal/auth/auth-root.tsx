@@ -3,6 +3,8 @@
 import dynamic from 'next/dynamic';
 import { useEffect, useState } from 'react';
 import { onAuthLoadRequest, privyAppId, setAuthState } from '@/lib/auth';
+import { setMe, type MeResult } from '@/lib/members';
+import { readHint } from '@/lib/session-hint';
 import { MemberGate } from './onboarding';
 
 const PrivyHost = dynamic(() => import('./privy-host'), { ssr: false });
@@ -29,9 +31,29 @@ export function AuthRoot() {
       return;
     }
     const stop = onAuthLoadRequest(() => setLoad(true));
-    const idle = (cb: () => void) =>
-      typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(cb, { timeout: 4_000 }) : window.setTimeout(cb, 0);
-    const t = window.setTimeout(() => idle(() => setLoad(true)), LOAD_AFTER_MS);
+    // Someone was signed in here last time: paint their member at once and load the SDK now
+    // (it restores the session) instead of after the usual delay.
+    const hint = readHint();
+    if (hint) {
+      const me = hint.me as MeResult | null;
+      if (me && (me.status === 'registered' || me.status === 'unregistered')) setMe(me);
+    }
+    const idle = (cb: () => void, timeout: number) =>
+      typeof window.requestIdleCallback === 'function' ? window.requestIdleCallback(cb, { timeout }) : window.setTimeout(cb, 0);
+    if (hint) {
+      // As soon as the page's own scripts are in and the main thread is free (so it doesn't slow the
+      // public parts down), rather than after the usual delay.
+      let cancelled = false;
+      const go = () => idle(() => !cancelled && setLoad(true), 1_000);
+      if (document.readyState === 'complete') go();
+      else window.addEventListener('load', go, { once: true });
+      return () => {
+        cancelled = true;
+        stop();
+        window.removeEventListener('load', go);
+      };
+    }
+    const t = window.setTimeout(() => idle(() => setLoad(true), 4_000), LOAD_AFTER_MS);
     return () => {
       stop();
       window.clearTimeout(t);

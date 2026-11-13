@@ -139,6 +139,16 @@ export function usePosition({
   // Server read; `tick` forces a fresh one (the query busts the 10s edge cache).
   useEffect(() => {
     if (!w) return setServer(null);
+    const k = `${w}:${t}`;
+    const cacheKey = `rushr.position.${k}`;
+    // Paint the last answer for this wallet and token at once (this tab only); the fetch replaces it.
+    if (tick === 0)
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(cacheKey) ?? 'null') as { position: ServerPosition | null; trades: ServerTrade[] } | null;
+        if (cached) setServer((cur) => (cur?.key === k ? cur : { key: k, ...cached }));
+      } catch {
+        // storage unavailable
+      }
     const ctl = new AbortController();
     fetch(`${API_URL}/wallets/${w}/positions/${t}${tick ? `?r=${tick}` : ''}`, { signal: ctl.signal })
       .then(async (r) => {
@@ -146,7 +156,15 @@ export function usePosition({
         if (!r.ok) throw new Error(String(r.status));
         return (await r.json()) as { position: ServerPosition | null; trades?: ServerTrade[] };
       })
-      .then((b) => setServer({ key: `${w}:${t}`, position: b.position, trades: b.trades ?? [] }))
+      .then((b) => {
+        const next = { position: b.position, trades: b.trades ?? [] };
+        setServer({ key: k, ...next });
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify(next));
+        } catch {
+          // storage unavailable or full
+        }
+      })
       .catch(() => undefined);
     return () => ctl.abort();
   }, [w, t, tick]);

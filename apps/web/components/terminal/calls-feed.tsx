@@ -7,8 +7,7 @@ import { auth, useAuth } from '@/lib/auth';
 import { COMMENT_MAX, getComments, postComment, setLike, type Callout, type CalloutComment } from '@/lib/callouts';
 import { age, pctSigned, usd } from '@/lib/format';
 import { useMe } from '@/lib/members';
-import { GeneratedAvatar } from './avatar';
-import { iconSrc } from './bits';
+import { MemberAvatar } from './member-avatar';
 
 /**
  * "Calls on $TOKEN": members' public takes on this token, newest first. Each card shows the
@@ -55,15 +54,6 @@ export function CallsFeed({
   );
 }
 
-export function Avatar({ handle, url, size }: { handle: string; url: string | null; size: number }) {
-  return (
-    <span className="relative block shrink-0 overflow-hidden rounded-full" style={{ width: size, height: size }}>
-      <GeneratedAvatar address={`0x${[...handle].map((ch) => ch.charCodeAt(0).toString(16)).join('').padEnd(40, '0').slice(0, 40)}`} symbol={handle} size={size} />
-      {url && <img src={iconSrc(url)} alt="" className="absolute inset-0 size-full object-cover" />}
-    </span>
-  );
-}
-
 function CallCard({ c, active, onSelect, nowMs }: { c: Callout; active: boolean; onSelect: () => void; nowMs: number }) {
   const session = useAuth();
   const me = useMe();
@@ -101,7 +91,7 @@ function CallCard({ c, active, onSelect, nowMs }: { c: Callout; active: boolean;
     >
       <div className="flex items-center gap-2">
         <Link href={`/u/${c.author.handle}`} onClick={(e) => e.stopPropagation()} className="flex min-w-0 items-center gap-2 hover:opacity-90">
-          <Avatar handle={c.author.handle} url={c.author.avatarUrl} size={28} />
+          <MemberAvatar member={c.author} size={28} />
           <span className="min-w-0 truncate text-sm font-medium">@{c.author.handle}</span>
         </Link>
         {c.author.kind === 'agent' && (
@@ -173,12 +163,17 @@ function Comments({ id, canPost, nowMs }: { id: string; canPost: boolean; nowMs:
         <p className="text-xs text-muted">Loading…</p>
       ) : items.length ? (
         items.map((k) => (
-          <div key={k.id} className="text-xs">
-            <Link href={`/u/${k.author.handle}`} className="font-medium text-ink/85 hover:text-ink">
-              @{k.author.handle}
-            </Link>{' '}
-            <span className="text-muted">{age(new Date(k.createdAt).getTime(), nowMs)}</span>
-            <p className="text-ink/85">{k.body}</p>
+          <div key={k.id} className="flex gap-2 text-xs">
+            <Link href={`/u/${k.author.handle}`} className="shrink-0">
+              <MemberAvatar member={k.author} size={18} />
+            </Link>
+            <div className="min-w-0">
+              <Link href={`/u/${k.author.handle}`} className="font-medium text-ink/85 hover:text-ink">
+                @{k.author.handle}
+              </Link>{' '}
+              <span className="text-muted">{age(new Date(k.createdAt).getTime(), nowMs)}</span>
+              <p className="text-ink/85">{k.body}</p>
+            </div>
           </div>
         ))
       ) : (
