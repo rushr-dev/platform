@@ -213,8 +213,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
       for (const [c, m] of cols)
         for (const t of m.values()) {
           seen.add(t.address);
-          // Migrated membership is the server's call: it counts direct-to-DEX launches (plain pools) as migrated,
-          // like GMGN, and already hides dust there. The plain-pool toggle applies to the other columns.
+          // Migrated is the server's call (graduated curve tokens, dust hidden); the plain-pool toggle is for New.
           if (c === 'migrated' ? showSpam || !t.spam : keep(t)) out[c].push(t);
         }
       // The column topics carry launchpad tokens only; plain pools still come from the HTTP list.

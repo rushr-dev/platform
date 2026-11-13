@@ -61,8 +61,8 @@ export function columnOf(card: {
   status?: unknown; launchpad?: unknown; bonding_progress?: unknown; spam?: unknown; market_cap_usd?: unknown; holders?: unknown; volume_24h_usd?: unknown;
 }): Column | null {
   if (card.spam === true) return null;
-  // Launched straight onto a DEX pool (no curve): like GMGN, that's "migrated", unless it's dust.
-  if (card.launchpad === 'uniswap-v4') return isDust(card) ? null : 'migrated';
+  // Migrated = graduated from a launchpad curve. Direct-to-DEX launches never had a curve: they stay in New
+  // (behind the plain-pool toggle), or thousands of copycat pools would bury the real graduations.
   if (card.status === 'migrated') return isDust(card) ? null : 'migrated';
   const almost = CURVE_LAUNCHPADS.includes(String(card.launchpad)) && Number(card.bonding_progress ?? 0) >= ALMOST_BONDED;
   return almost ? 'almost' : 'new';
@@ -103,12 +103,12 @@ export async function trenchesList(sql: Sql, q: TrenchesQuery) {
   // Almost bonded = launchpad tokens still on their bonding curve and at least halfway there,
   // like GMGN. Plain-pool tokens have no curve, so they never land here (whatever their market cap).
   const almost = sql`(t.launchpad = any(${CURVE_LAUNCHPADS}) and coalesce(t.bonding_progress, 0) >= ${ALMOST_BONDED})`;
-  // Migrated: graduated curve tokens plus tokens launched straight onto a DEX pool (GMGN shows both).
+  // Migrated: tokens that graduated from a launchpad curve (not direct-to-DEX launches), dust hidden.
   const notDust = sql`(coalesce(t.market_cap_usd, 0) >= ${DUST.minMcapUsd}
     and (t.holders >= ${DUST.minHolders} or coalesce(t.volume_24h_usd, 0) >= ${DUST.minVolume24hUsd}))`;
   const columnWhere =
     q.column === 'migrated'
-      ? sql`(t.status = 'migrated' or t.launchpad = 'uniswap-v4') and (${q.showDust ?? false} or ${notDust})`
+      ? sql`t.status = 'migrated' and (${q.showDust ?? false} or ${notDust})`
       : q.column === 'almost'
         ? sql`t.status <> 'migrated' and ${almost} and t.price_at > now() - ${ALMOST_STALE}::interval`
         : sql`t.status <> 'migrated' and not ${almost}`;
@@ -127,7 +127,7 @@ export async function trenchesList(sql: Sql, q: TrenchesQuery) {
       and (${q.launchpad}::text is null or t.launchpad = ${q.launchpad})
       and (${!q.hideHighRisk} or coalesce(s.risk_level, 'unknown') <> 'high')
       and (${q.showSpam} or not coalesce((s.data->>'spam')::bool, false))
-      and (${q.showPlain} or ${q.column === 'migrated'} or t.launchpad <> 'uniswap-v4')
+      and (${q.showPlain} or t.status = 'migrated' or t.launchpad <> 'uniswap-v4')
     order by ${order}
     limit ${q.limit}`;
   const summaries = await tokenSummaries(sql, { addresses: rows.map((r) => r.address) });
