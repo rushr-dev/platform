@@ -68,7 +68,7 @@ Tokens still on their PONS bonding curve trade on the curve itself, from the use
 - **Quote:** pure math on the curve's state (virtual reserves, `feeBps`, `creatorTaxBps`), read with the pools (no extra RPC at quote time).
   - "Min received" is net of the curve fee and the creator tax.
   - The quote line reads "Rushr fee: free on curve trades during beta"; the venue line still lists the curve fee and creator tax.
-- **Fee:** `CURVE_FEE_BPS = 0`. Nothing in a direct curve call can collect a fee. It returns when `RushrPonsRouter` is independently reviewed and deployed.
+- **Fee:** `CURVE_FEE_BPS = 0`. Nothing in a direct curve call can collect a fee. It returns when `RushrPonsRouter` is independently reviewed and deployed, or through an EIP-7702 batch (see "Fees on curve trades without our own router" below).
   - Trade records carry `venue: 'pons-curve'`, `feeBps: 0`, `feeAmount: 0`, `router` = the curve, so PnL and positions work as for any trade.
   - The indexer's trade ledger flags such rows `no_fee`, which is expected for curve trades during the beta.
 - **Routing safety:** a token with a live (ungraduated) curve routes only to the curve, never to another pool for the same token.
@@ -94,6 +94,124 @@ Tokens still on their PONS bonding curve trade on the curve itself, from the use
   | AEON | 1,096,871.426508708713963139 | 0.009409000000000001 ETH | 100,399 / 78,411 |
 
   A graduating buy of 1.5 ETH on MORPH returned the remaining 55,053,798.69 tokens and refunded 0.510457 ETH; the quote's refund estimate was 195 wei high.
+
+### Fees on curve trades without our own router: EIP-7702 batching (researched 2026-11-13)
+
+**Question:** can the user's embedded wallet send [fee to the treasury + `curve.buy`] (and [`curve.sell` + fee]) as **one atomic transaction**, without deploying `RushrPonsRouter`?
+
+PONS curves are standalone contracts and never touch the Uniswap v4 PoolManager, so the Universal Router can't route them or take its fee. The only way to make two calls atomic from an EOA without a router of our own is to give the EOA code: EIP-7702 delegation to a batch-executor contract.
+
+**Short answer:** yes, technically. Everything needed is on chain 4663 today, and a read-only simulation passes on live curves. Recommendation: **go-later**, behind a flag. The blockers are product and security sign-off on delegating every user wallet, and one signed-in test of Privy signing a type-4 transaction. No code is missing on chain.
+
+#### 1. Chain support (verified read-only)
+
+- **Node and ArbOS:** the RPC reports `nitro/v3.12.4`, and `ArbSys.arbOSVersion()` (precompile `0x64`) returns 116. The precompile adds 55, so that's ArbOS 61. EIP-7702 arrived in ArbOS 40 "Callisto".
+- **Type-4 accepted:** `eth_estimateGas` with `type: 0x4` and an `authorizationList` returns 46,782 gas, against 21,565 for the same call without one. The extra ≈25k is the EIP-7702 per-authorization cost.
+  - The authorization's signature was a dummy, so the node skips it, but the transaction type and field are parsed and priced.
+- **Delegation honoured:** in `eth_simulateV1`, a test address with the delegation designator `0xef0100 ‖ delegate` as a code override runs the delegate's code.
+  - **Control:** the same calldata sent to an address without the designator executes nothing (23,892 gas, plain value-less call).
+- **Delegates already deployed** at their canonical addresses. "Same bytecode as Ethereum" was checked by comparing `eth_getCode` hashes.
+
+  | Contract | Address | Same bytecode as Ethereum |
+  | --- | --- | --- |
+  | eth-infinitism `Simple7702Account` (v0.8) | `0x4Cd241E8d1510e30b2076397afc7508Ae59C66c9` | yes |
+  | ERC-4337 EntryPoint v0.8 | `0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108` | n/a |
+  | Uniswap Calibur | `0x000000009B1D0aF20D8C6d0A44e162d11F9b8f00` | yes |
+  | Coinbase `EIP7702Proxy` | `0x7702cb554e6bFb442cb743A7dF23154544a7176C` | yes |
+  | MetaMask `EIP7702StatelessDeleGator`, ZeroDev Kernel v3.3 | `0x63c0…E32B`, `0xd6CE…5b28` | same size, different hash (chain-specific immutables) |
+  | Multicall3, CreateX, the deterministic deployers (Arachnid, Safe singleton factory) | canonical addresses | present |
+
+  Anything else can be deployed deterministically through CreateX or the Arachnid factory.
+
+#### 2. Privy embedded wallets (checked in `@privy-io/react-auth` 3.51)
+
+- **Authorizations:** `useSign7702Authorization().signAuthorization({ contractAddress, chainId, nonce? })` signs an EIP-7702 authorization with the embedded wallet. The docs place no chain restriction; `chainId` is any id (use 4663, never 0, which would be valid on every chain).
+- **Transactions:** Privy's transaction request type accepts `type: 4` and an `authorizationList`, and its viem account wrapper passes the list through. So the existing sign-only path (`useSignTransaction`, then our own `eth_sendRawTransactionSync`) should carry it.
+  - **Not verified with a real signature yet:** this needs one signed-in test on a dev wallet.
+- **Batching:** there is no EIP-5792 `wallet_sendCalls` for embedded wallets, and we don't need one. After delegation the wallet calls **itself** (`to = user`, `data = executeBatch([...])`).
+  - `Simple7702Account` only accepts `execute`/`executeBatch` from the account itself or the EntryPoint, so no bundler, paymaster or ERC-4337 infrastructure is involved. The user still pays gas in ETH, as today.
+- **Delegate choice:** `Simple7702Account`.
+  - It's the smallest (3.6 KB): ECDSA owner = the EOA's own key, `execute`, `executeBatch`, ERC-1271 and token receivers, with no modules, extra keys or upgrade logic.
+  - It ships in the ERC-4337 v0.8 release; check that release's audit report covers it before relying on it.
+  - Calibur (Uniswap) is the alternative if we later want scoped session keys for in-app agents (`docs/AGENTS.md` §4, option B), but it is a larger surface.
+- **External wallets** (MetaMask and similar) only delegate to their own contracts and refuse arbitrary authorizations from dapps. They need the fallback below.
+
+#### 3. The fee inside the batch
+
+Simulated with `packages/trade/scripts/batch7702-sim.ts` (read-only `eth_simulateV1`, simulated balance, stand-in treasury address). The script is a 0.01 ETH buy, then a sell of everything received. It was run on four live curves, and every fee arrived exactly:
+
+| Batch | Calls | Gas (direct call today) |
+| --- | --- | --- |
+| Buy | `transfer(fee = 0.5% of the ETH spent)`, `curve.buy(spent − fee, minOut, user)` | 120,214–123,014 (≈ 100k) |
+| Sell | `approve` (first sell only), `curve.sell(tokens, minOut, user)`, `transfer(fee)` | 116,698–119,498 (≈ 78k + approve) |
+
+- **Buys are exact:** the fee is taken on the input, which is known when signing. For a buy that completes the curve, take the fee on the ETH the curve uses (the quote already knows it), not on the refunded part.
+- **Sells:** a plain batch fixes every amount at signing time, so the fee is 0.5% of the **quoted** proceeds. Curve trades are deterministic, so the fill equals the quote unless someone trades first in the ~100 ms before inclusion.
+  - Worst case: the fill lands on the slippage floor and the fee is 0.5% / (1 − slippage), e.g. 0.526% at 5% slippage.
+  - Showing "min received" net of the fee keeps the user's guarantee honest.
+- **Exact proportional sell fees would need a helper:** for example, a ~20-line splitter contract set as the sell's recipient, forwarding 99.5% to the user and 0.5% to the treasury. It is new code that would need review, so it's not recommended for v1.
+- **If any call reverts, the whole batch reverts:** the user never pays a fee for a failed trade.
+
+#### 4. Security of delegating the embedded wallet
+
+- **Persistent:** the delegation stays on the account until the user signs another authorization. Every later transaction is an ordinary type-2 call to self.
+- **Revocable:** an authorization to `address(0)` clears the code (one transaction, ~25k gas).
+- **The key keeps full control:** delegation adds code but removes nothing.
+  - With `Simple7702Account`, nobody but the key can make the account act: direct calls must come from the account itself, and EntryPoint calls must carry a user operation signed by the key.
+- **What changes in the risk profile:**
+  1. A bug in the delegate would affect every delegated wallet at once. That's why the smallest, most-reviewed delegate is the right choice.
+  2. The account now has code. Contracts that treat "has code" as "is a contract" (`extcodesize`, some anti-bot checks, `safeTransfer` receiver hooks) behave differently.
+     - The delegate implements the token receivers, and the PONS curves accepted batched calls in the simulation.
+     - Any other venue we route to would need the same check.
+  3. Re-delegating later to a different implementation can collide with storage the old one wrote. `Simple7702Account` keeps no storage, which limits this.
+  4. A malicious site that obtained an authorization signature could take the account. Embedded wallets sign only what our app requests, so this risk sits in our own code and Privy's UI.
+     - The authorization must only ever name the pinned delegate address. `verifySigned` checks it before broadcast, as it does every other field today.
+- **Compared with the alternatives:**
+
+  | | 7702 batch | Fee as a second transaction | `RushrPonsRouter` |
+  | --- | --- | --- | --- |
+  | Atomic | yes | no: trade first, fee after it confirms | yes |
+  | Fee on a failed trade | never | never (sent only after success) | never |
+  | Exact sell fee | 0.5% of the quote | exact (read from the receipt) | exact |
+  | Revenue leak | none | the user closes the tab, or the fee tx fails | none |
+  | New audited code | none of ours (delegate already deployed) | none | the router, plus a sell approval to it |
+  | Changes the user's wallet | yes (persistent delegation, revocable) | no | no |
+  | Works with external wallets | no | yes | yes |
+  | Extra latency | none after the first trade | +1 signature (≈ 380 ms; can be signed together with the trade) | none |
+
+  No client-side fee can be forced: anyone can call the curve directly. That's equally true of the Universal Router fee, which also lives in calldata our app builds. Atomicity protects users (no fee without a trade) and revenue (no lost second transactions). It does not make the fee mandatory.
+
+#### 5. Latency
+
+- **The fast path is kept:** after delegation each trade is one type-2 transaction to the user's own address with `executeBatch` calldata. It uses the same prebuild, cached nonce and fees, sign-only and `eth_sendRawTransactionSync`, at about +23k gas.
+- **The first delegated trade** carries the `authorizationList` (type 4).
+  - The authorization's nonce is the transaction's nonce + 1, because the sender is the authority.
+  - Alternatively, delegation can be a separate one-time "enable fee batching" transaction on the first curve trade or at sign-up.
+  - Either way it's one extra Privy signature, once per wallet.
+
+#### Recommendation and plan
+
+**Go-later.** Turn it on once the beta's fee-free period ends and these are signed off:
+
+1. Delegating every embedded wallet persistently is accepted for the product, with copy explaining it and how to revoke it.
+2. One signed-in test on a dev wallet shows Privy's `useSignTransaction` signs a type-4 transaction, and the result is broadcast on 4663.
+3. The `Simple7702Account` v0.8 audit coverage is confirmed.
+
+Until then, a **second transaction** is the simpler interim option if fees on curves are wanted earlier. The fee is sent after the trade confirms and is exact, but not atomic.
+
+Implementation, about 3 days:
+- **`packages/trade` (1–1.5 days):**
+  - `batch.ts`: `executeBatch` calldata, a delegation check (`getCode == 0xef0100 ‖ SIMPLE_7702`) and building the authorization request.
+  - `prepareCurveTrade` gets an optional `feeBps` with the fee calls described above; quotes show the fee; `minOut` is net of the fee.
+  - `TxPipeline` allows `to = self` and type 4, and `verifySigned` pins the authorization's delegate and chain id.
+  - Unit tests, plus a live `eth_simulateV1` test from `batch7702-sim.ts`.
+- **Web (1 day):**
+  - `auth.signAuthorization` through `useSign7702Authorization`, in `lib/auth.ts`, plus the first-trade or enable flow and its copy.
+  - A fallback for external wallets: the second transaction, or fee-free.
+- **Ledger (0.5 day):**
+  - A plain ETH transfer emits no event. The indexer must read the fee from the call trace, or from `SafeReceived` once the treasury is a Safe (the treasury is currently a single EOA, moving to a Safe), or from the client's trade record.
+  - Curve rows then carry `feeBps: 50` and drop the `no_fee` flag.
+- **Signed-in test on a dev wallet (0.5 day):** a few small real trades.
 
 ### Uniswap v4 "every quote fails" (reported 2026-11-12)
 
