@@ -81,11 +81,11 @@ export async function applyLiftGraduations(sql: Sql, grads: LiftUpdate[]): Promi
  * Bonding progress (and graduation) for lift.fun tokens traded recently, one API lookup each. Bounded:
  * at most `max` tokens per run, oldest-updated first.
  */
-export async function syncLiftProgress(sql: Sql, max = 25): Promise<{ checked: number; graduated: string[] }> {
+export async function syncLiftProgress(sql: Sql, max = 25, windowMin = 30): Promise<{ checked: number; graduated: string[] }> {
   const tokens = await sql<{ address: string }[]>`
     select t.address from tokens t
     where t.launchpad = 'liftfun' and t.status is distinct from 'migrated'
-      and exists (select 1 from swaps s where s.token = t.address and s.time > now() - interval '30 minutes')
+      and exists (select 1 from swaps s where s.token = t.address and s.time > now() - ${windowMin} * interval '1 minute')
     order by t.updated_at nulls first limit ${max}`;
   const updates: LiftUpdate[] = [];
   for (let i = 0; i < tokens.length; i += 5) {

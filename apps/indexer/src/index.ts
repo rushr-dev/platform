@@ -167,6 +167,16 @@ app.post('/admin/liftfun/graduations', async (c) => {
   }
 });
 
+// lift.fun bonding progress now: tokens traded in the last ?window= minutes (default 30), at most ?max= (default 25).
+app.post('/admin/liftfun/progress', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    return c.json(await syncLiftProgress(sql, Math.min(Number(c.req.query('max') ?? 25), 100), Number(c.req.query('window') ?? 30)));
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 app.post('/admin/curves/refresh', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
