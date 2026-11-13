@@ -1,7 +1,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { preload } from 'react-dom';
-import { ArrowRight, Robot, XLogo } from '@phosphor-icons/react/dist/ssr';
+import { GithubLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
 import type { RiskLevel, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
@@ -9,7 +9,6 @@ import { Art } from './art';
 import { Reveal } from './reveal';
 import { SectionHead, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
-import { BetaSeats } from './beta-seats';
 
 const usd = (n: number | null | undefined) =>
   n == null
@@ -131,7 +130,7 @@ export function Hero() {
           </span>
         </h1>
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row md:mt-10" style={{ animationDelay: '0.08s' }}>
-          <a href="#beta" className={PRIMARY_BTN}>
+          <a href={appHref('/trenches')} className={PRIMARY_BTN}>
             Join the beta
           </a>
           <a href={appHref('/trenches')} className={SECONDARY_BTN}>
@@ -505,67 +504,31 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
 
 /* ---------------------------------------------------------------- closing call to action */
 
-/** Where the invite code goes: the app reads `?invite=` at sign-in. */
-const JOIN_ACTION = appHref('/trenches');
+/** Rushr's source code. */
+const GITHUB_URL = 'https://github.com/rushr-dev/platform';
 
 export function Closing() {
   return (
-    <section id="beta" className="relative isolate scroll-mt-16 overflow-hidden">
+    <section id="community" className="relative isolate scroll-mt-16 overflow-hidden">
       <Art name="arena" widths={[800, 1536]} alt="" sizes="100vw" className="-z-20 object-cover object-bottom mix-blend-multiply" />
       <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-bg to-transparent" />
       <div className="absolute inset-x-0 bottom-0 -z-10 h-40 bg-gradient-to-t from-bg to-transparent" />
 
       <div className={`${WRAP} flex flex-col items-center justify-center py-16 text-center md:min-h-[520px] md:py-24`}>
         <Reveal className="w-full">
-          <h2 className="text-5xl font-semibold leading-[1] tracking-[-0.05em] md:text-7xl">take a seat on the floor.</h2>
-          <p className="mx-auto mt-5 max-w-[48ch] text-lg text-muted">
-            Rushr is in beta, by invite. Got a code? Join now. No code yet? Ask us on X.
+          <h2 className="mx-auto max-w-[17ch] text-5xl font-semibold leading-[1.02] tracking-[-0.05em] md:text-7xl">
+            Built by the community, for the community.
+          </h2>
+          <p className="mx-auto mt-6 text-xl font-medium tracking-[-0.02em] md:text-2xl">Follow the journey.</p>
+          <p className="mx-auto mt-2 max-w-[48ch] text-lg text-muted">
+            Rushr is open source. Read the code, open an issue, ship a PR.
           </p>
-          <BetaSeats />
-
-          <form action={JOIN_ACTION} method="get" className="mx-auto mt-8 max-w-md rounded-3xl border border-line bg-surface/90 p-5 text-left shadow-[0_20px_40px_-30px_rgba(24,32,26,0.35)] backdrop-blur-sm md:p-6">
-            <label htmlFor="invite" className="text-sm font-medium">
-              Invite code
-            </label>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <input
-                id="invite"
-                name="invite"
-                required
-                maxLength={32}
-                pattern="[A-Za-z0-9\-]{4,32}"
-                autoComplete="off"
-                autoCapitalize="characters"
-                spellCheck={false}
-                placeholder="e.g. RUSHR-1234"
-                aria-describedby="invite-help"
-                className="min-w-0 flex-1 rounded-xl border border-line bg-bg px-4 py-3 font-mono text-base uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal placeholder:text-ink/45 focus:border-ink/40 focus:outline-none focus:ring-2 focus:ring-go/40"
-              />
-              <button type="submit" className={`${PRIMARY_BTN} px-6 py-3`}>
-                Join the beta
-              </button>
-            </div>
-            <p id="invite-help" className="mt-3 text-xs leading-relaxed text-muted">
-              By joining you agree to the <Link href="/terms" className="underline underline-offset-2">Terms</Link> and confirm
-              you&apos;ve read the <Link href="/risk" className="underline underline-offset-2">Risk disclosure</Link> and{' '}
-              <Link href="/privacy" className="underline underline-offset-2">Privacy</Link> notice.
-            </p>
-            <a
-              href={X_URL}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-sm font-semibold transition hover:border-ink/20"
-            >
-              <XLogo size={14} weight="bold" /> No code? Ask @rushrtrade
+          <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+            <a href={GITHUB_URL} target="_blank" rel="noreferrer" className={PRIMARY_BTN}>
+              <GithubLogo size={18} weight="bold" /> GitHub
             </a>
-          </form>
-
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-medium">
-            <a href={appHref('/trenches')} className="inline-flex items-center gap-1.5 hover:text-brand-deep">
-              Browse the trenches, no account needed <ArrowRight size={14} weight="bold" />
-            </a>
-            <a href="#agents" className="inline-flex items-center gap-1.5 hover:text-brand-deep">
-              <Robot size={16} weight="bold" /> Bring your agent
+            <a href={X_URL} target="_blank" rel="noreferrer" className={SECONDARY_BTN}>
+              <XLogo size={16} weight="bold" /> Follow on X
             </a>
           </div>
         </Reveal>
