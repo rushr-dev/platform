@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { decodeAbiParameters, decodeFunctionData, type Address, type PublicClient } from 'viem';
 import { autoSlippageBps, evaluateGuards, isFresh, prepareQuickTrade, quickBuy, quickSell, DEFAULT_QUICK_SETTINGS, explorerTxUrl, feeLine } from '../src/quick';
 import { quotePool } from '../src/quote';
-import { resolveConfig, RUSHR_TREASURY } from '../src/config';
+import { resolveConfig, RUSHR_TREASURY, STANDARD_FEE_BPS } from '../src/config';
 import { TRADE_ADDRESSES } from '../src/addresses';
 import { universalRouterAbi } from '../src/universal-router';
 import { erc20Abi, permit2Abi, ponsCurveAbi } from '../src/abis';
@@ -65,12 +65,14 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     const d = decodeFunctionData({ abi: universalRouterAbi, data: call.data });
     expect(d.args[0]).toBe('0x050b08'); // TRANSFER fee, WRAP_ETH, V2_SWAP_EXACT_IN
     const [token, recipient, fee] = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], d.args[1][0]!);
-    expect([token, recipient, fee]).toEqual(['0x0000000000000000000000000000000000000000', RUSHR_TREASURY, E(0.0005)]);
+    expect([token, recipient, fee]).toEqual(['0x0000000000000000000000000000000000000000', RUSHR_TREASURY, E(0.00025)]); // beta rate: 0.25% of msg.value
     expect(t.slippageBps).toBe(500);
-    expect(t.record).toMatchObject({ side: 'buy', feeBps: 50, venue: 'uniswap-v2', source: { kind: 'web' } });
+    expect(t.record).toMatchObject({ side: 'buy', feeBps: 25, baseFeeBps: 25, venue: 'uniswap-v2', source: { kind: 'web' } });
     expect(isFresh(t, 1_000_000 + 9_999)).toBe(true);
     expect(isFresh(t, 1_000_000 + 10_001)).toBe(false);
-    expect(feeLine(t.quote!)).toBe('Rushr fee 0.5%');
+    expect(feeLine(t.quote!)).toBe('Rushr fee 0.25% (beta, half price)');
+    const standard = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ config: { feeBps: STANDARD_FEE_BPS } }));
+    expect(feeLine(standard.quote!)).toBe('Rushr fee 0.5%');
   });
 
   it('sell: approval calls first (ERC-20 → Permit2, Permit2 → Universal Router, 30 days), then the swap', async () => {
@@ -143,7 +145,7 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     expect(big.blockers.map((b) => b.code)).toContain('HIGH_IMPACT');
   });
 
-  it('blocks over the cap and high risk without acknowledgement; referred users pay 0.45%', async () => {
+  it('blocks over the cap and high risk without acknowledgement; referred users pay 0.22% during the beta', async () => {
     const big = await quickBuy(fake, { token: TOKEN, ethWei: E(0.5), trader: TRADER }, opts());
     expect(big.ok).toBe(false);
     expect(big.blockers.map((b) => b.code)).toEqual(['OVER_CAP']);
@@ -152,7 +154,8 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     expect(risky.blockers.map((b) => b.code)).toEqual(['RISK_ACK_REQUIRED']);
     expect(risky.slippageBps).toBe(1000); // young token
     const ref = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER, referral: { referrer: '0x5555555555555555555555555555555555555555' } }, opts());
-    expect(ref.quote!.fee.feeBps).toBe(45);
+    expect(ref.quote!.fee.feeBps).toBe(22);
+    expect(feeLine(ref.quote!)).toBe('Rushr fee 0.22% (beta, half price, referral discount)');
     expect(explorerTxUrl('0xabc')).toBe('https://robinhoodchain.blockscout.com/tx/0xabc');
   });
 });

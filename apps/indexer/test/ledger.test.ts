@@ -1,7 +1,7 @@
 // Trade ledger: POST /v1/trades + confirmation from the chain (receipt, our decoded swap, the treasury's
 // fee from a call trace), referral accrual, and the member read endpoints. Local Postgres, fake RPC.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DEFAULT_TRADE_CONFIG } from '@rushr/trade';
+import { DEFAULT_TRADE_CONFIG, effectiveFeeBps } from '@rushr/trade';
 import { v1 } from '../src/agents/app';
 import { confirmTrade, ethReceived, tokenFlow, trades } from '../src/ledger';
 import { pgAvailable, setup } from './harness';
@@ -21,28 +21,34 @@ const TREASURY = DEFAULT_TRADE_CONFIG.feeRecipient.toLowerCase();
 const BUY_TX = `0x${'b1'.repeat(32)}`;
 const SELL_TX = `0x${'5e'.repeat(32)}`;
 const E18 = 10n ** 18n;
+// Rates from the trade config (0.25% during the beta, 0.22% referred), never literals.
+const BASE_BPS = BigInt(DEFAULT_TRADE_CONFIG.feeBps);
+const REF_BPS = BigInt(effectiveFeeBps(DEFAULT_TRADE_CONFIG, { referrer: TREASURY as `0x${string}` }));
+const BUY_FEE = (E18 * REF_BPS) / 10_000n; // referred buy of 1 ETH
+const SELL_GROSS = 2n * E18;
+const SELL_FEE = (SELL_GROSS * BASE_BPS) / 10_000n; // unreferred sell, PAY_PORTION of the gross
 const hex = (v: bigint) => `0x${v.toString(16)}`;
 const topic = (a: string) => `0x${a.slice(2).padStart(64, '0')}`;
 const TRANSFER = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const transfer = (token: string, from: string, to: string, v: bigint) => ({ address: token, topics: [TRANSFER, topic(from), topic(to)], data: `0x${v.toString(16).padStart(64, '0')}` });
 
-/** Fake chain: a referred buy (1 ETH in, 45 bps fee to the treasury) and an unreferred sell (50 bps PAY_PORTION). */
+/** Fake chain: a referred buy (1 ETH in, the referred rate to the treasury) and an unreferred sell (the base rate as PAY_PORTION). */
 const chain: Record<string, { tx: object; receipt: object; trace: object }> = {
   [BUY_TX]: {
     tx: { from: BOB, to: ROUTER, value: hex(E18) },
     receipt: { status: '0x1', blockNumber: '0x64', logs: [transfer(TOKEN, POOL, BOB, 1000n * E18)] },
     trace: { type: 'CALL', from: BOB, to: ROUTER, value: hex(E18), calls: [
-      { type: 'CALL', from: ROUTER, to: TREASURY, value: hex((E18 * 45n) / 10_000n) },
+      { type: 'CALL', from: ROUTER, to: TREASURY, value: hex(BUY_FEE) },
       { type: 'CALL', from: ROUTER, to: POOL, value: '0x0', error: 'reverted', calls: [{ type: 'CALL', from: POOL, to: TREASURY, value: hex(E18) }] },
     ] },
   },
   [SELL_TX]: {
     tx: { from: CAROL, to: ROUTER, value: '0x0' },
     receipt: { status: '0x1', blockNumber: '0x65', logs: [transfer(TOKEN, CAROL, POOL, 500n * E18)] },
-    // Gross 2 ETH out of the swap: 50 bps (0.01 ETH) to the treasury, 1.99 ETH swept to the seller.
+    // Gross 2 ETH out of the swap: the base rate to the treasury, the rest swept to the seller.
     trace: { type: 'CALL', from: CAROL, to: ROUTER, value: '0x0', calls: [
-      { type: 'CALL', from: ROUTER, to: TREASURY, value: hex(E18 / 100n) },
-      { type: 'CALL', from: ROUTER, to: CAROL, value: hex((E18 * 199n) / 100n) },
+      { type: 'CALL', from: ROUTER, to: TREASURY, value: hex(SELL_FEE) },
+      { type: 'CALL', from: ROUTER, to: CAROL, value: hex(SELL_GROSS - SELL_FEE) },
     ] },
   },
 };
@@ -58,7 +64,7 @@ function rpc(method: string, params: unknown[]): unknown {
 
 describe('trace and log helpers', () => {
   it('sums ETH to an address over successful frames only', () => {
-    expect(ethReceived(chain[BUY_TX]!.trace as never, TREASURY)).toBe((E18 * 45n) / 10_000n);
+    expect(ethReceived(chain[BUY_TX]!.trace as never, TREASURY)).toBe(BUY_FEE);
   });
   it('nets ERC-20 flow from Transfer logs', () => {
     expect(tokenFlow((chain[SELL_TX]!.receipt as { logs: never[] }).logs, TOKEN, CAROL)).toBe(-500n * E18);
@@ -119,16 +125,16 @@ describe.skipIf(!pg)('trade ledger', () => {
     expect((await t.call('POST', '/trades', { body: { txHash: SELL_TX, chainId: 4663 } })).status).toBe(401);
   });
 
-  it('confirms a referred buy from the chain: fee from the trace, 45 bps, 20% accrual to the referrer', async () => {
+  it('confirms a referred buy from the chain: fee from the trace at the referred rate, 20% accrual to the referrer', async () => {
     expect(await confirmTrade(t.sql, t.env as never, BUY_TX, false)).toBe('done');
     const [row] = await t.sql`select * from trades_ledger where tx_hash = ${BUY_TX}`;
     expect(row).toMatchObject({
       status: 'confirmed', side: 'buy', token: TOKEN, quote_asset: 'ETH', venue: 'ramses', pool_id: POOL, router: ROUTER,
       amount_in: E18.toString(), amount_out: (1000n * E18).toString(), fee_token: '0x0000000000000000000000000000000000000000',
-      fee_amount: ((E18 * 45n) / 10_000n).toString(), base_fee_bps: 50, referrer: ALICE, referral_code: 'alice', referrer_share_bps: 2000,
-      referrer_accrual: ((E18 * 45n * 2000n) / 10_000n / 10_000n).toString(), referral_discount: ((E18 * 5n) / 10_000n).toString(), flags: [],
+      fee_amount: BUY_FEE.toString(), base_fee_bps: Number(BASE_BPS), referrer: ALICE, referral_code: 'alice', referrer_share_bps: 2000,
+      referrer_accrual: ((BUY_FEE * 2000n) / 10_000n).toString(), referral_discount: ((E18 * (BASE_BPS - REF_BPS)) / 10_000n).toString(), flags: [],
     });
-    expect(Number(row!.fee_bps)).toBeCloseTo(45);
+    expect(Number(row!.fee_bps)).toBeCloseTo(Number(REF_BPS));
   });
 
   it('confirms an unreferred sell: fee is the PAY_PORTION of the gross, amount_out what the seller got', async () => {
@@ -136,10 +142,10 @@ describe.skipIf(!pg)('trade ledger', () => {
     await confirmTrade(t.sql, t.env as never, SELL_TX, false);
     const [row] = await t.sql`select * from trades_ledger where tx_hash = ${SELL_TX}`;
     expect(row).toMatchObject({
-      status: 'confirmed', side: 'sell', amount_in: (500n * E18).toString(), amount_out: ((E18 * 199n) / 100n).toString(),
-      fee_amount: (E18 / 100n).toString(), referrer: null, referrer_accrual: '0', source_kind: 'api', source_id: 'bot-1', flags: [],
+      status: 'confirmed', side: 'sell', amount_in: (500n * E18).toString(), amount_out: (SELL_GROSS - SELL_FEE).toString(),
+      fee_amount: SELL_FEE.toString(), base_fee_bps: Number(BASE_BPS), referrer: null, referrer_accrual: '0', source_kind: 'api', source_id: 'bot-1', flags: [],
     });
-    expect(Number(row!.fee_bps)).toBeCloseTo(50);
+    expect(Number(row!.fee_bps)).toBeCloseTo(Number(BASE_BPS));
   });
 
   it('serves the member their trades and the referrer their accruals', async () => {
@@ -148,7 +154,7 @@ describe.skipIf(!pg)('trade ledger', () => {
     expect(mine.headers.get('cache-control')).toBe('private, no-store');
     const acc = await t.call('GET', '/me/referrals/accrued', { auth: alice });
     expect(acc.json.accrued).toEqual([
-      { fee_token: '0x0000000000000000000000000000000000000000', trades: 1, confirmed_fee_amount: ((E18 * 45n) / 10_000n).toString(), referrer_accrual: ((E18 * 45n * 2000n) / 10_000n / 10_000n).toString() },
+      { fee_token: '0x0000000000000000000000000000000000000000', trades: 1, confirmed_fee_amount: BUY_FEE.toString(), referrer_accrual: ((BUY_FEE * 2000n) / 10_000n).toString() },
     ]);
   });
 });

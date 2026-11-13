@@ -2,7 +2,7 @@ import { encodeFunctionData, maxUint256, type Address, type Hex, type PublicClie
 import { TRADE_ADDRESSES } from './addresses';
 import { erc20Abi, permit2Abi, ponsCurveAbi } from './abis';
 import { buildSwap } from './build';
-import { resolveConfig, type TradeConfig } from './config';
+import { BETA_FEE_BPS, resolveConfig, STANDARD_FEE_BPS, type TradeConfig } from './config';
 import { TradeError, isTradeError, sanitizeRpcMessage } from './errors';
 import { readAllowances } from './permit2';
 import { discoverPools, type DiscoverOptions } from './pools';
@@ -373,7 +373,11 @@ export function isFresh(t: Pick<QuickTrade, 'expiresAt'>, now = Date.now()): boo
 export function feeLine(q: Quote): string {
   if (q.pool.venue === 'pons-curve' && q.fee.feeBps === 0) return 'Rushr fee: free on curve trades during beta';
   const pct = (q.fee.feeBps / 100).toFixed(2).replace(/0$/, '');
-  return `Rushr fee ${pct}%${q.fee.feeBps < q.fee.baseFeeBps ? ' (referral discount)' : ''}`;
+  const notes = [
+    ...(q.fee.baseFeeBps === BETA_FEE_BPS && BETA_FEE_BPS * 2 === STANDARD_FEE_BPS ? ['beta, half price'] : []),
+    ...(q.fee.feeBps < q.fee.baseFeeBps ? ['referral discount'] : []),
+  ];
+  return `Rushr fee ${pct}%${notes.length ? ` (${notes.join(', ')})` : ''}`;
 }
 
 
