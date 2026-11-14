@@ -14,8 +14,8 @@ import { FeedbackButton } from './feedback';
 const NAV = [
   { href: '/trenches', label: 'Trenches' },
   { href: '/feed', label: 'Feed' },
-  { href: '#', label: 'Agents', soon: true },
-  { href: '#', label: 'Leaderboard', soon: true },
+  { href: '/agents', label: 'Agents' },
+  { href: '/leaderboard', label: 'Leaderboard' },
 ];
 
 export function TopBar() {
@@ -25,19 +25,17 @@ export function TopBar() {
       <Link href="/" className="flex items-center gap-2">
         <Image src="/logo-mark.png" alt="" width={22} height={22} priority />
         <span className="text-lg font-semibold tracking-[-0.04em]">rushr</span>
+        {/* Same dashed chip as the landing's, in the dark theme. */}
+        <span className="rounded-full border border-dashed border-white/20 px-1.5 py-px font-mono text-[9px] uppercase tracking-wider text-muted">Beta</span>
       </Link>
       <nav className="hidden items-center gap-1 text-sm md:flex">
         {NAV.map((n) => (
           <Link
             key={n.label}
             href={n.href}
-            aria-disabled={n.soon}
-            className={`rounded-lg px-3 py-1.5 transition ${
-              path.startsWith(n.href) && !n.soon ? 'bg-white/[0.07] text-ink' : 'text-muted hover:text-ink'
-            } ${n.soon ? 'pointer-events-none' : ''}`}
+            className={`rounded-lg px-3 py-1.5 transition ${path.startsWith(n.href) ? 'bg-white/[0.07] text-ink' : 'text-muted hover:text-ink'}`}
           >
             {n.label}
-            {n.soon && <span className="ml-1.5 text-[10px] text-muted/60">soon</span>}
           </Link>
         ))}
       </nav>
