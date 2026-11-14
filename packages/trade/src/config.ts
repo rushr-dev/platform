@@ -21,8 +21,8 @@ export const PLACEHOLDER_FEE_RECIPIENT: Address = '0x000000000000000000000000000
 /** The standard platform fee (decided 2026-11-12): 0.5%. */
 export const STANDARD_FEE_BPS = 50;
 /**
- * Beta rate (decided 2026-11-13): half price, 0.25%, on Universal Router routes, so real trades exercise
- * the fee path. PONS curve trades stay fee-free during the beta (`CURVE_FEE_BPS` in quick.ts).
+ * Beta rate (decided 2026-11-13): half price, 0.25%, on every route. Universal Router routes take it
+ * inside the swap; PONS curve trades pay it as a follow-up transfer (curve-fee.ts).
  * To return to the standard rate, set `feeBps: STANDARD_FEE_BPS` in DEFAULT_TRADE_CONFIG below.
  */
 export const BETA_FEE_BPS = 25;

@@ -44,6 +44,8 @@ export interface SimCallResult {
   gasUsed: bigint;
   returnData: Hex;
   error?: string;
+  /** The call's logs (with traceTransfers, native ETH moves appear as Transfer logs from NATIVE_TRANSFER_EMITTER). */
+  logs: { address: Address; topics: Hex[]; data: Hex }[];
 }
 
 export interface SimulationResult {
@@ -99,7 +101,7 @@ export async function simulateCalls(client: PublicClient, calls: SimCall[], opts
       if (l.topics[0] === TRANSFER_TOPIC && l.topics.length === 3)
         transfers.push({ token: lc(l.address), from: lc(`0x${l.topics[1]!.slice(26)}`), to: lc(`0x${l.topics[2]!.slice(26)}`), value: BigInt(l.data), callIndex: i });
     const ok = c.status === '0x1';
-    return { label: calls[i]!.label, ok, gasUsed: BigInt(c.gasUsed), returnData: c.returnData, error: ok ? undefined : decodeRevert(c.error?.data ?? c.returnData) };
+    return { label: calls[i]!.label, ok, gasUsed: BigInt(c.gasUsed), returnData: c.returnData, error: ok ? undefined : decodeRevert(c.error?.data ?? c.returnData), logs: c.logs ?? [] };
   });
   return { ok: results.every((r) => r.ok), calls: results, transfers };
 }

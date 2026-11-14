@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { formatUnits, parseEther, parseUnits } from 'viem';
 import { Gear, Info } from '@phosphor-icons/react';
-import { feeLine, type QuickTrade } from '@rushr/trade';
+import { feeLine, maxBuyWei, type QuickTrade } from '@rushr/trade';
 import { tradingAvailable } from '@/components/trade/flag';
 import { useQuickTrade, type TradeToken } from '@/components/trade/use-quick-trade';
 import { compact, usd } from '@/lib/format';
@@ -102,7 +102,8 @@ function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeTo
   const holdUsd = bal && priceUsd != null ? whole(bal.token, token.decimals) * priceUsd : null;
   const maxBuyUsd = (() => {
     if (!bal || !ethUsd) return null;
-    const spendable = bal.eth > GAS_RESERVE ? bal.eth - GAS_RESERVE : 0n;
+    // Curve trades pay the Rushr fee on top of the amount (a follow-up transfer): leave room for it.
+    const spendable = maxBuyWei(bal.eth > GAS_RESERVE ? bal.eth - GAS_RESERVE : 0n, q.trade?.feeFollowUp?.feeBps ?? 0);
     const capWei = parseEther(String(settings.maxTradeEth));
     return whole(spendable < capWei ? spendable : capWei, 18) * ethUsd;
   })();

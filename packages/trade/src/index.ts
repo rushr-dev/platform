@@ -21,5 +21,7 @@ export * from './types';
 export * from './universal-router';
 export * from './fast-send';
 export * from './curve-sim';
+export * from './curve-fee';
+export * from './curve-fee-sim';
 export * from './fee-audit';
 export * from './fee-sim';
