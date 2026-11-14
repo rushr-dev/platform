@@ -53,6 +53,8 @@
     // Stream v3/v2 swaps of the busiest tracked pools (address-filtered, max 500) over the socket.
     // Approved 2026-11-12 at ~+4.3 GB/month; measured bytes are in /health live.socketBytes.
     "LIVE_PAIRS": "1",
+    // lift.fun progress/graduation sync and its Almost bonded cards: off ("1" turns them back on).
+    "LIFTFUN_ENABLED": "0",
     // Members/social/agents API (/v1). Every flag (AGENTS_ENABLED, INVITES_REQUIRED, LEADERBOARD_ENABLED,
     // AGENT_SIGNUP_ENABLED, AGENT_TRADE_ENABLED) is off until set to "1". Secrets PRIVY_APP_SECRET and
     // IP_SALT are set with wrangler secret put (both set). Beta: members API on, sign-up needs an invite code;

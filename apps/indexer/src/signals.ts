@@ -1,7 +1,8 @@
 import type { Sql } from 'postgres';
 import type { Address } from 'viem';
-import { INFRA_ADDRESSES, computeSignals, type TokenSignals, type TokenSnapshot } from '@rushr/core';
+import { BURN_ADDRESSES, INFRA_ADDRESSES, computeSignals, isContractCode, type TokenSignals, type TokenSnapshot } from '@rushr/core';
 import type { Rpc } from './rpc';
+import { CONTRACT_TAX_TTL_S, readPonsTax, type ContractTax } from './pons-tax';
 
 /** How many wallets per token get a funding lookup (each costs one Alchemy call, cached forever). */
 const FUND_TOP_HOLDERS = 20;
@@ -10,6 +11,12 @@ const FUND_EARLY_BUYERS = 20;
 const COMMON_FUNDER_MIN = 50;
 
 const EXCLUDED = INFRA_ADDRESSES.map((a) => a.toLowerCase());
+const BURNS = new Set<string>(BURN_ADDRESSES.map((a) => a.toLowerCase()));
+/** Top holders checked for contract code (one eth_getCode each, cached in wallets.is_contract). */
+const CODE_TOP_HOLDERS = 50;
+
+/** Why a top holder isn't counted as a person in concentration signals. */
+export type HolderKind = 'burn' | 'pool' | 'contract';
 
 /** Compute and store a token's signals (topping up wallet funding info first). */
 export async function recomputeSignals(sql: Sql, rpc: Rpc, token: string): Promise<TokenSignals | null> {
@@ -17,7 +24,7 @@ export async function recomputeSignals(sql: Sql, rpc: Rpc, token: string): Promi
   if (!loaded) return null;
   const { snapshot, devFunder } = loaded;
   const signals = computeSignals(snapshot);
-  await saveSignals(sql, snapshot, signals, devFunder);
+  await saveSignals(sql, snapshot, { ...signals, contractTax: loaded.contractTax } as TokenSignals, devFunder);
   return signals;
 }
 
@@ -29,7 +36,10 @@ export async function loadSnapshot(
   sql: Sql,
   token: string,
   rpc: Rpc | null,
-): Promise<{ snapshot: TokenSnapshot; devFunder: string | null } | null> {
+): Promise<{
+  snapshot: TokenSnapshot; devFunder: string | null; excluded: { wallet: string; amount: bigint; kind: HolderKind }[];
+  contractTax: ContractTax | null;
+} | null> {
   const [t] = await sql<
     { address: string; symbol: string; name: string; total_supply: string; deployer: string; created_at: Date; created_block: string; main_pool: string | null; launch_indexed: boolean; launchpad: string | null; holders: number }[]
   >`select address, symbol, name, total_supply, deployer, created_at, created_block, main_pool, launch_indexed, launchpad, holders from tokens where address = ${token}`;
@@ -37,10 +47,28 @@ export async function loadSnapshot(
   const createdAt = Math.floor(t.created_at.getTime() / 1000);
   const excluded = [...EXCLUDED, ...(t.main_pool && t.main_pool.length === 42 ? [t.main_pool] : [])];
 
-  const holders = await sql<{ wallet: string; amount: string }[]>`
-    select wallet, amount from balances
-    where token = ${token} and amount > 0 and wallet <> all(${excluded})
-    order by amount desc limit 100`;
+  // Top balances, then split people from burns, pools/curves/hooks and contracts.
+  const top = await sql<{ wallet: string; amount: string }[]>`
+    select wallet, amount from balances where token = ${token} and amount > 0 order by amount desc limit 120`;
+  const poolRows = await sql<{ id: string; hooks: string | null }[]>`select id, hooks from pools where token = ${token}`;
+  const pools = new Set<string>([
+    ...excluded.filter((a) => !BURNS.has(a)),
+    ...poolRows.flatMap((p) => [p.id, p.hooks ?? '']).filter((a) => a.length === 42),
+  ]);
+  const kindOf = new Map<string, HolderKind>();
+  for (const h of top) {
+    if (BURNS.has(h.wallet)) kindOf.set(h.wallet, 'burn');
+    else if (pools.has(h.wallet)) kindOf.set(h.wallet, 'pool');
+    else if (h.wallet === token) kindOf.set(h.wallet, 'contract');
+  }
+  const candidates = top.filter((h) => !kindOf.has(h.wallet)).map((h) => h.wallet);
+  if (rpc) await ensureCode(sql, rpc, candidates.slice(0, CODE_TOP_HOLDERS));
+  for (const r of await sql<{ address: string }[]>`
+    select address from wallets where address = any(${candidates}) and is_contract`) kindOf.set(r.address, 'contract');
+  const holders = top.filter((h) => !kindOf.has(h.wallet)).slice(0, 100);
+  const others = top.filter((h) => kindOf.has(h.wallet)).map((h) => ({ wallet: h.wallet, amount: BigInt(h.amount), kind: kindOf.get(h.wallet)! }));
+  const [burnt] = await sql<{ amount: string | null }[]>`
+    select sum(amount)::text as amount from balances where token = ${token} and wallet = any(${[...BURNS]})`;
   const [{ count: holderCount } = { count: 0 }] = await sql<{ count: number }[]>`
     select count(*)::int as count from balances where token = ${token} and amount > 0 and wallet <> all(${excluded})`;
   const earlyBuys = await sql<{ trader: string; block: string; time: Date; token_amount: string }[]>`
@@ -121,12 +149,33 @@ export async function loadSnapshot(
   const [counts] = await sql<{ buys: number; sells: number }[]>`
     select count(*) filter (where side = 'buy')::int as buys, count(*) filter (where side = 'sell')::int as sells
     from swaps where token = ${token}`;
-  // Launch farms: the same name and symbol from several different wallets within a day.
+  // Launch farms: the same name and symbol from other wallets in the day *before* this token (earlier
+  // copies only; an original isn't blamed for the copycats that follow it).
   const [farm] = await sql<{ n: number }[]>`
     select count(distinct deployer)::int as n from tokens
     where lower(symbol) = lower(${t.symbol}) and lower(name) = lower(${t.name}) and address <> ${token}
-      and deployer <> ${t.deployer} and created_at > ${t.created_at}::timestamptz - interval '24 hours'
-      and created_at < ${t.created_at}::timestamptz + interval '24 hours'`;
+      and deployer <> ${t.deployer} and created_at >= ${t.created_at}::timestamptz - interval '24 hours'
+      and created_at < ${t.created_at}::timestamptz`;
+
+  // PONS: the curve's creator tax and fee (cached in the signals, refreshed weekly; without rpc, cache only).
+  let contractTax: ContractTax | null = null;
+  if (t.launchpad === 'pons') {
+    const [prev] = await sql<{ ct: ContractTax | null }[]>`select data->'contractTax' as ct from signals where token = ${token}`;
+    contractTax = prev?.ct ?? null;
+    if (rpc && (!contractTax || Date.now() / 1000 - contractTax.at > CONTRACT_TAX_TTL_S)) {
+      contractTax = (await readPonsTax(sql, rpc, token).catch(() => null)) ?? contractTax;
+    }
+  }
+
+  // The copycat check: the strongest same-ticker token launched *before* this one. Spam and airdrop farms
+  // (half or more of their holders airdropped) are left out: they're never the original.
+  const [earlier] = await sql<{ organic: number; created_at: Date }[]>`
+    select greatest(0, o.holders - coalesce((s.data->>'airdroppedHolders')::int, 0))::int as organic, o.created_at
+    from tokens o left join signals s on s.token = o.address
+    where lower(o.symbol) = lower(${t.symbol}) and o.address <> ${token} and o.created_at < ${t.created_at}
+      and not coalesce((s.data->>'spam')::bool, false)
+      and coalesce((s.data->>'airdroppedHolders')::int, 0) * 2 < greatest(o.holders, 1)
+    order by organic desc limit 1`;
 
   const snapshot: TokenSnapshot = {
     address: t.address,
@@ -136,6 +185,7 @@ export async function loadSnapshot(
     createdAt,
     createdBlock: BigInt(t.created_block),
     holders: holders.map((h) => ({ wallet: h.wallet, amount: BigInt(h.amount) })),
+    burnt: BigInt(burnt?.amount ?? '0'),
     holderCount,
     earlyBuys: earlyBuys.map((b) => ({
       trader: b.trader, block: BigInt(b.block), time: Math.floor(b.time.getTime() / 1000), tokenAmount: BigInt(b.token_amount),
@@ -151,14 +201,33 @@ export async function loadSnapshot(
       migrated: d.status === 'migrated',
     })),
     twinOrganicHolders,
+    earlierTwin: earlier ? { organicHolders: earlier.organic, createdAt: Math.floor(earlier.created_at.getTime() / 1000) } : null,
     launchpad: t.launchpad,
     now: Math.floor(Date.now() / 1000),
     taxSamples: taxRows.map((r) => ({ side: r.side, swapAmount: BigInt(r.token_amount), traderNet: BigInt(r.net) })),
     tradeCounts: counts ?? { buys: 0, sells: 0 },
+    contractTax: contractTax ? { buyBps: contractTax.creatorTaxBps, sellBps: contractTax.creatorTaxBps, venueFeeBps: contractTax.feeBps } : null,
     sameNameDeployers24h: farm?.n ?? 0,
   };
 
-  return { snapshot, devFunder };
+  return { snapshot, devFunder, excluded: others, contractTax };
+}
+
+/**
+ * Cache whether wallets are contracts (code over 23 bytes; EIP-7702 EOAs aren't), for wallets never checked.
+ * One eth_getCode per new wallet; the answer rarely changes.
+ */
+export async function ensureCode(sql: Sql, rpc: Rpc, wallets: string[]) {
+  if (!wallets.length) return;
+  const known = new Set(
+    (await sql<{ address: string }[]>`select address from wallets where address = any(${wallets}) and is_contract is not null`).map((r) => r.address),
+  );
+  const missing = wallets.filter((w) => !known.has(w));
+  if (!missing.length) return;
+  const codes = await rpc.batch<string>(missing.map((w) => ({ method: 'eth_getCode', params: [w, 'latest'] })));
+  const rows = missing.map((w, i) => ({ address: w, is_contract: isContractCode(codes[i]) })).filter((r) => r.is_contract != null);
+  if (!rows.length) return;
+  await sql`insert into wallets ${sql(rows)} on conflict (address) do update set is_contract = excluded.is_contract`;
 }
 
 async function saveSignals(sql: Sql, snapshot: TokenSnapshot, signals: TokenSignals, devFunder: string | null) {
@@ -196,8 +265,9 @@ export async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
     const code = codes[i];
     return {
       address: w,
-      // Smart accounts (ERC-4337) are contracts too; callers decide what to exclude.
-      is_contract: code == null ? null : code !== '0x',
+      // Real contracts only: EIP-7702 delegated EOAs (23 bytes of code) are people. Smart accounts
+      // (ERC-4337) are contracts; callers decide what to exclude.
+      is_contract: isContractCode(code),
       first_funder: f?.funder ?? null,
       funded_at: f?.at ? new Date(f.at * 1000) : null,
       first_seen: f?.at ? new Date(f.at * 1000) : null,

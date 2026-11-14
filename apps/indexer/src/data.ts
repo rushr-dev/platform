@@ -31,8 +31,10 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
         else (select q.symbol from tokens q where q.address = t.quote) end as quote_symbol,
       (select count(*)::int from swaps x where x.token = t.address and x.time > now() - interval '24 hours') as trades_24h,
       coalesce(substring(t.twitter from '(?:x|twitter)\.com/([A-Za-z0-9_]{1,30})(?:[/?#]|$)'), null) as twitter_handle,
-      -- Tax is measured from real trades (signals); null until a token has 2 buys / 2 sells. Fees: not tracked yet.
+      -- Tax (signals): read from the contract for PONS (creator tax), else measured from real trades (null until
+      -- 2 buys / 2 sells). tax_source says which; venue_fee_bps is the launchpad's own fee (not a tax).
       coalesce((s.data->>'buyTaxBps')::int, t.tax_bps) as buy_tax_bps, coalesce((s.data->>'sellTaxBps')::int, t.tax_bps) as sell_tax_bps,
+      s.data->>'taxSource' as tax_source, (s.data->>'venueFeeBps')::int as venue_fee_bps,
       coalesce((s.data->>'noSells')::bool, false) as no_sells, coalesce((s.data->'dev'->>'farm')::bool, false) as farm,
       null::float8 as fees_paid_usd,
       -- Launch platform behind a hooked v4 pool (Fobo, Clanker, ...), else the launchpad itself.
@@ -43,6 +45,14 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
 
 /** Launchpads whose tokens trade on a bonding curve before graduating. */
 export const CURVE_LAUNCHPADS = ['pons', 'liftfun'];
+/**
+ * Curve launchpads whose progress we keep current, so they can show in Almost bonded. lift.fun's
+ * progress only updates while LIFTFUN_ENABLED=1; otherwise a frozen value would leave stale cards there.
+ */
+export function almostLaunchpads(liftfun: boolean) {
+  return liftfun ? CURVE_LAUNCHPADS : CURVE_LAUNCHPADS.filter((l) => l !== 'liftfun');
+}
+export const liftfunOn = (env: { LIFTFUN_ENABLED?: string }) => env.LIFTFUN_ENABLED === '1';
 /**
  * Bonding progress at which a curve token moves from New to Almost bonded. GMGN's Robinhood column
  * (2026-11-12) started at ~23% once progress was read from real curve reserves (AME 72%, PIZZA 59%,
@@ -59,12 +69,12 @@ export const COLUMNS: Column[] = ['new', 'almost', 'migrated'];
  */
 export function columnOf(card: {
   status?: unknown; launchpad?: unknown; bonding_progress?: unknown; spam?: unknown; market_cap_usd?: unknown; holders?: unknown; volume_24h_usd?: unknown;
-}): Column | null {
+}, liftfun = false): Column | null {
   if (card.spam === true) return null;
   // Migrated = graduated from a launchpad curve. Direct-to-DEX launches never had a curve: they stay in New
   // (behind the plain-pool toggle), or thousands of copycat pools would bury the real graduations.
   if (card.status === 'migrated') return isDust(card) ? null : 'migrated';
-  const almost = CURVE_LAUNCHPADS.includes(String(card.launchpad)) && Number(card.bonding_progress ?? 0) >= ALMOST_BONDED;
+  const almost = almostLaunchpads(liftfun).includes(String(card.launchpad)) && Number(card.bonding_progress ?? 0) >= ALMOST_BONDED;
   return almost ? 'almost' : 'new';
 }
 
@@ -79,6 +89,8 @@ const ALMOST_STALE = '24 hours';
 
 export interface TrenchesQuery {
   column: string;
+  /** LIFTFUN_ENABLED: lift.fun tokens may show in Almost bonded. */
+  liftfun?: boolean;
   limit: number;
   minMcap: number;
   maxMcap: number;
@@ -102,7 +114,7 @@ export const TRENCHES_DEFAULTS: TrenchesQuery = {
 export async function trenchesList(sql: Sql, q: TrenchesQuery) {
   // Almost bonded = launchpad tokens still on their bonding curve and at least halfway there,
   // like GMGN. Plain-pool tokens have no curve, so they never land here (whatever their market cap).
-  const almost = sql`(t.launchpad = any(${CURVE_LAUNCHPADS}) and coalesce(t.bonding_progress, 0) >= ${ALMOST_BONDED})`;
+  const almost = sql`(t.launchpad = any(${almostLaunchpads(q.liftfun ?? false)}) and coalesce(t.bonding_progress, 0) >= ${ALMOST_BONDED})`;
   // Migrated: tokens that graduated from a launchpad curve (not direct-to-DEX launches), dust hidden.
   const notDust = sql`(coalesce(t.market_cap_usd, 0) >= ${DUST.minMcapUsd}
     and (t.holders >= ${DUST.minHolders} or coalesce(t.volume_24h_usd, 0) >= ${DUST.minVolume24hUsd}))`;
@@ -147,7 +159,8 @@ const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
  * Liquidity: v3/v2 = the pool's token balances (matches DexScreener), refreshed on read every 30s.
  * v4 pools share the PoolManager's balance, so their liquidity is null for now.
  */
-export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
+/** `rpcUrl` null (indexer paused): answer from the last measured TVL, no chain refresh. */
+export async function tokenPools(sql: Sql, rpcUrl: string | null, token: string) {
   const [t] = await sql<{ decimals: number; price_usd: string | null }[]>`select decimals, price_usd from tokens where address = ${token}`;
   if (!t) return null;
   const pools = await sql<
@@ -163,7 +176,7 @@ export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
 
   // Refresh stale v3/v2 TVL in one batched RPC call.
   const stale = pools.filter((p) => (p.dex === 'v3' || p.dex === 'v2') && (!p.liquidity_at || Date.now() - p.liquidity_at.getTime() > POOL_TVL_TTL_S * 1000));
-  if (stale.length && t.price_usd) {
+  if (rpcUrl && stale.length && t.price_usd) {
     const quotes = [...new Set(stale.map((p) => p.quote))];
     const qrows = await sql<{ address: string; decimals: number; price_usd: string | null }[]>`
       select address, decimals, price_usd from tokens where address = any(${quotes})`;
@@ -390,7 +403,7 @@ export async function walletPnl(sql: Sql, wallet: string, pg: { offset: number; 
 }
 
 /** Everything a token page needs at once (the realtime `token:` snapshot, docs/realtime.md). */
-export async function tokenSnapshot(sql: Sql, rpcUrl: string, token: string) {
+export async function tokenSnapshot(sql: Sql, rpcUrl: string | null, token: string) {
   const card = await tokenDetail(sql, token);
   if (!card) return null;
   const [stats, pools, trades, c1s, c1m] = await Promise.all([

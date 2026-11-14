@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeSignals, measureTax, type TokenSnapshot } from '../src/signals/compute';
+import { isContractCode } from '../src/chain/robinhood';
 
 const E18 = 10n ** 18n;
 const SUPPLY = 1_000_000_000n * E18;
@@ -38,7 +39,7 @@ describe('computeSignals', () => {
     const s = computeSignals(
       base({
         symbol: 'ZOLVA',
-        twinOrganicHolders: 1027,
+        earlierTwin: { organicHolders: 371, createdAt: T0 - 3600 },
         holderCount: 215,
         airdropped: Array.from({ length: 209 }, (_, i) => `a${i}`),
         devTokens,
@@ -49,27 +50,44 @@ describe('computeSignals', () => {
     expect(s.dev.serialLauncher).toBe(true);
     expect(s.dev.rugs).toBe(12);
     expect(s.risk).toBe('high');
-    expect(s.verdict).toContain('copycat: another $ZOLVA has 1027 real holders');
+    expect(s.verdict).toContain('copycat: an earlier $ZOLVA has 371 real holders');
     expect(s.verdict).toContain('dev launched 12 tokens this week');
   });
 
-  it('never flags the token with the real community as a copycat, even if a squatter launched first', () => {
-    // Real PONS: 6,891 holders. An older squatter with the same ticker has 40 organic holders.
-    const real = computeSignals(base({ symbol: 'PONS', holderCount: 6891, twinOrganicHolders: 40 }));
-    expect(real.copycat).toBe(false);
-    // The squatter, compared against the real one, is the copycat.
-    const squatter = computeSignals(base({ symbol: 'PONS', holderCount: 40, twinOrganicHolders: 6891 }));
-    expect(squatter.copycat).toBe(true);
-  });
+  describe('copycat: the earlier launch is the original', () => {
+    // Prod PLOG (2026-11-14): the PONS original launched 11-11 21:56 and graduated with 214 holders; a plain-pool
+    // copy launched the next day and farmed its way to 687. Before the fix the original was the "copycat".
+    it('PLOG: the earlier original is not a copycat, the bigger later copy is', () => {
+      const original = computeSignals(base({ symbol: 'PLOG', holderCount: 214, earlierTwin: null }));
+      expect(original.copycat).toBe(false);
+      expect(original.reasons.map((r) => r.text).join(' ')).not.toContain('copycat');
+      const copy = computeSignals(base({ symbol: 'PLOG', launchpad: 'uniswap-v4', holderCount: 687, earlierTwin: { organicHolders: 214, createdAt: T0 - 86_400 } }));
+      expect(copy.copycat).toBe(true);
+      expect(copy.twinOrganicHolders).toBe(214);
+      expect(copy.risk).toBe('high');
+    });
 
-  it('does not count airdropped wallets as a real community', () => {
-    // 300 holders but 290 of them airdropped: 10 organic vs a twin with 120 organic holders.
-    const s = computeSignals(
-      base({ symbol: 'CASHCAT', holderCount: 300, twinOrganicHolders: 120, airdropped: Array.from({ length: 290 }, (_, i) => `a${i}`) }),
-    );
-    expect(s.copycat).toBe(true);
-    // Comparable communities: neither is called a copycat.
-    expect(computeSignals(base({ symbol: 'AI', holderCount: 400, twinOrganicHolders: 500 })).copycat).toBe(false);
+    it('BULW: the PONS original stays clean; a 782-holder copy two days later is the copycat', () => {
+      expect(computeSignals(base({ symbol: 'BULW', holderCount: 174, earlierTwin: null })).copycat).toBe(false);
+      expect(computeSignals(base({ symbol: 'BULW', holderCount: 782, earlierTwin: { organicHolders: 174, createdAt: T0 - 2 * 86_400 } })).copycat).toBe(true);
+    });
+
+    it('a squat launched before the real token is not the original', () => {
+      // APESHIT: plain-pool squats with 38-42 holders days before the PONS launch (130 holders).
+      expect(computeSignals(base({ symbol: 'APESHIT', holderCount: 130, earlierTwin: { organicHolders: 42, createdAt: T0 - 86_400 } })).copycat).toBe(false);
+      // Real PONS ticker: 6,891 holders against a 300-holder squat (under 1/20 of it).
+      expect(computeSignals(base({ symbol: 'PONS', holderCount: 6891, earlierTwin: { organicHolders: 300, createdAt: T0 - 86_400 } })).copycat).toBe(false);
+      // A real earlier community (over both bars) is the original.
+      expect(computeSignals(base({ symbol: 'PONS', holderCount: 900, earlierTwin: { organicHolders: 300, createdAt: T0 - 86_400 } })).copycat).toBe(true);
+    });
+
+    it('counts only organic holders when deciding a squat', () => {
+      // 300 holders, 290 airdropped: 10 organic. Against an earlier 120-holder original it's a copycat.
+      const s = computeSignals(
+        base({ symbol: 'CASHCAT', holderCount: 300, earlierTwin: { organicHolders: 120, createdAt: T0 - 3600 }, airdropped: Array.from({ length: 290 }, (_, i) => `a${i}`) }),
+      );
+      expect(s.copycat).toBe(true);
+    });
   });
 
   it('treats a few airdropped wallets on a big real token as noise, not spam', () => {
@@ -124,6 +142,44 @@ describe('computeSignals', () => {
   });
 });
 
+describe('holder concentration counts people only', () => {
+  it('tells contracts from EOAs and EIP-7702 delegated EOAs by code size', () => {
+    expect(isContractCode('0x')).toBe(false);
+    // 7702 delegation: 0xef0100 + 20-byte address = 23 bytes. Still a person.
+    expect(isContractCode('0xef0100' + 'ab'.repeat(20))).toBe(false);
+    // A locker/hook (MORPH's #1 holder has 1,969 bytes).
+    expect(isContractCode('0x' + '60'.repeat(1969))).toBe(true);
+    expect(isContractCode(null)).toBeNull();
+  });
+
+  it('reports burnt supply and computes top 10 over the people passed in', () => {
+    // MORPH-shaped: the loader dropped the 8.16% locker, so the 11th wallet moves into the top 10.
+    const pcts = [3.96, 3.89, 3.72, 3.05, 3.04, 2.95, 2.36, 2.34, 2.24, 2.15, 2.04];
+    const holders = pcts.map((p, i) => ({ wallet: `p${i}`, amount: (SUPPLY * BigInt(Math.round(p * 100))) / 10_000n }));
+    const s = computeSignals(base({ holders, holderCount: 266, burnt: SUPPLY / 20n }));
+    expect(s.top10Pct).toBe(29.7);
+    expect(s.burntPct).toBe(5);
+  });
+});
+
+describe('contract tax (PONS creator tax)', () => {
+  it('uses the contract tax over a measured 0 and reports the venue fee separately', () => {
+    // MORPH: 3% creator tax + 1% PONS fee, both taken in ETH, so transfers measure 0.
+    const zeroSamples = [
+      { side: 'buy' as const, swapAmount: 100n * E18, traderNet: 100n * E18 },
+      { side: 'buy' as const, swapAmount: 50n * E18, traderNet: 50n * E18 },
+      { side: 'sell' as const, swapAmount: 100n * E18, traderNet: -100n * E18 },
+      { side: 'sell' as const, swapAmount: 50n * E18, traderNet: -50n * E18 },
+    ];
+    const s = computeSignals(base({ taxSamples: zeroSamples, contractTax: { buyBps: 300, sellBps: 300, venueFeeBps: 100 } }));
+    expect(s).toMatchObject({ buyTaxBps: 300, sellTaxBps: 300, taxSource: 'contract', venueFeeBps: 100 });
+    expect(s.risk).toBe('low'); // 3% is under the 10% medium rule
+    // Without a readable contract the measurement stands.
+    expect(computeSignals(base({ taxSamples: zeroSamples }))).toMatchObject({ buyTaxBps: 0, sellTaxBps: 0, taxSource: 'measured', venueFeeBps: null });
+    expect(computeSignals(base()).taxSource).toBeNull();
+  });
+});
+
 describe('tax, no-sells and launch farms', () => {
   it('measures buy and sell tax from what reached the trader or the pool', () => {
     // 5% buy tax: the pool sent 100, the trader kept 95. 10% sell tax: the trader gave 100, the pool got 90.
@@ -161,10 +217,38 @@ describe('tax, no-sells and launch farms', () => {
     expect(computeSignals(base({ tradeCounts: { buys: 40, sells: 0 }, now: T0 + 120 })).noSells).toBe(false);
   });
 
-  it('marks a launch farm (same token relaunched by fresh wallets) as a serial launcher', () => {
-    const s = computeSignals(base({ symbol: 'TURBO', sameNameDeployers24h: 14 }));
-    expect(s.dev).toMatchObject({ serialLauncher: true, farm: true });
+  // Fixtures shaped on prod PONS tokens (2026-11-13): GIRAFF's original has 338 holders and squatters
+  // launched before it; its copies have 1-5 holders.
+  const holdersOf = (n: number) => Array.from({ length: n }, (_, i) => ({ wallet: `h${i}`, amount: SUPPLY / 1000n }));
+
+  it('an original with only later copies is neither a farm nor a serial dev', () => {
+    // Copies came after it, so the loader counts no earlier same-name deployers.
+    const s = computeSignals(base({ symbol: 'AEON', holders: holdersOf(124), holderCount: 124, sameNameDeployers24h: 0, twinOrganicHolders: 2 }));
+    expect(s.dev).toMatchObject({ serialLauncher: false, farm: false });
+    expect(s.reasons.map((r) => r.text).join(' ')).not.toMatch(/farm|tokens this week/);
+  });
+
+  it('an original launched after squatters is not a farm when it leads its ticker by organic holders', () => {
+    const s = computeSignals(base({ symbol: 'GIRAFF', holders: holdersOf(338), holderCount: 338, sameNameDeployers24h: 7, twinOrganicHolders: 5 }));
+    expect(s.dev).toMatchObject({ serialLauncher: false, farm: false });
+  });
+
+  it('a copy of a farm is flagged farm (high risk) but not serial dev', () => {
+    const s = computeSignals(base({ symbol: 'GIRAFF', holders: holdersOf(3), holderCount: 3, sameNameDeployers24h: 7, twinOrganicHolders: 338 }));
+    expect(s.dev).toMatchObject({ serialLauncher: false, farm: true });
     expect(s.risk).toBe('high');
-    expect(s.reasons[0]!.text).toContain('launch farm: 14 copies');
+    expect(s.reasons.map((r) => r.text)).toContain('launch farm copy: 7 other wallets launched $GIRAFF in the 24h before it');
+  });
+
+  it('fresh farm copies tied at a holder or two still count as farm', () => {
+    const s = computeSignals(base({ symbol: 'TURBO', holders: holdersOf(1), holderCount: 1, sameNameDeployers24h: 14, twinOrganicHolders: 1 }));
+    expect(s.dev.farm).toBe(true);
+  });
+
+  it('a deployer with 158 launches this week is a serial dev (and not a farm by that alone)', () => {
+    const devTokens = Array.from({ length: 158 }, (_, i) => ({ address: `t${i}`, createdAt: T0 - i * 3600, athMarketCapUsd: null, marketCapUsd: null, migrated: false }));
+    const s = computeSignals(base({ devTokens }));
+    expect(s.dev).toMatchObject({ serialLauncher: true, farm: false, launches7d: 158 });
+    expect(s.reasons.map((r) => r.text)).toContain('dev launched 158 tokens this week');
   });
 });

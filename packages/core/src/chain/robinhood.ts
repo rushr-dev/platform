@@ -225,6 +225,23 @@ export const V4_PLATFORMS: Record<Address, { id: string; name: string }> = {
 };
 
 /** Contracts that move tokens on behalf of users; never treat them as the trader or a holder cluster. */
+/** Burn addresses: tokens sent here are out of circulation (reported as burntPct, never as a holder). */
+export const BURN_ADDRESSES: Address[] = [
+  '0x0000000000000000000000000000000000000000',
+  '0x000000000000000000000000000000000000dead',
+  '0xdead000000000000000042069420694206942069',
+];
+
+/**
+ * Whether `eth_getCode` output is a real contract (pool, locker, vesting, hook...). EOAs have no code;
+ * EIP-7702 delegated EOAs have exactly 23 bytes (0xef0100 + a 20-byte address) and are still people.
+ * null = unknown (the call failed).
+ */
+export function isContractCode(code: string | null | undefined): boolean | null {
+  if (code == null) return null;
+  return (code.length - 2) / 2 > 23;
+}
+
 export const INFRA_ADDRESSES: Address[] = [
   UNISWAP.v4.poolManager,
   UNISWAP.v4.positionManager,

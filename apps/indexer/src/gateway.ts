@@ -1,8 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
 import postgres, { type Sql } from 'postgres';
 import { dbUrl, poller as pollerOf, type Env } from './env';
-import { tokenSnapshot, trenchesList, TRENCHES_DEFAULTS, COLUMNS, type Column } from './data';
+import { liftfunOn, tokenSnapshot, trenchesList, TRENCHES_DEFAULTS, COLUMNS, type Column } from './data';
 import { hydrator } from './hydrator';
+import { readPause } from './pause';
 
 /**
  * Realtime gateway (protocol v2, docs/realtime.md). Clients are spread over GATEWAY_COUNT instances;
@@ -243,12 +244,12 @@ export class Gateway extends DurableObject<Env> {
   private async build(topic: string): Promise<unknown> {
     const sql = this.db();
     if (topic.startsWith('token:')) {
-      const snap = await tokenSnapshot(sql, this.env.RPC_URL, topic.slice(6));
+      const snap = await tokenSnapshot(sql, (await readPause(sql)).paused ? null : this.env.RPC_URL, topic.slice(6));
       return snap ? { state: 'live', ...snap } : null;
     }
     const column = topic.slice('trenches:'.length) as Column;
     if (!COLUMNS.includes(column)) return null;
-    return { tokens: await trenchesList(sql, { ...TRENCHES_DEFAULTS, column }) };
+    return { tokens: await trenchesList(sql, { ...TRENCHES_DEFAULTS, column, liftfun: liftfunOn(this.env) }) };
   }
 
   /** From the poller (and hydrators): deliver events to the sockets subscribed to their topic. */

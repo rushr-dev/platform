@@ -16,6 +16,11 @@ export interface Env {
   HYPERDRIVE?: Hyperdrive;
   /** '1': stream v3/v2 swaps of tracked pools over the socket (address-filtered). Otherwise polling only (~2-4s). */
   LIVE_PAIRS?: string;
+  /**
+   * '1': sync lift.fun bonding progress and graduations from its API (crons and /admin/liftfun/*), and
+   * show lift.fun tokens in Almost bonded. Off by default: existing lift.fun tokens stay in New/Migrated.
+   */
+  LIFTFUN_ENABLED?: string;
   /** Cap on pools in the pair-swap socket subscription (default 75). */
   PAIR_SUB_MAX?: string;
   CHAIN_POLLER: DurableObjectNamespace<ChainPoller>;
@@ -33,7 +38,7 @@ export interface Env {
 
 export type EnrichMessage =
   | { kind: 'wallet-funding'; wallet: string }
-  | { kind: 'token-signals'; token: string }
+  | { kind: 'token-signals'; token: string; /** Recompute even if fresh (admin backfills after a rule change). */ force?: boolean }
   /** Fill a trade-ledger row from the chain (POST /v1/trades). */
   | { kind: 'trade-confirm'; tx: string; attempt?: number }
   | {

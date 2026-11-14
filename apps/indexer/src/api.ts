@@ -5,11 +5,15 @@ import { dbUrl, type Env } from './env';
 import { hydrator } from './hydrator';
 import {
   POOL_TVL_TTL_S, walletPnl, minuteCandles, subMinuteCandles, tokenDetail, tokenPools, tokenSnapshot, tokenStats, tokenSummaries, trenchesList,
+  liftfunOn,
 } from './data';
 
 export { tokenSummaries } from './data';
 import { loadSnapshot } from './signals';
+import { searchTokens } from './search';
+import { refreshSignalsIfStale } from './signals-refresh';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
+import { PAUSED_BODY, readPause } from './pause';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
 
@@ -26,6 +30,9 @@ api.use('*', async (c, next) => {
   }
 });
 
+/** The RPC URL for best-effort chain refreshes inside reads, or null while the indexer is paused. */
+const chainUrl = async (c: { env: Env; var: { sql: Sql } }) => ((await readPause(c.var.sql)).paused ? null : c.env.RPC_URL);
+
 const cache = (seconds: number) => ({ 'cache-control': `public, max-age=${seconds}, s-maxage=${seconds}` });
 const addr = (s: string | undefined) => (s ?? '').toLowerCase();
 
@@ -33,9 +40,12 @@ const addr = (s: string | undefined) => (s ?? '').toLowerCase();
  * A token we have nothing on: ask its hydrator to fetch it from chain (coalesced per token, rate
  * limited) and answer 202 so the page can show "fetching from chain" and follow the socket.
  */
-async function hydrating(c: { env: Env; json: (b: unknown, s: 202 | 404) => Response }, token: string) {
+async function hydrating(c: { env: Env; var: { sql: Sql }; json: (b: unknown, s: 202 | 404 | 503) => Response }, token: string) {
   if (!/^0x[0-9a-f]{40}$/.test(token)) return c.json({ error: 'not found' }, 404);
+  // Paused: no chain lookups at all (checked here too, so a paused indexer doesn't even wake the hydrator).
+  if ((await readPause(c.var.sql)).paused) return c.json(PAUSED_BODY, 503);
   const { state } = await hydrator(c.env, token).hydrate(token);
+  if (state === 'paused') return c.json(PAUSED_BODY, 503);
   if (state === 'not_token') return c.json({ error: 'not found' }, 404);
   return c.json({ address: token, state, source: 'chain' }, 202);
 }
@@ -46,6 +56,7 @@ api.get('/tokens', async (c) => {
   const column = q('column') ?? 'new';
   const tokens = await trenchesList(c.var.sql, {
     column,
+    liftfun: liftfunOn(c.env),
     limit: Math.min(Number(q('limit') ?? 50), 100),
     minMcap: Number(q('minMcap') ?? 0),
     maxMcap: Number(q('maxMcap') ?? 1e15),
@@ -66,12 +77,13 @@ api.get('/tokens/:address', async (c) => {
   const token = addr(c.req.param('address'));
   const detail = await tokenDetail(sql, token);
   if (!detail) return hydrating(c, token);
+  refreshSignalsIfStale(c, token, (detail as { signals_updated_at?: Date | string | null }).signals_updated_at);
   return c.json(detail, 200, cache(2));
 });
 
 /** Every pool of a token with its routing key, 24h volume and liquidity (see tokenPools). */
 api.get('/tokens/:address/pools', async (c) => {
-  const pools = await tokenPools(c.var.sql, c.env.RPC_URL, addr(c.req.param('address')));
+  const pools = await tokenPools(c.var.sql, await chainUrl(c), addr(c.req.param('address')));
   if (!pools) return c.json({ error: 'not found' }, 404);
   return c.json({ pools }, 200, cache(POOL_TVL_TTL_S));
 });
@@ -86,9 +98,10 @@ api.get('/tokens/:address/stats', async (c) => {
 /** The realtime `token:` snapshot (docs/realtime.md), for server rendering. */
 api.get('/tokens/:address/snapshot', async (c) => {
   const token = addr(c.req.param('address'));
-  const snap = await tokenSnapshot(c.var.sql, c.env.RPC_URL, token);
+  const rpcUrl = await chainUrl(c);
+  const snap = await tokenSnapshot(c.var.sql, rpcUrl, token);
   if (!snap) return hydrating(c, token);
-  if (!snap.trades.length) c.executionCtx.waitUntil(hydrator(c.env, token).hydrate(token).catch(() => undefined));
+  if (!snap.trades.length && rpcUrl) c.executionCtx.waitUntil(hydrator(c.env, token).hydrate(token).catch(() => undefined));
   return c.json({ ...snap, state: 'live', source: 'index' }, 200, cache(2));
 });
 
@@ -107,22 +120,31 @@ api.get('/tokens/:address/trades', async (c) => {
   return c.json({ trades: rows }, 200, cache(1));
 });
 
-/** Holders with tags (dev, sniper, bundler, insider, fresh, airdrop). */
+/**
+ * Holders with tags (dev, sniper, bundler, insider, fresh, airdrop), largest first. Burn addresses, pools
+ * (curves, hooks, the PoolManager) and contracts are listed too, tagged `burn` / `pool` / `contract` with
+ * `excluded: true`: they don't count in top-10 or other concentration signals.
+ */
 api.get('/tokens/:address/holders', async (c) => {
   const sql = c.var.sql;
   const token = addr(c.req.param('address'));
   const loaded = await loadSnapshot(sql, token, null);
   if (!loaded) return c.json({ error: 'not found' }, 404);
-  const { snapshot } = loaded;
+  const { snapshot, excluded } = loaded;
   const tags = tagHolders(snapshot);
   const supply = Number(snapshot.totalSupply);
-  const holders = snapshot.holders.map((h) => ({
-    wallet: h.wallet,
-    amount: h.amount.toString(),
-    pct: supply ? (Number(h.amount) / supply) * 100 : 0,
-    tags: tags[h.wallet] ?? [],
-    funder: snapshot.wallets[h.wallet]?.firstFunder ?? null,
-  }));
+  const holders = [
+    ...snapshot.holders.map((h) => ({
+      wallet: h.wallet,
+      amount: h.amount,
+      tags: (tags[h.wallet] ?? []) as string[],
+      excluded: false,
+      funder: snapshot.wallets[h.wallet]?.firstFunder ?? null,
+    })),
+    ...excluded.map((h) => ({ wallet: h.wallet, amount: h.amount, tags: [h.kind] as string[], excluded: true, funder: null })),
+  ]
+    .sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))
+    .map((h) => ({ ...h, amount: h.amount.toString(), pct: supply ? (Number(h.amount) / supply) * 100 : 0 }));
   return c.json({ holders, total: snapshot.holderCount }, 200, cache(5));
 });
 
@@ -201,7 +223,7 @@ api.get('/wallets/:address/holdings', async (c) => {
   const wallet = addr(c.req.param('address'));
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
   const out = await walletHoldings(c.var.sql, wallet, page((k) => c.req.query(k), 200));
-  c.executionCtx.waitUntil(
+  if (!(await readPause(c.var.sql)).paused) c.executionCtx.waitUntil(
     (async () => {
       const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
       try { await repairBalances(sql, c.env.RPC_URL, wallet); } catch { /* best effort */ } finally { await sql.end({ timeout: 5 }); }
@@ -234,11 +256,12 @@ api.get('/search', async (c) => {
   const sql = c.var.sql;
   const q = (c.req.query('q') ?? '').trim();
   if (q.length < 2) return c.json({ tokens: [] });
-  const rows = await sql<{ address: string }[]>`
-    select address from tokens
-    where address = ${q.toLowerCase()} or symbol ilike ${q + '%'} or name ilike ${'%' + q + '%'}
-    order by (address = ${q.toLowerCase()}) desc, market_cap_usd desc nulls last limit 20`;
-  return c.json({ tokens: await tokenSummaries(sql, { addresses: rows.map((r) => r.address) }) }, 200, cache(5));
+  // Real token first (see search.ts); tokenSummaries doesn't keep order, so restore it.
+  const order = await searchTokens(sql, q);
+  const cards = await tokenSummaries(sql, { addresses: order });
+  const at = new Map(order.map((a, i) => [a, i]));
+  cards.sort((x, y) => (at.get(String(x.address)) ?? 99) - (at.get(String(y.address)) ?? 99));
+  return c.json({ tokens: cards }, 200, cache(5));
 });
 
 /** Headline numbers for the landing page. */
