@@ -167,6 +167,16 @@ export async function loadSnapshot(
     }
   }
 
+  // The copycat check: the strongest same-ticker token launched *before* this one. Spam and airdrop farms
+  // (half or more of their holders airdropped) are left out: they're never the original.
+  const [earlier] = await sql<{ organic: number; created_at: Date }[]>`
+    select greatest(0, o.holders - coalesce((s.data->>'airdroppedHolders')::int, 0))::int as organic, o.created_at
+    from tokens o left join signals s on s.token = o.address
+    where lower(o.symbol) = lower(${t.symbol}) and o.address <> ${token} and o.created_at < ${t.created_at}
+      and not coalesce((s.data->>'spam')::bool, false)
+      and coalesce((s.data->>'airdroppedHolders')::int, 0) * 2 < greatest(o.holders, 1)
+    order by organic desc limit 1`;
+
   const snapshot: TokenSnapshot = {
     address: t.address,
     symbol: t.symbol,
@@ -191,6 +201,7 @@ export async function loadSnapshot(
       migrated: d.status === 'migrated',
     })),
     twinOrganicHolders,
+    earlierTwin: earlier ? { organicHolders: earlier.organic, createdAt: Math.floor(earlier.created_at.getTime() / 1000) } : null,
     launchpad: t.launchpad,
     now: Math.floor(Date.now() / 1000),
     taxSamples: taxRows.map((r) => ({ side: r.side, swapAmount: BigInt(r.token_amount), traderNet: BigInt(r.net) })),

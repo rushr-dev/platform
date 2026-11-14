@@ -11,6 +11,7 @@ import {
 export { tokenSummaries } from './data';
 import { loadSnapshot } from './signals';
 import { searchTokens } from './search';
+import { refreshSignalsIfStale } from './signals-refresh';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
@@ -69,6 +70,7 @@ api.get('/tokens/:address', async (c) => {
   const token = addr(c.req.param('address'));
   const detail = await tokenDetail(sql, token);
   if (!detail) return hydrating(c, token);
+  refreshSignalsIfStale(c, token, (detail as { signals_updated_at?: Date | string | null }).signals_updated_at);
   return c.json(detail, 200, cache(2));
 });
 

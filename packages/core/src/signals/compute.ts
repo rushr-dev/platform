@@ -62,6 +62,12 @@ export interface TokenSnapshot {
    * ticker before the real launch, so the "original" is whichever one has the real community.
    */
   twinOrganicHolders: number;
+  /**
+   * The same-ticker token launched before this one with the most organic holders, leaving out spam and
+   * airdrop farms (null when there is none). It decides the copycat flag: the earlier launch is the
+   * original unless it was a squat (see isCopycat). Optional (older callers: never a copycat).
+   */
+  earlierTwin?: { organicHolders: number; createdAt: number } | null;
   /** Launchpad id, or 'uniswap-v4' for a plain pool (no launchpad). */
   launchpad: string | null;
   now: number;
@@ -128,7 +134,7 @@ export interface TokenSignals {
   /** Many buys, no sell at all: possibly can't be sold. */
   noSells?: boolean;
   copycat: boolean;
-  /** Organic holders of the stronger same-ticker token this one copies (0 when not a copycat). */
+  /** Organic holders of the earlier same-ticker token this one copies (0 when not a copycat). */
   twinOrganicHolders: number;
   /**
    * Airdrop-farm spam: a plain pool (no launchpad) whose holder count was padded by mass airdrops.
@@ -156,10 +162,13 @@ export const THRESHOLDS = {
   airdropShareFake: 0.5,
   /** ...or at least this share: worth a warning, not a verdict. */
   airdropShareNotable: 0.2,
-  /** Copycat: a same-ticker token with at least this many organic holders... */
+  /**
+   * Copycat: an earlier same-ticker token is the original unless it was a squat, i.e. it has fewer than
+   * this many organic holders...
+   */
   copycatTwinMinHolders: 50,
-  /** ...and at least this many times this token's organic holders. */
-  copycatTwinRatio: 3,
+  /** ...or under 1/this of this token's organic holders. */
+  copycatSquatRatio: 20,
   /** Same name+symbol launched by at least this many different deployers in 24h: a farm. */
   farmDeployers24h: 3,
   /** Trades of each side needed before a tax is reported. */
@@ -209,9 +218,19 @@ function isFarmCopy(s: TokenSnapshot) {
 }
 
 /** Another token with this ticker has a far bigger organic community: this one rides its name. */
+/**
+ * A copycat: a same-ticker token launched before this one, and that earlier token is the original.
+ * Launch order decides, not size: copies often outgrow the original with farmed volume (PLOG's later
+ * plain-pool copy had 687 holders against the original's 214). The exception is a squat, an earlier
+ * token that never had a real community: fewer than `copycatTwinMinHolders` organic holders, or under
+ * 1/`copycatSquatRatio` of this one's. Spam and airdrop farms are never originals (the loader leaves them out).
+ */
 function isCopycat(s: TokenSnapshot) {
+  const t = s.earlierTwin;
+  if (!t) return false;
   const own = Math.max(0, s.holderCount - s.airdropped.length);
-  return s.twinOrganicHolders >= Math.max(THRESHOLDS.copycatTwinMinHolders, own * THRESHOLDS.copycatTwinRatio);
+  const squat = t.organicHolders < Math.max(THRESHOLDS.copycatTwinMinHolders, own / THRESHOLDS.copycatSquatRatio);
+  return !squat;
 }
 
 /** Share of holders that were airdropped (0 below the minimum count, so a handful never matters). */
@@ -345,7 +364,7 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     venueFeeBps: ct?.venueFeeBps ?? null,
     noSells,
     copycat: isCopycat(s),
-    twinOrganicHolders: isCopycat(s) ? s.twinOrganicHolders : 0,
+    twinOrganicHolders: isCopycat(s) ? s.earlierTwin!.organicHolders : 0,
     spam: isPlainPool(s.launchpad) && airdropShare(s) >= THRESHOLDS.airdropShareFake,
   };
   return { ...signals, ...judge(signals, s) };
@@ -358,7 +377,7 @@ function judge(
   const reasons: Reason[] = [];
   const add = (level: Reason['level'], text: string) => reasons.push({ level, text });
 
-  if (x.copycat) add('high', `copycat: another $${s.symbol} has ${x.twinOrganicHolders} real holders`);
+  if (x.copycat) add('high', `copycat: an earlier $${s.symbol} has ${x.twinOrganicHolders} real holders`);
   if (x.dev.farm) add('high', `launch farm copy: ${s.sameNameDeployers24h} other wallets launched $${s.symbol} in the 24h before it`);
   if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
   if (x.noSells) add('high', `${s.tradeCounts!.buys} buys and no sells: may not be sellable`);

@@ -39,7 +39,7 @@ describe('computeSignals', () => {
     const s = computeSignals(
       base({
         symbol: 'ZOLVA',
-        twinOrganicHolders: 1027,
+        earlierTwin: { organicHolders: 371, createdAt: T0 - 3600 },
         holderCount: 215,
         airdropped: Array.from({ length: 209 }, (_, i) => `a${i}`),
         devTokens,
@@ -50,27 +50,44 @@ describe('computeSignals', () => {
     expect(s.dev.serialLauncher).toBe(true);
     expect(s.dev.rugs).toBe(12);
     expect(s.risk).toBe('high');
-    expect(s.verdict).toContain('copycat: another $ZOLVA has 1027 real holders');
+    expect(s.verdict).toContain('copycat: an earlier $ZOLVA has 371 real holders');
     expect(s.verdict).toContain('dev launched 12 tokens this week');
   });
 
-  it('never flags the token with the real community as a copycat, even if a squatter launched first', () => {
-    // Real PONS: 6,891 holders. An older squatter with the same ticker has 40 organic holders.
-    const real = computeSignals(base({ symbol: 'PONS', holderCount: 6891, twinOrganicHolders: 40 }));
-    expect(real.copycat).toBe(false);
-    // The squatter, compared against the real one, is the copycat.
-    const squatter = computeSignals(base({ symbol: 'PONS', holderCount: 40, twinOrganicHolders: 6891 }));
-    expect(squatter.copycat).toBe(true);
-  });
+  describe('copycat: the earlier launch is the original', () => {
+    // Prod PLOG (2026-11-14): the PONS original launched 11-11 21:56 and graduated with 214 holders; a plain-pool
+    // copy launched the next day and farmed its way to 687. Before the fix the original was the "copycat".
+    it('PLOG: the earlier original is not a copycat, the bigger later copy is', () => {
+      const original = computeSignals(base({ symbol: 'PLOG', holderCount: 214, earlierTwin: null }));
+      expect(original.copycat).toBe(false);
+      expect(original.reasons.map((r) => r.text).join(' ')).not.toContain('copycat');
+      const copy = computeSignals(base({ symbol: 'PLOG', launchpad: 'uniswap-v4', holderCount: 687, earlierTwin: { organicHolders: 214, createdAt: T0 - 86_400 } }));
+      expect(copy.copycat).toBe(true);
+      expect(copy.twinOrganicHolders).toBe(214);
+      expect(copy.risk).toBe('high');
+    });
 
-  it('does not count airdropped wallets as a real community', () => {
-    // 300 holders but 290 of them airdropped: 10 organic vs a twin with 120 organic holders.
-    const s = computeSignals(
-      base({ symbol: 'CASHCAT', holderCount: 300, twinOrganicHolders: 120, airdropped: Array.from({ length: 290 }, (_, i) => `a${i}`) }),
-    );
-    expect(s.copycat).toBe(true);
-    // Comparable communities: neither is called a copycat.
-    expect(computeSignals(base({ symbol: 'AI', holderCount: 400, twinOrganicHolders: 500 })).copycat).toBe(false);
+    it('BULW: the PONS original stays clean; a 782-holder copy two days later is the copycat', () => {
+      expect(computeSignals(base({ symbol: 'BULW', holderCount: 174, earlierTwin: null })).copycat).toBe(false);
+      expect(computeSignals(base({ symbol: 'BULW', holderCount: 782, earlierTwin: { organicHolders: 174, createdAt: T0 - 2 * 86_400 } })).copycat).toBe(true);
+    });
+
+    it('a squat launched before the real token is not the original', () => {
+      // APESHIT: plain-pool squats with 38-42 holders days before the PONS launch (130 holders).
+      expect(computeSignals(base({ symbol: 'APESHIT', holderCount: 130, earlierTwin: { organicHolders: 42, createdAt: T0 - 86_400 } })).copycat).toBe(false);
+      // Real PONS ticker: 6,891 holders against a 300-holder squat (under 1/20 of it).
+      expect(computeSignals(base({ symbol: 'PONS', holderCount: 6891, earlierTwin: { organicHolders: 300, createdAt: T0 - 86_400 } })).copycat).toBe(false);
+      // A real earlier community (over both bars) is the original.
+      expect(computeSignals(base({ symbol: 'PONS', holderCount: 900, earlierTwin: { organicHolders: 300, createdAt: T0 - 86_400 } })).copycat).toBe(true);
+    });
+
+    it('counts only organic holders when deciding a squat', () => {
+      // 300 holders, 290 airdropped: 10 organic. Against an earlier 120-holder original it's a copycat.
+      const s = computeSignals(
+        base({ symbol: 'CASHCAT', holderCount: 300, earlierTwin: { organicHolders: 120, createdAt: T0 - 3600 }, airdropped: Array.from({ length: 290 }, (_, i) => `a${i}`) }),
+      );
+      expect(s.copycat).toBe(true);
+    });
   });
 
   it('treats a few airdropped wallets on a big real token as noise, not spam', () => {
