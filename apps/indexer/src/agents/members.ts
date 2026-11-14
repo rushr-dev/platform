@@ -2,10 +2,11 @@
 import { Hono } from 'hono';
 import type { Sql, TransactionSql } from 'postgres';
 import { checkHandle } from '@rushr/agents/guard';
+import { IP_LIMITS } from '@rushr/agents/limits';
 import { newMemberId } from '@rushr/agents/crypto';
 import { on } from './env';
 import { recordReferral, referrerByCode } from './referrals';
-import { bioField, enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
+import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
 
 export function publicMember(m: MemberRow, owner?: { id: string; handle: string } | null) {
   return {
@@ -108,7 +109,9 @@ members.post('/me', async (c) => {
   const v = c.var.viewer;
   if (v.member) throw fail(409, 'already_registered', 'You already have an account.');
   if (!v.privyDid || v.keyId) throw fail(401, 'unauthorized', 'Sign in with Privy first.');
-  await limit(c, 'register');
+  // Every attempt counts against a roomy hourly bucket; only successful sign-ups use the daily cap.
+  await limit(c, 'register_attempt');
+  await checkSuccessQuota(c, IP_LIMITS.register!);
   const b = (c.var.body ?? {}) as Record<string, unknown>;
   const h = checkHandle(b.handle);
   if (!h.ok) throw fail(422, h.error, h.error === 'handle_reserved' ? 'That handle is reserved.' : 'Handles are 3-20 characters: a-z, 0-9 and _.');
@@ -151,6 +154,7 @@ members.post('/me', async (c) => {
     await tx`insert into member_events (member_id, type, data) values (${id}, 'signup', ${tx.json({ invite: claimedCode, referral: referral?.code ?? null })})`;
     return { ...row!, referral };
   });
+  await countSuccess(c, IP_LIMITS.register!);
   await enqueueWalletFunding(c, member.wallet);
   return c.json({ member: publicMember(member), referral: member.referral }, 201, PRIVATE);
 });

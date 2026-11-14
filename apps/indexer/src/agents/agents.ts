@@ -1,16 +1,20 @@
 // Independent agents: SIWE registration and API keys, a safety view, and quotes plus UNSIGNED
 // transactions. Rushr never holds keys, never signs, never sends, never trades for anyone.
 import { Hono } from 'hono';
-import type { Sql } from 'postgres';
-import { createPublicClient, http, type Address } from 'viem';
+import type { Sql, TransactionSql } from 'postgres';
+import { createPublicClient, encodeFunctionData, http, type Address, type Hex } from 'viem';
 import { checkHandle } from '@rushr/agents/guard';
 import { newApiKey, newMemberId, newNonce } from '@rushr/agents/crypto';
-import { MAX_OUTSTANDING_NONCES } from '@rushr/agents/limits';
+import { IP_LIMITS, MAX_OUTSTANDING_NONCES } from '@rushr/agents/limits';
 import { buildMessage, NONCE_TTL_MS, peekSiwe, verifySiwe, type Purpose } from '@rushr/agents/siwe';
 import { prepareSwap, toJsonSafe } from '@rushr/trade/agent';
 import { robinhoodChain } from '@rushr/trade/chain';
 import { isTradeError } from '@rushr/trade/errors';
-import { bioField, enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
+import { resolveConfig } from '@rushr/trade/config';
+import { erc20Abi, permit2Abi } from '@rushr/trade/abis';
+import { TRADE_ADDRESSES } from '@rushr/trade/addresses';
+import type { Approval } from '@rushr/trade/types';
+import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
 import { publicMember } from './members';
 import { recordReferral } from './referrals';
 
@@ -36,12 +40,11 @@ async function consumeSiwe(sql: Sql, b: Record<string, unknown>, purpose: Purpos
   });
 }
 
-async function issueKey(sql: Sql, memberId: string, revokeOthers: boolean) {
+/** Issue a key inside the caller's transaction, so an account never exists without one. */
+async function issueKey(tx: TransactionSql, memberId: string, revokeOthers: boolean) {
   const key = await newApiKey();
-  await sql.begin(async (tx) => {
-    if (revokeOthers) await tx`update api_keys set revoked_at = now() where member_id = ${memberId} and revoked_at is null`;
-    await tx`insert into api_keys (id, member_id, secret_hash, scopes) values (${key.id}, ${memberId}, ${key.secretHash}, ${AGENT_SCOPES})`;
-  });
+  if (revokeOthers) await tx`update api_keys set revoked_at = now() where member_id = ${memberId} and revoked_at is null`;
+  await tx`insert into api_keys (id, member_id, secret_hash, scopes) values (${key.id}, ${memberId}, ${key.secretHash}, ${AGENT_SCOPES})`;
   return { id: key.id, key: key.token, scopes: AGENT_SCOPES, note: 'Shown once. Store it like a password. Send it as Authorization: Bearer <key>.' };
 }
 
@@ -70,7 +73,9 @@ agents.get('/auth/nonce', async (c) => {
 /** `{ message, signature, handle, bio?, displayName? }` → `{ member, apiKey }`. Independent agents only in the beta. */
 agents.post('/agents/register', async (c) => {
   if (c.var.viewer.member) throw fail(409, 'already_registered', 'You are signed in as a member already.');
-  await limit(c, 'register');
+  // Every attempt counts against a roomy hourly bucket; only successful sign-ups use the daily cap.
+  await limit(c, 'register_attempt');
+  await checkSuccessQuota(c, IP_LIMITS.register!);
   const b = (c.var.body ?? {}) as Record<string, unknown>;
   const h = checkHandle(b.handle);
   if (!h.ok) throw fail(422, h.error, 'Handles are 3-20 characters: a-z, 0-9 and _, not reserved.');
@@ -83,29 +88,30 @@ agents.post('/agents/register', async (c) => {
   const [exists] = await sql`select 1 from members where wallet = ${wallet}`;
   if (exists) throw fail(409, 'wallet_taken', 'This wallet already has an account. Use POST /v1/agents/login to get a new key.');
   const id = newMemberId();
-  const [member] = await sql.begin(async (tx) => {
+  const { member, apiKey } = await sql.begin(async (tx) => {
     const rows = await tx.unsafe<MemberRow[]>(
       `insert into members (id, kind, origin, handle, wallet, display_name, bio) values ($1, 'agent', 'self', $2, $3, $4, $5) returning ${memberColumns}`,
       [id, h.handle, wallet, displayName, bio],
     );
     const referral = await recordReferral(tx, { id, wallet }, b.referralCode);
     await tx`insert into member_events (member_id, type, data) values (${id}, 'register', ${tx.json({ origin: 'self', referral: referral?.code ?? null })})`;
-    return rows;
+    return { member: rows[0], apiKey: await issueKey(tx, id, false) };
   });
-  const apiKey = await issueKey(sql, id, false);
+  await countSuccess(c, IP_LIMITS.register!);
   await enqueueWalletFunding(c, wallet);
   return c.json({ member: publicMember(member!), apiKey }, 201, PRIVATE);
 });
 
 /** Sign in again with the wallet: revokes every key and issues a new one (rotation and recovery). */
 agents.post('/agents/login', async (c) => {
-  await limit(c, 'register');
+  await limit(c, 'login');
   const sql = c.var.sql;
   const wallet = await consumeSiwe(sql, (c.var.body ?? {}) as Record<string, unknown>, 'login');
   const [m] = await sql.unsafe<MemberRow[]>(`select ${memberColumns} from members where wallet = $1`, [wallet]);
   if (!m || m.kind !== 'agent') throw fail(404, 'not_registered', 'No agent account for this wallet. Register first.');
   if (m.status !== 'active') throw fail(403, 'suspended', 'This account is suspended.');
-  return c.json({ member: publicMember(m), apiKey: await issueKey(sql, m.id, true) }, 200, PRIVATE);
+  const apiKey = await sql.begin((tx) => issueKey(tx, m.id, true));
+  return c.json({ member: publicMember(m), apiKey }, 200, PRIVATE);
 });
 
 agents.get('/agents/me', async (c) => {
@@ -197,6 +203,7 @@ function swapRequest(c: C, m: MemberRow) {
   return {
     req: { side: side as 'buy' | 'sell', token: token as Address, quoteAsset: quoteAsset as 'ETH' | 'USDG', amountIn, trader: m.wallet as Address, slippageBps, source: { kind: 'agent' as const, id: m.id } },
     acceptRisk: b.acceptRisk,
+    acceptImpact: b.acceptImpact === true,
     simulate: b.simulate === true,
   };
 }
@@ -210,35 +217,85 @@ export function riskGate(side: 'buy' | 'sell', safety: Safety, acceptRisk: unkno
   }
 }
 
+/** Builds above this price impact are refused unless the agent passes `acceptImpact: true` (units bugs). */
+export const MAX_IMPACT_BPS = 3000;
+/** ETH added to the trader's balance inside a `simulate: true` dry run only: gas headroom on top of the tx value. */
+const SIM_GAS_BUFFER_WEI = 10n ** 16n; // 0.01 ETH
+/** Permit2 allowances from built approvals expire after 30 days (Uniswap's default). */
+const PERMIT2_EXPIRY_S = 30 * 86_400;
+const MAX_UINT160 = (1n << 160n) - 1n;
+
+/** PONS tokens still on their bonding curve: agents trade graduated (Uniswap) tokens only for now. */
+async function onCurve(sql: Sql, token: string): Promise<boolean> {
+  const [t] = await sql<{ launchpad: string | null; status: string }[]>`select launchpad, status from tokens where address = ${token}`;
+  return t?.launchpad === 'pons' && t.status !== 'migrated';
+}
+
+const CURVE_MESSAGE = 'This token is still on its PONS bonding curve; agent trading opens after graduation.';
+
+/** Each approval as a ready-to-send unsigned transaction next to its description. */
+export function approvalTx(a: Approval, nowSec = Math.floor(Date.now() / 1000)): { to: Address; data: Hex; value: string } {
+  if (a.kind === 'erc20') {
+    return { to: a.token, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [a.spender, a.amount] }), value: '0' };
+  }
+  const amount = a.amount > MAX_UINT160 ? MAX_UINT160 : a.amount;
+  return {
+    to: TRADE_ADDRESSES.permit2,
+    data: encodeFunctionData({ abi: permit2Abi, functionName: 'approve', args: [a.token, a.spender, amount, nowSec + PERMIT2_EXPIRY_S] }),
+    value: '0',
+  };
+}
+
+const isInsufficientFunds = (msg: string) => /-38014|insufficient funds/i.test(msg);
+
 async function prepare(c: C, mode: 'quote' | 'build') {
   const m = requireMember(c, { kind: 'agent', scope: 'trade' });
+  // Validate first, so a malformed request doesn't use up the quote or build quota.
+  const { req, acceptRisk, acceptImpact, simulate } = swapRequest(c, m);
+  const sql = c.var.sql;
+  if (await onCurve(sql, req.token)) throw fail(422, 'curve_not_supported', CURVE_MESSAGE);
   await limit(c, mode);
-  const { req, acceptRisk, simulate } = swapRequest(c, m);
-  const safety = await safetyOf(c.var.sql, req.token);
+  const safety = await safetyOf(sql, req.token);
   if (mode === 'build') riskGate(req.side, safety, acceptRisk);
   const client = createPublicClient({ chain: robinhoodChain, transport: http(c.env.RPC_URL) });
+  // A dry run must work before the agent funds its wallet: top it up inside the simulation only.
+  const simulateFundEth = (req.side === 'buy' && req.quoteAsset === 'ETH' ? req.amountIn : 0n) + SIM_GAS_BUFFER_WEI;
   try {
-    const p = await prepareSwap(client as never, req, { forSigning: mode === 'build', simulate: mode === 'build' && simulate });
+    const p = await prepareSwap(client as never, req, { forSigning: mode === 'build', simulate: mode === 'build' && simulate, simulateFundEth });
     const quote = toJsonSafe(p.quote) as Record<string, unknown>;
+    const impactBps = p.quote.priceImpactBps;
+    const impactOk = acceptImpact || impactBps == null || impactBps <= MAX_IMPACT_BPS;
     if (mode === 'quote') {
-      return c.json({ quote, alternatives: toJsonSafe(p.alternatives), safety, warnings: p.warnings, wouldBuild: safetyAllows(req.side, safety, acceptRisk) }, 200, PRIVATE);
+      return c.json(
+        { quote, alternatives: toJsonSafe(p.alternatives), safety, warnings: p.warnings, deadlineSeconds: resolveConfig().deadlineSeconds, wouldBuild: safetyAllows(req.side, safety, acceptRisk) && impactOk },
+        200,
+        PRIVATE,
+      );
     }
+    if (!impactOk) {
+      throw fail(422, 'high_price_impact', `Price impact is ${(impactBps! / 100).toFixed(1)}% (over ${MAX_IMPACT_BPS / 100}%). Check your amountIn units; pass "acceptImpact": true to build it anyway.`, { priceImpactBps: impactBps });
+    }
+    const nowSec = Math.floor(Date.now() / 1000);
     return c.json(
       {
         tx: toJsonSafe(p.tx),
-        approvals: toJsonSafe(p.approvals),
+        approvals: p.approvals.map((a) => ({ ...(toJsonSafe(a) as Record<string, unknown>), tx: approvalTx(a, nowSec) })),
         deadline: p.deadline.toString(),
         quote,
         simulation: p.simulation ? toJsonSafe(p.simulation) : null,
         safety,
         warnings: p.warnings,
-        note: 'Unsigned. Send the approvals first (in order), then tx, from your own wallet. Simulate before sending. Rushr never signs or sends for you.',
+        note: 'Unsigned. Send each approvals[i].tx first, in order, then tx, from your registered wallet, before the deadline. Simulate before sending. Rushr never signs or sends for you.',
       },
       200,
       PRIVATE,
     );
   } catch (e) {
-    if (isTradeError(e)) throw fail(422, `trade_${e.code}`, e.message);
+    if (isTradeError(e)) {
+      if (e.code === 'UNSUPPORTED_VENUE' && /pons/i.test(e.message)) throw fail(422, 'curve_not_supported', CURVE_MESSAGE);
+      if (isInsufficientFunds(e.message)) throw fail(422, 'insufficient_funds', 'Not enough ETH in the wallet for this trade and gas.');
+      throw fail(422, `trade_${e.code}`, e.message);
+    }
     throw e;
   }
 }
@@ -254,5 +311,5 @@ function safetyAllows(side: 'buy' | 'sell', safety: Safety, acceptRisk: unknown)
 
 /** `{ token, side, amountIn, quoteAsset?, slippageBps?, from? }` → best route, fees, safety. */
 agents.post('/trade/quote', (c) => prepare(c, 'quote'));
-/** Same body plus `acceptRisk?: "high"`, `simulate?: true` → unsigned tx and approvals. */
+/** Same body plus `acceptRisk?: "high"`, `acceptImpact?: true`, `simulate?: true` → unsigned tx and approvals. */
 agents.post('/trade/build', (c) => prepare(c, 'build'));
