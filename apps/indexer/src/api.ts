@@ -10,6 +10,7 @@ import {
 
 export { tokenSummaries } from './data';
 import { loadSnapshot } from './signals';
+import { searchTokens } from './search';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
@@ -245,11 +246,12 @@ api.get('/search', async (c) => {
   const sql = c.var.sql;
   const q = (c.req.query('q') ?? '').trim();
   if (q.length < 2) return c.json({ tokens: [] });
-  const rows = await sql<{ address: string }[]>`
-    select address from tokens
-    where address = ${q.toLowerCase()} or symbol ilike ${q + '%'} or name ilike ${'%' + q + '%'}
-    order by (address = ${q.toLowerCase()}) desc, market_cap_usd desc nulls last limit 20`;
-  return c.json({ tokens: await tokenSummaries(sql, { addresses: rows.map((r) => r.address) }) }, 200, cache(5));
+  // Real token first (see search.ts); tokenSummaries doesn't keep order, so restore it.
+  const order = await searchTokens(sql, q);
+  const cards = await tokenSummaries(sql, { addresses: order });
+  const at = new Map(order.map((a, i) => [a, i]));
+  cards.sort((x, y) => (at.get(String(x.address)) ?? 99) - (at.get(String(y.address)) ?? 99));
+  return c.json({ tokens: cards }, 200, cache(5));
 });
 
 /** Headline numbers for the landing page. */
