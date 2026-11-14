@@ -57,8 +57,6 @@ export interface TokenCard {
   buy_tax_bps?: number | null;
   sell_tax_bps?: number | null;
   fees_paid_usd?: number | null;
-  /** Total fees traders paid on the token, in ETH (the trenches card's F line). */
-  fees_paid_eth?: number | null;
   trades_24h?: number | null;
   twitter_handle?: string | null;
   /** Rushr quote token address (0x0 = native ETH). */

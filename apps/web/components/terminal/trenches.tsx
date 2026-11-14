@@ -619,14 +619,6 @@ function Pill({ icon: Icon, value, bad, title, digits = 0 }: { icon: typeof Crow
 
 const Dot = () => <span className="text-muted/40">·</span>;
 
-/** Small ETH diamond for fee amounts. */
-const EthMark = () => (
-  <svg viewBox="0 0 24 24" className="size-2.5 text-[#8c9cf0]" fill="currentColor" aria-label="ETH">
-    <path d="M12 2 5.5 12.3 12 16l6.5-3.7z" opacity=".75" />
-    <path d="m12 17.3-6.5-3.8L12 22l6.5-8.5z" />
-  </svg>
-);
-
 const Row = memo(function Row({
   t,
   col,
@@ -665,11 +657,6 @@ const Row = memo(function Row({
   const sells = t.sells_24h ?? null;
   const split = buys != null || sells != null;
   const txns = split ? (buys ?? 0) + (sells ?? 0) : (t.trades_24h ?? null);
-  // Total fees traders paid on the token, in ETH: the API's ETH figure, else its USD figure at the
-  // live ETH price. The F line stays hidden until the API sends one of them.
-  const ethUsd = useEthUsd();
-  const feesUsd = t.fees_paid_usd ?? null;
-  const feesEth = t.fees_paid_eth ?? (feesUsd != null && ethUsd ? feesUsd / ethUsd : null);
   const moveTone = dir > 0 ? 'text-go' : dir < 0 ? 'text-risk-high' : '';
   const handle = t.creator_x ?? t.twitter_handle ?? null;
   const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
@@ -764,13 +751,6 @@ const Row = memo(function Row({
             <span className="text-[10px] text-muted">V</span>
             <span className={`text-[14px] font-semibold leading-tight ${moveTone}`}>{usd(t.volume_24h_usd)}</span>
           </div>
-          {feesEth != null && (
-            <div className="flex items-center gap-1" title={`Fees paid by traders: ${feesEth.toFixed(4)} ETH${feesUsd != null ? ` (${usd(feesUsd)})` : ''}`}>
-              <span className="text-[10px] text-muted">F</span>
-              <EthMark />
-              <span className="text-[11px] text-ink/80">{feesEth < 0.01 ? feesEth.toFixed(3) : feesEth.toFixed(2)}</span>
-            </div>
-          )}
           {split && (
             <span className="ml-auto mt-1 flex h-[3px] w-14 overflow-hidden rounded-full bg-risk-high/70" title={`${buys ?? 0} buys / ${sells ?? 0} sells, 24h`}>
               <span className="h-full bg-brand" style={{ width: `${txns ? ((buys ?? 0) / txns) * 100 : 50}%` }} />
