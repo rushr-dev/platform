@@ -13,6 +13,7 @@ export interface CurveRoundTrip {
   /** Our quote and the curve's own result (simulated). */
   quotedTokens: bigint;
   simulatedTokens: bigint;
+  /** What the curve pays out (before the follow-up Rushr fee, which the sell quote's amountOut is net of). */
   quotedEthBack: bigint;
   simulatedEthBack: bigint;
   buyGas: bigint;
@@ -50,7 +51,7 @@ export async function curveRoundTrip(client: PublicClient, token: Address, ethIn
     ethIn,
     quotedTokens: tokens,
     simulatedTokens: r(0, 'buy'),
-    quotedEthBack: sell.quote.amountOut,
+    quotedEthBack: sell.quote.grossOut,
     simulatedEthBack: r(all.length - 1, 'sell'),
     buyGas: sim.calls[0]!.gasUsed,
     sellGas: sim.calls[all.length - 1]!.gasUsed,

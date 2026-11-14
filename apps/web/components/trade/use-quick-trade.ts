@@ -15,6 +15,7 @@ import {
   quickSell,
   resolveConfig,
   SendError,
+  tradeFollowUpFee,
   TxPipeline,
   type ApiPoolRow,
   type Pool,
@@ -44,6 +45,11 @@ import { useRiskAck } from './risk-ack';
  * One Privy setup: sign-in state and signing come from `lib/auth`. This module never imports
  * Privy. Settings (presets, slippage, per-trade cap) come from `lib/settings`. Nothing is signed by
  * Rushr's servers.
+ *
+ * Curve trades (PONS tokens still on their bonding curve) pay the Rushr fee as a second, plain
+ * transfer to the treasury, signed the same way right after the trade confirms (the next nonce). It is
+ * built from the trade's receipt, so a reverted trade pays nothing, and it never delays or fails the
+ * trade in the UI: if it can't be sent, the ledger flags the trade `fee_missed`.
  */
 
 export const chainClient = publicClient as unknown as () => PublicClient;
@@ -144,7 +150,7 @@ function logTimings(t: TradeTimings) {
  * the member's signup attribution, so only the hash goes up. 404 tx_not_found right after broadcast is
  * retried once. Idempotent per hash. Errors are ignored: it never blocks or fails a trade.
  */
-export async function recordTrade(txHash: Hex): Promise<void> {
+export async function recordTrade(txHash: Hex, feeTxHash?: Hex): Promise<void> {
   try {
     const token = await auth.getAccessToken();
     if (!token) return;
@@ -152,7 +158,8 @@ export async function recordTrade(txHash: Hex): Promise<void> {
       const res = await fetch(`${API_URL}/v1/trades`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' } }),
+        // `feeTxHash`: the follow-up fee transfer of a curve trade (same endpoint, same trade).
+        body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' }, ...(feeTxHash ? { feeTxHash } : {}) }),
         keepalive: true,
       });
       const body = res.status === 404 ? await res.text().catch(() => '') : (await res.body?.cancel().catch(() => undefined), '');
@@ -428,6 +435,7 @@ export function useQuickTrade(tokenArg: TradeToken) {
         let prepMs = 0;
         let signMs = 0;
         let confirmMs = 0;
+        let swap: { hash: Hex; receipt: SendResult['receipt'] } | null = null;
         for (const [i, c] of t.calls.entries()) {
           setStatus({ kind: 'sending', step: i + 1, total, label: c.label === 'swap' ? r.side : c.label });
           res = await sendWithRetry(pipe, c, (hash) => {
@@ -443,7 +451,12 @@ export function useQuickTrade(tokenArg: TradeToken) {
           signMs += res.timings.signMs;
           confirmMs = res.timings.confirmMs;
           if (res.receipt.status !== 'success') throw new Error(`${c.label} reverted on-chain`);
+          if (c.label === 'swap') swap = { hash: res.hash, receipt: res.receipt };
         }
+        // Curve trades: the fee transfer, from the confirmed trade's receipt. Queued now so it takes the
+        // next nonce (before any pre-approval below); it runs in the background.
+        const feeCall = swap ? tradeFollowUpFee(t, swap.receipt) : null;
+        if (swap && feeCall) void sendFollowUpFee(pipe, feeCall, swap.hash);
         const done = performance.now();
         const tm: TradeTimings = {
           side: r.side,
@@ -514,6 +527,16 @@ async function sendWithRetry(pipe: TxPipeline, call: WalletCall, onSubmitted: (h
     console.warn('[rushr trade] sign-only unavailable, using the wallet\'s own send:', friendly(e));
     signOnlyUnavailable = true;
     return walletSend(pipe, call, onSubmitted);
+  }
+}
+
+/** Sends a curve trade's fee transfer and tells the ledger its hash. Failures never surface as a failed trade. */
+async function sendFollowUpFee(pipe: TxPipeline, call: WalletCall, tradeHash: Hex) {
+  try {
+    const r = await sendWithRetry(pipe, call, (hash) => void recordTrade(tradeHash, hash));
+    if (r.receipt.status !== 'success') console.warn('[rushr trade] fee transfer reverted:', r.hash);
+  } catch (e) {
+    console.warn('[rushr trade] fee transfer not sent:', friendly(e));
   }
 }
 
