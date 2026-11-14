@@ -791,7 +791,7 @@ function ShareCard({ token, position, bal, priceUsd, onClose }: { token: TradeTo
     <Modal title="Share PnL" onClose={onClose}>
       <div
         className="relative overflow-hidden rounded-2xl border border-white/[0.08] p-5"
-        style={{ background: up ? 'radial-gradient(120% 90% at 100% 0%, rgba(54,212,42,.22), transparent 60%), #0b0d0b' : 'radial-gradient(120% 90% at 100% 0%, rgba(255,107,91,.2), transparent 60%), #0d0b0b' }}
+        style={{ background: up ? 'radial-gradient(120% 90% at 100% 0%, rgba(54,212,42,.22), transparent 60%), #121315' : 'radial-gradient(120% 90% at 100% 0%, rgba(255,107,91,.2), transparent 60%), #0d0b0b' }}
       >
         <div className="flex items-center justify-between text-xs text-muted">
           <span className="font-semibold text-ink">rushr</span>

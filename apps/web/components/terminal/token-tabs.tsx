@@ -444,7 +444,7 @@ export function DevTokensTab({ deployer, self, serverNow }: { deployer: string; 
         </thead>
         <tbody>
           {list.map((x) => (
-            <tr key={x.address} className={`border-t border-white/[0.03] hover:bg-white/[0.02] ${x.address === self ? 'bg-brand/[0.04]' : ''}`}>
+            <tr key={x.address} className={`border-t border-white/[0.03] hover:bg-white/[0.02] ${x.address === self ? 'bg-white/[0.04]' : ''}`}>
               <td className="py-1.5 pl-3">
                 <Link href={`/token/${x.address}`} className="flex items-center gap-2 hover:text-brand">
                   <TokenAvatar t={x} size={22} />

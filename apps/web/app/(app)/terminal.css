@@ -1,4 +1,20 @@
 /*
+ * Neutral grays for every terminal surface. The shared dark tokens (globals.css) carry a slight
+ * green cast; inside the app the surfaces, lines and text are plain gray and green is kept for
+ * accents only (buy buttons, gains, the live dot, the brand mark, progress rings).
+ * Set on :root while the terminal is mounted, so dialogs and sheets portalled to <body> match too.
+ * The landing (.theme-paper) is untouched.
+ */
+:root:has(.terminal-ui) {
+  --color-bg: #070708;
+  --color-surface: #121315;
+  --color-surface-2: #18191c;
+  --color-line: #232428;
+  --color-ink: #eef0f2;
+  --color-muted: #8c9097;
+}
+
+/*
  * Thin, quiet scrollbars for every scroll area in the terminal: a rounded thumb (white at 15%,
  * brighter while the area is hovered) on a transparent track.
  * In the base layer, so utilities such as [scrollbar-width:none] still win.

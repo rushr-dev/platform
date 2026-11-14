@@ -139,7 +139,7 @@ export function PriceChart({
     if (!box.current) return;
     const c = createChart(box.current, {
       autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8a958a', fontFamily: 'var(--font-geist-mono)', fontSize: 11, attributionLogo: false },
+      layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: '#8c9097', fontFamily: 'var(--font-geist-mono)', fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: 'rgba(255,255,255,0.03)' }, horzLines: { color: 'rgba(255,255,255,0.04)' } },
       // Top margin keeps the highest candle clear of the OHLC legend; entireTextOnly drops a corner
       // label that would be cut by the pane edge; minimumWidth fits labels like "$136.0K".
