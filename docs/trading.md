@@ -8,8 +8,8 @@ Status 2026-11-12: research done, decisions recorded (below), scaffold in `packa
 - **Signing:** client-side, in the user's own **Privy embedded wallet**, with its UI off. Since the fast path (below) the wallet only signs (`signTransaction`) and the page broadcasts; Rushr's servers hold **no signing key for humans**.
 - **Route:** through **Uniswap's audited Universal Router**, with our fee in the same tx: `TRANSFER` on buys, `PAY_PORTION` + `SWEEP` on sells, recipient = the user.
 - **Contracts:** no RushrRouter or RushrPonsRouter. Those stay for agents and offline one-click, after the audit.
-- **PONS bonding-curve tokens** (since 2026-11-13): traded **directly on the curve** from the user's wallet, as pons.fun's own UI does, with **no Rushr fee during the beta** (see "PONS curve trades" below).
-- **Fee and treasury:** **0.25% during the beta** (half price; 0.22% referred), 0.5% (0.45% referred) after it, paid to the treasury `0x447a…5E40`. PONS curve trades are free during the beta.
+- **PONS bonding-curve tokens** (since 2026-11-13): traded **directly on the curve** from the user's wallet, as pons.fun's own UI does. The Rushr fee follows as a **second, plain transfer** to the treasury once the trade confirms (since 2026-11-14; see "PONS curve trades" below).
+- **Fee and treasury:** **0.25% during the beta** (half price; 0.22% referred), 0.5% (0.45% referred) after it, on every route, paid to the treasury `0x447a…5E40`.
 
 ### Pieces
 | Where | What |
@@ -57,7 +57,7 @@ What changed:
 
 Not verified yet: a real signed trade on this path (real trades are only made by maintainers, by hand). Unit tests cover the pipeline (cached nonce/fees, sync and polling broadcast, nonce error, mismatched or bare signatures never broadcast); the production build was checked as a signed-out visitor.
 
-### PONS curve trades (direct, no Rushr fee during the beta)
+### PONS curve trades (direct, fee as a follow-up transfer)
 
 Tokens still on their PONS bonding curve trade on the curve itself, from the user's embedded wallet, with the same prebuild, sign-only and sync-broadcast fast path as Uniswap trades (`prepareCurveTrade` in `packages/trade/src/quick.ts`).
 
@@ -66,11 +66,9 @@ Tokens still on their PONS bonding curve trade on the curve itself, from the use
   - Sell: `token.approve(curve, max)` if needed, then `curve.sell(tokensIn, minQuoteOut, user)`.
   - After a confirmed buy, the curve approval is sent in the background, so the first sell is one transaction.
 - **Quote:** pure math on the curve's state (virtual reserves, `feeBps`, `creatorTaxBps`), read with the pools (no extra RPC at quote time).
-  - "Min received" is net of the curve fee and the creator tax.
-  - The quote line reads "Rushr fee: free on curve trades during beta"; the venue line still lists the curve fee and creator tax.
-- **Fee:** `CURVE_FEE_BPS = 0`. Nothing in a direct curve call can collect a fee. It returns when `RushrPonsRouter` is independently reviewed and deployed, or through an EIP-7702 batch (see "Fees on curve trades without our own router" below).
-  - Trade records carry `venue: 'pons-curve'`, `feeBps: 0`, `feeAmount: 0`, `router` = the curve, so PnL and positions work as for any trade.
-  - The indexer's trade ledger flags such rows `no_fee`, which is expected for curve trades during the beta.
+  - "Min received" is net of the curve fee and the creator tax (and, on sells, of the Rushr fee).
+  - The fee line reads the same as on Uniswap routes ("Rushr fee 0.25% (beta, half price)"); the venue line still lists the curve fee and creator tax.
+- **Fee:** a follow-up transfer, described in the next section. Trade records carry `venue: 'pons-curve'`, the fee rate and amount, and `router` = the curve, so PnL and positions work as for any trade.
 - **Routing safety:** a token with a live (ungraduated) curve routes only to the curve, never to another pool for the same token.
 - **Edge cases:**
   - **A buy larger than what is left on the curve** is handled, not capped by us. The curve sells its remaining tokens, graduates (moves the liquidity to Uniswap v4) in the same transaction and refunds the unused ETH to the buyer.
@@ -94,6 +92,33 @@ Tokens still on their PONS bonding curve trade on the curve itself, from the use
   | AEON | 1,096,871.426508708713963139 | 0.009409000000000001 ETH | 100,399 / 78,411 |
 
   A graduating buy of 1.5 ETH on MORPH returned the remaining 55,053,798.69 tokens and refunded 0.510457 ETH; the quote's refund estimate was 195 wei high.
+
+### The curve fee: a follow-up transfer (2026-11-14)
+
+Nothing in a direct curve call can pay us, so the fee is a **second transaction**: a plain ETH transfer from the user's wallet to the treasury, sent right after the trade confirms. It is the interim path; the atomic options are an EIP-7702 batch (next section, "go-later") or `RushrPonsRouter` after its review.
+
+- **Amount** (`src/curve-fee.ts`), at the same rate as Uniswap routes, referral discount included (`effectiveFeeBps`):
+  - Buy: `fee = ETH the curve took × feeBps / 10_000`, **on top of** the buy amount (buy 0.01 ETH, pay 0.01 + 0.000025). A buy that completes the curve takes less than it was sent and refunds the rest; the fee is on what it took.
+  - Sell: `fee = ETH the curve paid out × feeBps / 10_000`, out of what was received. The quote's "you receive" is already net of it; the curve's own minimum (`minQuoteOut`) is on the gross.
+  - Both amounts come from the trade's receipt: the curve's `CurveBuy(buyer, recipient, quoteIn, tokensOut, fee, creatorTax)` and `CurveSell(seller, recipient, tokensIn, quoteOut, fee, creatorTax)` events (`curveFillFromLogs`). Checked against the ETH that actually moved, in simulation.
+- **Only after success:** the transfer is built from the confirmed receipt (`tradeFollowUpFee`). A trade that reverted, was dropped, or shows no fill for the trader pays nothing.
+- **One click:** the trade box shows one trade. The fee transfer goes through the same sign-only fast path (`TxPipeline`, cached nonce, so it is the trade's nonce + 1, sync broadcast) in the background: it never delays the "Confirmed" state and never fails the trade in the UI. It is queued before the background sell pre-approval, so it always takes the next nonce. Gas limit 60k (a transfer uses ~21.5k on 4663; the rest is refunded).
+- **Balance:** a curve buy needs the amount + the fee + gas for both transactions (`INSUFFICIENT_ETH` says so). The simulation before sending runs the trade and the quoted fee transfer together. "Max" leaves room for the fee: `maxBuyWei(spendable, feeBps)` = the largest amount with `amount + fee <= spendable`.
+- **Ledger:** the client posts the trade as usual, then the same trade again with `feeTxHash` once the transfer is broadcast (`POST /v1/trades { txHash, chainId, feeTxHash }`; the key guard allows `feeTxHash`, which is checked on chain to be a tx from the member's wallet). The confirmation waits for it, then checks it with `auditCurveFee`: from the trader, to the treasury, no calldata, successful, **at the trade's nonce + 1** (so one transfer can't be claimed for two trades), and at the expected rate on the fill.
+  - `fee_amount` = the transfer's value, `fee_bps` on the fill. Sells: `amount_out` is what the seller kept (received − fee).
+  - No transfer by the last attempt (~9 minutes), or one that doesn't check out: confirmed with `fee_missed` and fee 0 (plus e.g. `fee_tx_nonce_40_expected_17`). A fee hash that arrives later confirms the trade again.
+  - **Schema:** no change needed now. The hash is kept in `flags` as `fee_tx:<hash>`. Proposed for later: a `fee_tx_hash text unique` column on `trades_ledger` (backfilled from those flags), so the hash is queryable and unique by constraint.
+- **Audit:** `scripts/fee-audit.ts` checks curve trades too (see "Fee audit" below).
+- **Known limits:** the fee is not atomic. A user who closes the tab between the trade and the transfer, or a modified client, can skip it; the ledger shows those as `fee_missed`. Users pay a second transaction's gas (~21.5k gas, a fraction of a cent).
+- **Verified (read-only, nothing signed):** `scripts/curve-fee-sim.ts` and `test/live/curve-fee.live.test.ts` run two `eth_simulateV1` passes from a test address with a simulated balance: first [curve buy, approve, curve sell] as the app builds them, then the fee transfers built from those receipts, inserted after each trade. On 2026-11-14, buy 0.01 ETH, then sell the tokens received:
+
+  | Token (curve) | Rate | Buy: curve took / treasury got | Sell: curve paid / treasury got / user kept (quoted) |
+  | --- | --- | --- | --- |
+  | `0x11d1…52cc` | 25 bps | 0.01 / 0.000025 ETH | 0.009801 / 0.0000245025 / 0.0097764975 ETH |
+  | `0x8a36…6786` | 25 bps | 0.01 / 0.000025 ETH | 0.009801 / 0.0000245025 / 0.0097764975 ETH |
+  | `0x11d1…52cc`, referred | 22 bps | 0.01 / 0.000022 ETH | 0.009801 / 0.0000215622 / 0.0097794378 ETH |
+
+  Every audit passed. A simulated graduating buy confirmed that `CurveBuy.quoteIn` is what the curve took (4.2018 ETH of 4.2518 sent, the rest refunded), so the fee is never charged on the refund.
 
 ### Fees on curve trades without our own router: EIP-7702 batching (researched 2026-11-13)
 
@@ -281,9 +306,9 @@ The v4 quote engine was not broken. Quoter, StateView and the PoolManager they r
 Built in the indexer (3e2f1c8). It is **not live yet**: it needs migration 0008 (batched with 0006 and 0007), `AGENTS_ENABLED`, and a small change to the `/v1` key guard. It mounts in the `/v1` API.
 - `POST /v1/trades`
   - Auth: Privy bearer, or an agent key with scope `trade`.
-  - Body: `{ txHash, chainId: 4663, source? }`.
+  - Body: `{ txHash, chainId: 4663, source?, feeTxHash? }`. `feeTxHash` is a curve trade's follow-up fee transfer (see "The curve fee" above).
   - Returns 202 `{ id, status: 'submitted' }`, idempotent per hash.
-  - Errors: 404 `tx_not_found` until the node knows the tx (retry once), 403 `not_your_tx`, 400 `bad_tx_hash` / `bad_chain`.
+  - Errors: 404 `tx_not_found` until the node knows the tx (retry once), 403 `not_your_tx`, 400 `bad_tx_hash` / `bad_fee_tx_hash` / `bad_chain`.
   - There is no referral code in the request: the referrer always comes from the member's signup attribution (the `referrals` table).
 - **Confirmation** (queue, ~10 min of retries) fills:
   - status, side, token, pool, venue, quote asset
@@ -291,7 +316,7 @@ Built in the indexer (3e2f1c8). It is **not live yet**: it needs migration 0008 
   - `fee_amount` = what the treasury actually received (call trace for ETH, Transfer logs for ERC-20)
   - `fee_bps` measured on the notional
   - referral fields: 20% accrual
-  - `flags[]` when anything is off (e.g. `fee_bps_48.2_expected_45`, `no_fee`, `reverted`)
+  - `flags[]` when anything is off (e.g. `fee_bps_48.2_expected_45`, `no_fee`, `reverted`, and for curve trades `fee_missed`); curve trades also carry `fee_tx:<hash>`
 - Reading: `GET /v1/me/trades?before=&limit=` and `GET /v1/me/referrals/accrued`.
 
 The web client posts as soon as the swap is broadcast and ignores errors until the endpoint is live. A real end-to-end check needs a first live trade.
@@ -322,20 +347,20 @@ The web client posts as soon as the swap is broadcast and ignores errors until t
 
 ### Fee audit (`scripts/fee-audit.ts`)
 
-A read-only check that the treasury actually received the fee. For each trade it compares what the treasury got in that transaction with the expected rate on the trade's notional. The notional is the input on buys and the gross output (net + fee) on sells, the same definition as the indexer's ledger.
+A read-only check that the treasury actually received the fee. Universal Router trades are checked on the trade transaction itself; direct curve trades on their follow-up transfer (from the ledger's `fee_tx:<hash>` flag, or `--tx <trade>:<fee>`), which must come from the trader at the next nonce. For each trade it compares what the treasury got in that transaction with the expected rate on the trade's notional. The notional is the input on buys and the gross output (net + fee) on sells, the same definition as the indexer's ledger.
 
 ```bash
-# specific transactions
-pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --tx 0x… 0x…
-# the last N Universal Router trades in the trade ledger, for everyone or one wallet
-pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --last 20
+# specific transactions (a curve trade with its fee transfer: trade:fee)
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --tx 0x… 0x…:0x…
+# the last N trades in the trade ledger, for everyone or one wallet
+pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --env apps/indexer/.dev.vars.neon --last 20
 pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev.vars --wallet 0x… --last 10
 ```
 
 - **Environment:**
   - `RPC_URL`: an RPC with `debug_traceTransaction`. ETH fees are internal transfers, visible only in a call trace; the public RPC has none, so ETH trades would be flagged `no_trace`.
   - `DATABASE_URL`: the indexer database, needed for `--last` and `--wallet`. It's read in a read-only transaction.
-  - Either can come from `--env <file>` with `KEY=VALUE` lines, and nothing is printed.
+  - Either can come from `--env <file>` with `KEY=VALUE` lines. `--env` can repeat: later files win, and real environment variables win over files. Nothing is printed.
 - **Options:** `--bps <n>` sets the expected base rate (default: the config's), and `--json` prints raw results.
 - **Exit code:** 1 when any trade is flagged.
 - **Flags:**
@@ -346,6 +371,7 @@ pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev
     - `no_fee_command`: no TRANSFER, PAY_PORTION or PERMIT2_TRANSFER_FROM to the treasury.
     - `not_universal_router`, `reverted`, `no_trace`.
     - `ledger_fee_differs`: the ledger's confirmed `fee_amount` disagrees with the chain.
+  - Curve trades (`auditCurveFee` in `src/curve-fee.ts`): `fee_missed` (no transfer), `fee_tx_nonce_<x>_expected_<y>`, `fee_tx_wrong_sender`, `fee_tx_wrong_recipient`, `fee_tx_has_calldata`, `fee_tx_reverted`, `no_curve_fill`, `fee_in_trade_tx`, and `fee_paid_on_failed_trade` (a transfer after a reverted trade).
 - **Referred or not:** taken from the ledger's `referrer` when the row comes from the ledger; otherwise inferred from the calldata's rate.
 - **The logic** lives in `auditFee` (`src/fee-audit.ts`) and is unit-tested.
 - **Live simulation** (`scripts/fee-sim.ts`, `test/live/fee.live.test.ts`): a 0.01 ETH buy, then a sell of the minimum tokens received, in one `eth_simulateV1` block. On 2026-11-13 every audit passed at 25 bps:
@@ -363,15 +389,15 @@ pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev
 
 | Question | Decision |
 | --- | --- |
-| **Rate** | **0.5%** of the trade, buys and sells (`STANDARD_FEE_BPS`): fomo parity, undercuts Axiom (~1%). **Beta (decided 2026-11-13): 0.25%, half price** (`BETA_FEE_BPS`, the default `feeBps`), so real trades exercise the fee path. Returning to 0.5% is one line in `config.ts`. Curve trades stay free during the beta. |
+| **Rate** | **0.5%** of the trade, buys and sells (`STANDARD_FEE_BPS`): fomo parity, undercuts Axiom (~1%). **Beta (decided 2026-11-13): 0.25%, half price** (`BETA_FEE_BPS`, the default `feeBps`), so real trades exercise the fee path. Returning to 0.5% is one line in `config.ts`. Curve trades pay the same rate as a follow-up transfer (since 2026-11-14). |
 | **Which side** | Always the **quote side** (ETH, WETH or USDG): taken from the input on buys, from the output on sells. The treasury only receives ETH or USDG, and a token's own tax can't shrink or block the fee. |
 | **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and other hooked v4 pools) | **Primary path.** Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, `PAY_PORTION(ETH, treasury, bps)`, `SWEEP(ETH, user, minOut)` (the pattern Uniswap's interface fee used). |
-| **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then (decided 2026-11-13), curve tokens trade **directly on the curve with no Rushr fee**. |
+| **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then, curve tokens trade **directly on the curve** (decided 2026-11-13), and the fee follows as a **separate transfer** to the treasury after the trade confirms (decided 2026-11-14; EIP-7702 batching is the later, atomic path). |
 | **Treasury** | The treasury (currently a single **EOA**, moving to a Safe): `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` (decided 2026-11-12; EIP-55 checksum valid; no code and nonce 0 on 4663). It's `RUSHR_TREASURY`, the default `feeRecipient` in `packages/trade`. The routers can move it to a Safe later **only through the guardian's timelock** (queue, wait `delay`, activate, events; no owner, no instant change). **Known risk:** see below. |
 | **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee**, rounded in their favour (0.5% → **0.45%**; beta 0.25% → **0.22%**, since 25 − ⌈2.5⌉ = 22; charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
 | **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's factories (verified in its bytecode). Phase 2. |
 | **Agents** | Agents trade through the same code: `packages/trade` is pure functions that return unsigned transactions (`prepareSwap`), usable from a server or agent runtime, not only from `/swap`. |
-| **UI** | The fee is a line in every quote (beta: "Rushr fee 0.25% (beta, half price)"; referred: "Rushr fee 0.22% (beta, half price, referral discount)"; curve trades: "Rushr fee: free on curve trades during beta"; after the beta "Rushr fee 0.5%"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
+| **UI** | The fee is a line in every quote (beta: "Rushr fee 0.25% (beta, half price)"; referred: "Rushr fee 0.22% (beta, half price, referral discount)"; the same on curve trades; after the beta "Rushr fee 0.5%"), next to venue fees (pool fee, PONS curve fee and creator tax) and any measured token tax. "Min received" is net of everything. The rate also goes on the terms page. |
 
 Universal Router deployment: Uniswap's official list for 4663 has v2.1.2 at `0x204faca1…0498` (the default). The core registry's `0x8876…0904` is also a Universal Router with the same factories embedded, and it's config.
 

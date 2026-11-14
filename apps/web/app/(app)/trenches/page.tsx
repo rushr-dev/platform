@@ -1,8 +1,9 @@
 import type { Metadata } from 'next';
+import { appShare } from '@/lib/share';
 import { Trenches } from '@/components/terminal/trenches';
 import { getColumn } from '@/lib/api';
 
-export const metadata: Metadata = { title: 'Trenches' };
+export const metadata: Metadata = appShare('Trenches', '/trenches', 'Live trenches on Robinhood Chain: new pairs, almost bonded and migrated tokens, each with a safety check.');
 export const dynamic = 'force-dynamic';
 
 /** Rows per column in the server HTML: one screen's worth. The browser loads the rest. */

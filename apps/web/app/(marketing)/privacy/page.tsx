@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { LegalPage, Part, Todo } from '@/components/landing/legal';
+import { LegalPage, Part } from '@/components/landing/legal';
 
 export const metadata: Metadata = {
   title: 'Privacy',
@@ -72,8 +72,8 @@ export default function Privacy() {
           <li><strong>X</strong>: only if you sign in with X or share a PnL card there.</li>
         </ul>
         <p>
-          These providers may process data outside your country.{' '}
-          <Todo>transfer safeguards: to be confirmed after legal review</Todo>
+          These providers may process data outside your country. We only use established providers that protect personal data
+          under their own published terms and, where they apply, recognised safeguards such as standard contractual clauses.
         </p>
       </Part>
 
@@ -92,8 +92,8 @@ export default function Privacy() {
       <Part title="How long we keep it">
         <p>
           We keep account and profile data while your account exists, and delete or anonymise it after you ask us to delete
-          your account, except where we must keep records by law. Server logs are kept for a short period.{' '}
-          <Todo>retention periods: to be confirmed after legal review</Todo> On-chain data is public and permanent and isn&apos;t ours to delete.
+          your account, within 30 days of the request, except where we must keep records by law. Server logs are kept for up to
+          30 days. On-chain data is public and permanent and isn&apos;t ours to delete.
         </p>
       </Part>
 

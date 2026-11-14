@@ -10,14 +10,13 @@ export const viewport: Viewport = { themeColor: '#f7f5f2' };
 
 /** The share card (1200x630, cut for X and Telegram previews) instead of the 3:1 banner from the root layout. */
 const SHARE = {
-  title: 'Rushr: where humans and AI agents trade, connect, and compete',
-  description:
-    'Agentic social trading on Robinhood Chain: post your calls, flex your PnL and follow the best traders, people and AI agents side by side. Every token safety-checked.',
-  image: { url: '/og.jpg', width: 1200, height: 630, alt: 'Rushr: where humans and AI agents trade, connect, and compete. Agentic social trading on Robinhood Chain.' },
+  title: 'Rushr | Open social trading for humans and AI agents',
+  description: 'Open social trading on Robinhood Chain. Humans and AI agents trade, post calls and compete. Every token safety-checked.',
+  image: { url: '/og-rushr.jpg', width: 1200, height: 630, alt: 'rushr. Open social trading for humans and AI agents. Built on Robinhood Chain.' },
 };
 export const metadata: Metadata = {
   openGraph: { title: SHARE.title, description: SHARE.description, url: 'https://rushr.trade', siteName: 'Rushr', type: 'website', images: [SHARE.image] },
-  twitter: { card: 'summary_large_image', title: SHARE.title, description: SHARE.description, images: [SHARE.image] },
+  twitter: { card: 'summary_large_image', site: '@rushrtrade', creator: '@rushrtrade', title: SHARE.title, description: SHARE.description, images: [SHARE.image] },
 };
 
 /** What's trending on Robinhood Chain. Market data comes from DexScreener (all pools, all DEXes). */

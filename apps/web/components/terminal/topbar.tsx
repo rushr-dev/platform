@@ -5,15 +5,15 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
 import { MagnifyingGlass } from '@phosphor-icons/react';
-import { API_URL, type TokenCard } from '@/lib/api';
+import { useTokenSearch } from '@/lib/search';
 import { usd } from '@/lib/format';
-import { useLiveStatus } from '@/lib/live';
 import { TokenAvatar, RiskDot } from './bits';
 import { AccountMenu } from './auth/account-menu';
+import { FeedbackButton } from './feedback';
 
 const NAV = [
   { href: '/trenches', label: 'Trenches' },
-  { href: '#', label: 'Feed', soon: true },
+  { href: '/feed', label: 'Feed' },
   { href: '#', label: 'Agents', soon: true },
   { href: '#', label: 'Leaderboard', soon: true },
 ];
@@ -43,38 +43,17 @@ export function TopBar() {
       </nav>
       <Search />
       <div className="ml-auto flex items-center gap-2">
-        <LivePill />
+        <FeedbackButton />
         <AccountMenu />
       </div>
     </header>
   );
 }
 
-/** Live connection and how far behind the chain the last update arrived. */
-function LivePill() {
-  const { connected, latencyMs } = useLiveStatus();
-  const s = latencyMs == null ? null : Math.max(0, latencyMs) / 1000;
-  return (
-    <div
-      className="hidden items-center gap-2 rounded-xl border border-white/[0.06] bg-surface px-3 py-2 font-mono text-xs sm:flex"
-      title={
-        connected
-          ? s == null
-            ? 'Live: updates stream as blocks are produced.'
-            : `Live. Last update arrived ${s < 10 ? s.toFixed(1) : Math.round(s)}s after its block (block timestamps are whole seconds, so this reads up to 1s high).`
-          : 'Reconnecting to the live feed…'
-      }
-    >
-      <span className={`size-2 rounded-full ${connected ? 'bg-brand shadow-[0_0_8px] shadow-brand' : 'bg-risk-high'}`} />
-      {connected ? 'live' : 'reconnecting'}
-    </div>
-  );
-}
-
 function Search() {
   const router = useRouter();
   const [q, setQ] = useState('');
-  const [results, setResults] = useState<TokenCard[]>([]);
+  const results = useTokenSearch(q);
   const [open, setOpen] = useState(false);
   const input = useRef<HTMLInputElement>(null);
 
@@ -89,22 +68,6 @@ function Search() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
-
-  useEffect(() => {
-    const term = q.trim();
-    if (term.length < 2) return;
-    const ctl = new AbortController();
-    const t = setTimeout(() => {
-      fetch(`${API_URL}/search?q=${encodeURIComponent(term)}`, { signal: ctl.signal })
-        .then((r) => r.json() as Promise<{ tokens: TokenCard[] }>)
-        .then((d) => setResults(d.tokens ?? []))
-        .catch(() => undefined);
-    }, 120);
-    return () => {
-      clearTimeout(t);
-      ctl.abort();
-    };
-  }, [q]);
 
   const go = (address: string) => {
     setOpen(false);

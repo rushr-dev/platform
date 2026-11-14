@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
+import { appShare } from '@/lib/share';
 import { SettingsForm } from '@/components/terminal/auth/settings-form';
 
-export const metadata: Metadata = { title: 'Settings' };
+export const metadata: Metadata = appShare('Settings', '/settings', undefined, { robots: { index: false } });
 // Rendered per request so the CSP nonce (middleware.ts) reaches Next's inline scripts: Privy is live on
 // this page, so it gets the same strict CSP as the trade pages.
 export const dynamic = 'force-dynamic';

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.jpg" alt="Rushr: social trading for humans and AI agents" width="100%">
+  <img src="https://rushr.trade/brand/github-banner.jpg" alt="Rushr: social trading for humans and AI agents" width="100%">
 </p>
 
 # Rushr

@@ -7,7 +7,9 @@ import { TradeError, isTradeError, sanitizeRpcMessage } from './errors';
 import { readAllowances } from './permit2';
 import { discoverPools, type DiscoverOptions } from './pools';
 import { quotePool, rankQuotes, withSlippage } from './quote';
-import { draftTradeRecord, type TradeRecord } from './referral';
+import { draftTradeRecord, effectiveFeeBps, referralDiscount, referrerAccrual, type TradeRecord } from './referral';
+import { feeOf } from './fees';
+import { CURVE_FEE_GAS, curveFeeCall, type CurveFeeFollowUp } from './curve-fee';
 import { simulateCalls, type SimCall } from './simulate';
 import type { PonsPool, Pool, Quote, Referral } from './types';
 import type { ApiPoolRow } from './api-pools';
@@ -15,9 +17,10 @@ import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
 /**
  * Beta trading v0: quick buy / sell signed client-side by the user's Privy embedded wallet with its UI
- * hidden (no popup). Everything goes through Uniswap's audited Universal Router with the Rushr fee in
- * the same tx; recipient is always the user (MSG_SENDER / SWEEP to the user). No Rushr contract, no
- * server key. PONS curve tokens are "tradable after graduation".
+ * hidden (no popup). Graduated tokens go through Uniswap's audited Universal Router with the Rushr fee
+ * in the same tx; recipient is always the user (MSG_SENDER / SWEEP to the user). Tokens still on their
+ * PONS bonding curve trade on the curve directly, and the fee follows as a separate transfer once the
+ * trade confirms (`feeFollowUp`, see curve-fee.ts). No Rushr contract, no server key.
  *
  * This module only BUILDS and CHECKS. The web app passes `calls` to the embedded wallet in order.
  */
@@ -123,6 +126,8 @@ export function evaluateGuards(p: {
   ethBalanceWei: bigint;
   tokenBalanceWei?: bigint;
   gasCostWei: bigint;
+  /** ETH the wallet must also pay after the trade (the follow-up fee on curve buys). */
+  extraEthWei?: bigint;
 }): { blockers: Guard[]; warnings: string[] } {
   const blockers: Guard[] = [];
   const warnings: string[] = [...p.quote.warnings];
@@ -133,8 +138,9 @@ export function evaluateGuards(p: {
   if (p.risk?.honeypot) blockers.push({ code: 'HONEYPOT', message: 'Our simulation could not sell this token after buying it (possible honeypot).' });
   if (side === 'buy' && p.risk?.risk === 'high' && !p.acknowledgedHighRisk)
     blockers.push({ code: 'RISK_ACK_REQUIRED', message: `High risk: ${p.risk.verdict ?? 'see the safety panel'}. Confirm "I understand" to buy.` });
-  if (side === 'buy' && p.ethBalanceWei < p.quote.amountIn + p.gasCostWei)
-    blockers.push({ code: 'INSUFFICIENT_ETH', message: `Not enough ETH: need ${fmtEth(p.quote.amountIn + p.gasCostWei)} incl. gas, have ${fmtEth(p.ethBalanceWei)}.` });
+  const need = p.quote.amountIn + (p.extraEthWei ?? 0n) + p.gasCostWei;
+  if (side === 'buy' && p.ethBalanceWei < need)
+    blockers.push({ code: 'INSUFFICIENT_ETH', message: `Not enough ETH: need ${fmtEth(need)} incl. ${p.extraEthWei ? 'the Rushr fee and ' : ''}gas, have ${fmtEth(p.ethBalanceWei)}.` });
   if (side === 'sell') {
     if ((p.tokenBalanceWei ?? 0n) < p.quote.amountIn) blockers.push({ code: 'INSUFFICIENT_TOKEN', message: 'Not enough tokens for this sell.' });
     if (p.ethBalanceWei < p.gasCostWei) blockers.push({ code: 'INSUFFICIENT_ETH', message: `Not enough ETH for gas (need ~${fmtEth(p.gasCostWei)}).` });
@@ -154,7 +160,7 @@ function fmtEth(wei: bigint): string {
 
 /** One transaction for the embedded wallet (send in order; wait for each receipt). */
 export interface WalletCall {
-  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'swap';
+  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'swap' | 'Rushr fee';
   chainId: number;
   to: Address;
   data: Hex;
@@ -179,6 +185,12 @@ export interface QuickTrade {
   quotedAt: number;
   expiresAt: number;
   record: TradeRecord | null;
+  /**
+   * Curve trades: the Rushr fee is a separate transfer, sent only after the trade confirms. Build it
+   * from the trade's receipt with `tradeFollowUpFee` (curve-fee.ts). Null on Universal Router routes,
+   * where the fee is inside the swap.
+   */
+  feeFollowUp: CurveFeeFollowUp | null;
 }
 
 export interface QuickTradeRequest {
@@ -242,7 +254,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   const cfg = resolveConfig(opts.config);
   const now = opts.now?.() ?? Date.now();
   const empty = (blockers: Guard[], warnings: string[] = []): QuickTrade => ({
-    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null,
+    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null, feeFollowUp: null,
   });
   if (req.amountIn <= 0n) throw new TradeError('INVALID_AMOUNT', 'amount must be > 0');
 
@@ -347,6 +359,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     quotedAt: now,
     expiresAt: now + settings.quoteMaxAgeMs,
     record: draftTradeRecord(quote, cfg, built.tx.to, Math.floor(now / 1000)),
+    feeFollowUp: null,
   };
 }
 
@@ -371,7 +384,6 @@ export function isFresh(t: Pick<QuickTrade, 'expiresAt'>, now = Date.now()): boo
 
 /** Fee summary for the trade box. */
 export function feeLine(q: Quote): string {
-  if (q.pool.venue === 'pons-curve' && q.fee.feeBps === 0) return 'Rushr fee: free on curve trades during beta';
   const pct = (q.fee.feeBps / 100).toFixed(2).replace(/0$/, '');
   const notes = [
     ...(q.fee.baseFeeBps === BETA_FEE_BPS && BETA_FEE_BPS * 2 === STANDARD_FEE_BPS ? ['beta, half price'] : []),
@@ -384,12 +396,6 @@ export function feeLine(q: Quote): string {
 
 // ---- PONS bonding curve, traded directly ---------------------------------------------------------
 
-/**
- * Rushr's fee on direct curve trades. 0 during the beta: the curve is called straight from the user's
- * wallet (as pons.fun's own UI does), so there is no contract to take a fee in the same transaction.
- * The fee returns once RushrPonsRouter (contracts/) is independently reviewed and deployed.
- */
-export const CURVE_FEE_BPS = 0;
 export const CURVE_GRADUATED_MESSAGE = 'This token just graduated to Uniswap. Try again to trade it there.';
 /** Gas floors for direct curve calls (simulated use + 30% wins when higher). A buy that completes the
  *  curve also migrates the liquidity to Uniswap v4 in the same transaction (measured ~282k; floor 1M). */
@@ -404,9 +410,14 @@ export async function curveGraduated(client: PublicClient, curve: Address): Prom
  * Quick buy/sell directly on a PONS bonding curve: `curve.buy(quoteIn, minTokensOut, user)` with
  * `msg.value = quoteIn`, or `curve.sell(tokensIn, minQuoteOut, user)` after `token.approve(curve)`.
  * Quotes come from the curve's own state (virtual reserves, curve fee, creator tax), so the minimums
- * are net of all of them. No Rushr fee (CURVE_FEE_BPS). A buy larger than what is left on the curve
- * is HANDLED by the curve itself: it sells the remaining tokens, graduates in the same transaction and
- * refunds the unused ETH to the buyer; the quote shows that refund.
+ * are net of all of them. A buy larger than what is left on the curve is HANDLED by the curve itself:
+ * it sells the remaining tokens, graduates in the same transaction and refunds the unused ETH to the
+ * buyer; the quote shows that refund.
+ *
+ * The Rushr fee (the same rate as Universal Router routes, referral discount included) can't be part of
+ * the curve call, so it is a follow-up transfer (`feeFollowUp`): on buys it comes ON TOP of the amount
+ * (buy 0.01 ETH, pay 0.01 + 0.000025), on sells it comes out of what the curve paid (the quote's
+ * "you receive" is already net of it). The balance guard reserves the fee and both gas costs.
  */
 async function prepareCurveTrade(
   client: PublicClient,
@@ -421,7 +432,10 @@ async function prepareCurveTrade(
   if (curve.nativeQuote === false) return empty([{ code: 'NON_ETH_QUOTE', message: 'This bonding curve is priced in another token, not ETH; not supported yet.' }]);
   if (req.side === 'buy' && curve.snipeTaxBps > 0)
     return empty([{ code: 'SNIPE_TAX_ACTIVE', message: `Launch snipe tax is ${(curve.snipeTaxBps / 100).toFixed(0)}% right now; it drops to 0 within seconds of launch. Try again in a moment.` }]);
-  const curveCfg: TradeConfig = { ...cfg, feeBps: CURVE_FEE_BPS };
+  const feeBps = effectiveFeeBps(cfg, req.referral);
+  // Buys are quoted without a fee (the whole amount goes into the curve; the fee is added on top
+  // below). Sells are quoted with it, so "you receive" and the shown fee match what the user ends with.
+  const quoteCfg: TradeConfig = req.side === 'buy' ? { ...cfg, feeBps: 0 } : cfg;
   const facts = Promise.all([
     opts.assume?.ethWei ?? client.getBalance({ address: req.trader }),
     req.side === 'sell' ? (opts.assume?.tokenWei ?? client.readContract({ address: req.token, abi: erc20Abi, functionName: 'balanceOf', args: [req.trader] })) : Promise.resolve(0n),
@@ -429,10 +443,10 @@ async function prepareCurveTrade(
     opts.assume ? Promise.resolve(0n) : client.readContract({ address: req.token, abi: erc20Abi, functionName: 'allowance', args: [req.trader, curve.curve] }).catch(() => null),
   ] as const);
 
-  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: null, source: { kind: 'web' as const } };
+  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, source: { kind: 'web' as const } };
   let quote0: Quote;
   try {
-    quote0 = await quotePool(client, curve, { ...base, slippageBps: 500 }, curveCfg); // pure math, no RPC
+    quote0 = await quotePool(client, curve, { ...base, slippageBps: 500 }, quoteCfg); // pure math, no RPC
   } catch (e) {
     void facts.catch(() => undefined);
     return empty([{ code: 'NO_ROUTE', message: isTradeError(e) ? e.message : sanitizeRpcMessage(e) }]);
@@ -440,7 +454,22 @@ async function prepareCurveTrade(
   const tax = req.side === 'buy' ? opts.risk?.buyTaxBps : opts.risk?.sellTaxBps;
   const slippageBps = settings.slippageBps ?? autoSlippageBps({ side: req.side, ageMinutes: opts.risk?.ageMinutes, priceChange5mPct: opts.risk?.priceChange5mPct, priceImpactBps: quote0.priceImpactBps, taxBps: tax });
   // The router-only warning doesn't apply: this path calls the curve directly.
-  const quote = { ...withSlippage(quote0, slippageBps), warnings: quote0.warnings.filter((w) => !/RushrPonsRouter|completes the bonding curve/.test(w)) };
+  let quote: Quote = { ...withSlippage(quote0, slippageBps), warnings: quote0.warnings.filter((w) => !/RushrPonsRouter|completes the bonding curve/.test(w)) };
+  if (req.side === 'buy') {
+    // Fee on what the curve takes (all of it, or less on a buy that completes the curve).
+    const fee = feeOf(quote.swapAmountIn, feeBps);
+    quote = {
+      ...quote,
+      fee: {
+        ...quote.fee,
+        feeBps,
+        baseFeeBps: cfg.feeBps,
+        feeAmount: fee,
+        referralDiscountAmount: req.referral ? referralDiscount(quote.swapAmountIn, cfg, feeBps) : 0n,
+        referrerAccrual: referrerAccrual(fee, cfg, req.referral),
+      },
+    };
+  }
   const [ethBal, tokenBal, gasPrice, allowance] = await facts;
 
   const graduating = quote.expectedRefund > 0n;
@@ -457,25 +486,31 @@ async function prepareCurveTrade(
   calls.push(
     req.side === 'buy'
       ? { label: 'swap', chainId: 4663, to: curve.curve, value: req.amountIn, gas: graduating ? CURVE_GAS.graduatingBuy : CURVE_GAS.buy, data: encodeFunctionData({ abi: ponsCurveAbi, functionName: 'buy', args: [req.amountIn, quote.minAmountOut, req.trader] }) }
-      : { label: 'swap', chainId: 4663, to: curve.curve, value: 0n, gas: CURVE_GAS.sell, data: encodeFunctionData({ abi: ponsCurveAbi, functionName: 'sell', args: [req.amountIn, quote.minAmountOut, req.trader] }) },
+      : // The curve checks what IT pays out (before our follow-up fee): the gross minimum.
+        { label: 'swap', chainId: 4663, to: curve.curve, value: 0n, gas: CURVE_GAS.sell, data: encodeFunctionData({ abi: ponsCurveAbi, functionName: 'sell', args: [req.amountIn, quote.minGrossOut, req.trader] }) },
   );
   // After a buy, approving the curve now makes the later sell a single transaction.
   const sellApprovals = req.side === 'buy' && allowance !== null && allowance < PREAPPROVE_MIN ? [approve()] : [];
 
-  const gasCostWei = calls.reduce((s, c) => s + c.gas, 0n) * gasPrice * 2n;
-  const { blockers, warnings } = evaluateGuards({ quote, settings, risk: opts.risk, acknowledgedHighRisk: !!opts.acknowledgedHighRisk, ethBalanceWei: ethBal, tokenBalanceWei: tokenBal, gasCostWei });
+  const feeFollowUp: CurveFeeFollowUp | null =
+    feeBps > 0 ? { kind: 'curve-fee', side: req.side, curve: curve.curve, trader: req.trader, treasury: cfg.feeRecipient, feeBps, quotedFee: quote.fee.feeAmount } : null;
+  const feeCall = feeFollowUp && quote.fee.feeAmount > 0n ? curveFeeCall(cfg, quote.fee.feeAmount) : null;
+  // Gas for the trade and the fee transfer; on buys the fee itself is also reserved.
+  const gasCostWei = (calls.reduce((s, c) => s + c.gas, 0n) + (feeCall ? CURVE_FEE_GAS : 0n)) * gasPrice * 2n;
+  const { blockers, warnings } = evaluateGuards({ quote, settings, risk: opts.risk, acknowledgedHighRisk: !!opts.acknowledgedHighRisk, ethBalanceWei: ethBal, tokenBalanceWei: tokenBal, gasCostWei, extraEthWei: req.side === 'buy' && feeCall ? feeCall.value : 0n });
   if (graduating)
     warnings.push(`This buy completes the bonding curve: you get the remaining tokens, the token moves to Uniswap in the same transaction, and about ${fmtEth(quote.expectedRefund)} ETH of unused input is refunded.`);
 
   if (!blockers.length && opts.simulate !== false) {
-    const simCalls: SimCall[] = calls.map((c) => ({ from: req.trader, to: c.to, data: c.data, value: c.value, label: c.label }));
+    // The quoted fee transfer is simulated after the trade too, so a wallet that can't also pay it is caught now.
+    const simCalls: SimCall[] = [...calls, ...(feeCall ? [feeCall] : [])].map((c) => ({ from: req.trader, to: c.to, data: c.data, value: c.value, label: c.label }));
     try {
       const sim = await simulateCalls(client, simCalls, opts.assume?.ethWei ? { fund: { [req.trader]: opts.assume.ethWei } } : {});
       const bad = sim.calls.find((c) => !c.ok);
       // The curve completed since its state was read: this route is gone; the caller re-discovers pools.
       if (bad && /CurveGraduated/.test(bad.error ?? '')) blockers.push({ code: 'CURVE_GRADUATED', message: CURVE_GRADUATED_MESSAGE });
       else if (bad) blockers.push({ code: 'SIMULATION_REVERTED', message: `Would fail on-chain (${bad.label}): ${bad.error}` });
-      else sim.calls.forEach((c, i) => (calls[i]!.gas = bigMax(calls[i]!.gas, (c.gasUsed * 13n) / 10n + 20_000n)));
+      else calls.forEach((c, i) => (c.gas = bigMax(c.gas, (sim.calls[i]!.gasUsed * 13n) / 10n + 20_000n)));
     } catch (e) {
       warnings.push(`Pre-send simulation unavailable: ${isTradeError(e) ? e.message : sanitizeRpcMessage(e)}`);
     }
@@ -493,6 +528,7 @@ async function prepareCurveTrade(
     gasCostWei,
     quotedAt: now,
     expiresAt: now + settings.quoteMaxAgeMs,
-    record: draftTradeRecord(quote, curveCfg, curve.curve, Math.floor(now / 1000)),
+    record: draftTradeRecord(quote, cfg, curve.curve, Math.floor(now / 1000)),
+    feeFollowUp,
   };
 }

@@ -51,7 +51,7 @@ function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?:
 }
 
 const PRIMARY_BTN =
-  'inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_12px_32px_-14px_rgba(42,138,34,0.8)] transition hover:brightness-105 active:scale-[0.98]';
+  'inline-flex items-center justify-center gap-2 rounded-xl bg-go px-7 py-3.5 font-semibold text-[#0b120c] shadow-[0_8px_18px_-12px_rgba(42,138,34,0.55)] transition hover:brightness-105 active:scale-[0.98]';
 const SECONDARY_BTN =
   'inline-flex items-center justify-center gap-2 rounded-xl border border-line bg-surface px-7 py-3.5 font-semibold transition hover:border-ink/20 active:scale-[0.98]';
 
@@ -108,11 +108,15 @@ const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(',
 // Full width from md up; on phones the strip is taller than 3:1 (16:10) so it is drawn ~1.9x wider.
 const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
 
+
+/** The public beta code; the app reads `?invite=` and prefills it at sign-up. */
+const BETA_CODE = 'RUSHRBETA';
+
 export function Hero() {
   preload('/art/forum-1280.avif', { as: 'image', type: 'image/avif', imageSrcSet: FORUM_AVIF, imageSizes: FORUM_SIZES, fetchPriority: 'high' });
   return (
     <section className="relative">
-      <div className={`${WRAP} flex flex-col items-center pt-14 text-center md:pt-20`}>
+      <div className={`${WRAP} flex flex-col items-center pt-8 text-center md:pt-12`}>
         {/*
           The brand is the headline; the sentence under it is part of the same h1 (visually secondary), so the page
           heading still reads "rushr. Where humans and AI agents trade, connect, and compete." for search and screen readers.
@@ -125,24 +129,33 @@ export function Hero() {
             </span>
           </span>
           <span className="sr-only"> </span>
-          <span className="mt-4 max-w-[30ch] text-lg font-normal leading-snug tracking-[-0.015em] text-muted sm:text-xl md:mt-5 md:text-2xl">
+          <span className="mt-5 text-balance font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted sm:text-[11px] md:mt-6">
+            Open social trading platform for humans and AI agents
+          </span>
+          <span className="sr-only">. </span>
+          <span className="mt-2.5 max-w-[30ch] text-lg font-normal leading-snug tracking-[-0.015em] text-muted sm:text-xl md:mt-3 md:text-2xl">
             Where humans and AI agents trade, connect, and compete.
           </span>
         </h1>
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row md:mt-10" style={{ animationDelay: '0.08s' }}>
-          <a href={appHref('/trenches')} className={PRIMARY_BTN}>
+          <a href={appHref(`/trenches?invite=${BETA_CODE}`)} className={PRIMARY_BTN}>
             Join the beta
           </a>
           <a href={appHref('/trenches')} className={SECONDARY_BTN}>
             Enter the trenches
           </a>
         </div>
-        <p
-          className="rise mt-6 font-mono text-[11px] font-medium uppercase tracking-[0.22em] text-muted md:text-xs"
+        {/* A quiet line under the buttons: the chain we're built on. (The seat counter, components/landing/beta-seats.tsx, can come back here.) */}
+        <div
+          className="rise mt-6 flex min-h-8 flex-wrap items-center justify-center gap-x-6 gap-y-3"
           style={{ animationDelay: '0.16s' }}
         >
-          Open social trading platform for humans and AI agents
-        </p>
+          {/* Robinhood Chain's official logo file (public/robinhood-chain-logo-black.svg, from their brand kit), unmodified. */}
+          <p className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+            Built on
+            <Image src="/robinhood-chain-logo-black.svg" alt="Robinhood Chain" width={152} height={20} className="h-5 w-auto" />
+          </p>
+        </div>
       </div>
 
       {/* The forum, edge to edge: people at the temple of the green R, charts in hand. */}

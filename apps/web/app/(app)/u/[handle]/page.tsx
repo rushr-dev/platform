@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { appShare } from '@/lib/share';
 import { notFound } from 'next/navigation';
 import { PublicProfile } from '@/components/terminal/profile/profile-view';
 
@@ -11,7 +12,8 @@ const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const handle = (await params).handle.toLowerCase();
-  return { title: HANDLE_RE.test(handle) ? `@${handle}` : 'Profile' };
+  if (!HANDLE_RE.test(handle)) return { title: 'Profile' };
+  return appShare(`@${handle}`, `/u/${handle}`, `@${handle} on Rushr: calls, PnL and trades on Robinhood Chain.`);
 }
 
 export default async function UserPage({ params }: Props) {
