@@ -2,7 +2,13 @@
 // with the platform fee the treasury actually received and the referrer's accrual. Clients only tell
 // us the tx hash; amounts never come from the client.
 //
-//   POST /v1/trades                  { txHash, chainId: 4663, source: { kind, id? } }  → 202 { id, status }
+//   POST /v1/trades                  { txHash, chainId: 4663, source: { kind, id? }, feeTxHash? }  → 202 { id, status }
+//
+// Curve trades (a PONS token still on its bonding curve, traded on the curve directly) pay the fee in a
+// second transaction: a plain ETH transfer to the treasury at the trade's nonce + 1. The client posts
+// the same trade again with `feeTxHash` once it is sent; until the schema has a column for it, the hash
+// is kept in `flags` as `fee_tx:<hash>`. A curve trade whose fee transfer never arrives (or doesn't
+// check out) is confirmed with `fee_missed` and fee 0.
 //   GET  /v1/me/trades?before=&limit= the member's trades, newest first
 //   GET  /v1/me/referrals/accrued     confirmed fees and accruals of trades the member referred, per fee token
 //
@@ -10,7 +16,7 @@
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { DEFAULT_TRADE_CONFIG } from '@rushr/trade';
+import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, type FeeTxInfo } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -28,18 +34,24 @@ export const trades = new Hono<Ctx>();
 trades.post('/trades', async (c) => {
   const m = requireMember(c, { scope: 'trade' });
   await limit(c, 'write');
-  const b = (c.var.body ?? {}) as { txHash?: unknown; chainId?: unknown; source?: { kind?: unknown; id?: unknown } };
+  const b = (c.var.body ?? {}) as { txHash?: unknown; chainId?: unknown; source?: { kind?: unknown; id?: unknown }; feeTxHash?: unknown };
   const txHash = typeof b.txHash === 'string' ? b.txHash.toLowerCase() : '';
   if (!TX.test(txHash)) throw fail(400, 'bad_tx_hash', 'txHash must be a 32-byte hex hash.');
+  const feeTxHash = b.feeTxHash == null ? null : typeof b.feeTxHash === 'string' ? b.feeTxHash.toLowerCase() : '';
+  if (feeTxHash !== null && (!TX.test(feeTxHash) || feeTxHash === txHash)) throw fail(400, 'bad_fee_tx_hash', 'feeTxHash must be a 32-byte hex hash of another transaction.');
   if (b.chainId !== CHAIN_ID) throw fail(400, 'bad_chain', 'Only Robinhood Chain (4663) is supported.');
   const kind = b.source?.kind ?? (m.kind === 'agent' ? 'agent' : 'web');
   if (kind !== 'web' && kind !== 'agent' && kind !== 'api') throw fail(400, 'bad_source', 'source.kind must be web, agent or api.');
   const sourceId = typeof b.source?.id === 'string' ? b.source.id.slice(0, 100) : null;
   // A tx hash has the same shape as a private key. Store it only once the chain confirms it is a
   // transaction (sent or pending): a key pasted here by mistake never matches one and is never written.
-  const onChain = await new Rpc(c.env.RPC_URL).call<{ from: string } | null>('eth_getTransactionByHash', [txHash]).catch(() => null);
+  const rpc = new Rpc(c.env.RPC_URL);
+  const lookup = (h: string) => rpc.call<{ from: string } | null>('eth_getTransactionByHash', [h]).catch(() => null);
+  const [onChain, feeOnChain] = await Promise.all([lookup(txHash), feeTxHash ? lookup(feeTxHash) : null]);
   if (!onChain) throw fail(404, 'tx_not_found', 'No transaction with this hash on Robinhood Chain (yet). Send it after the wallet broadcasts it.');
   if (onChain.from.toLowerCase() !== m.wallet) throw fail(403, 'not_your_tx', "This transaction wasn't sent from your wallet.");
+  if (feeTxHash && !feeOnChain) throw fail(404, 'tx_not_found', 'No transaction with the fee hash on Robinhood Chain (yet).');
+  if (feeTxHash && feeOnChain!.from.toLowerCase() !== m.wallet) throw fail(403, 'not_your_tx', "The fee transaction wasn't sent from your wallet.");
   const sql = c.var.sql;
   const id = crypto.randomUUID();
   const [row] = await sql<{ id: string; status: string; trader: string }[]>`
@@ -48,8 +60,20 @@ trades.post('/trades', async (c) => {
     on conflict (tx_hash) do update set tx_hash = excluded.tx_hash
     returning id, status, trader`;
   if (row!.trader !== m.wallet) throw fail(409, 'tx_claimed', 'This transaction is already recorded for another member.');
+  let status = row!.status;
+  if (feeTxHash) {
+    // First fee hash wins (the confirmation checks it is the transfer at the next nonce). A trade
+    // already confirmed without it is confirmed again.
+    const [u] = await sql<{ status: string; reconfirm: boolean }[]>`
+      update trades_ledger set flags = array_append(array_remove(flags, 'fee_missed'), ${`fee_tx:${feeTxHash}`}),
+        status = case when status = 'confirmed' then 'submitted' else status end, updated_at = now()
+      where id = ${row!.id} and not exists (select 1 from unnest(flags) f where f like 'fee_tx:%')
+      returning status, (${row!.status} = 'confirmed') as reconfirm`;
+    if (u) status = u.status;
+    if (u?.reconfirm && row!.id !== id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
+  }
   if (row!.id === id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
-  return c.json({ id: row!.id, status: row!.status }, 202, PRIVATE);
+  return c.json({ id: row!.id, status }, 202, PRIVATE);
 });
 
 trades.get('/me/trades', async (c) => {
@@ -116,7 +140,7 @@ export function tokenFlow(logs: { address: string; topics: string[]; data: strin
  * there yet; 'done' otherwise (confirmed, failed, or confirmed with flags when something didn't match).
  */
 export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAttempt: boolean): Promise<'done' | 'retry'> {
-  const [row] = await sql<{ id: string; status: string; trader: string }[]>`select id, status, trader from trades_ledger where tx_hash = ${txHash}`;
+  const [row] = await sql<{ id: string; status: string; trader: string; flags: string[] | null }[]>`select id, status, trader, flags from trades_ledger where tx_hash = ${txHash}`;
   if (!row || row.status === 'confirmed' || row.status === 'failed') return 'done';
   await sql`update trades_ledger set confirm_attempts = confirm_attempts + 1, updated_at = now() where id = ${row.id}`;
   const rpc = new Rpc(env.RPC_URL);
@@ -129,7 +153,9 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     return finalAttempt ? 'done' : 'retry';
   }
   const from = String(tx.from).toLowerCase();
-  const flags: string[] = [];
+  // Kept across confirmations: the fee transfer reported by the client (curve trades).
+  const feeTxFlag = (row.flags ?? []).find((f) => f.startsWith('fee_tx:')) ?? null;
+  const flags: string[] = feeTxFlag ? [feeTxFlag] : [];
   if (from !== row.trader) flags.push('trader_mismatch');
   const block = BigInt(receipt.blockNumber as string);
   const blk = await rpc.call<{ timestamp: string }>('eth_getBlockByNumber', [`0x${block.toString(16)}`, false]);
@@ -193,15 +219,49 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     amountIn = tokenNet < 0n ? -tokenNet : 0n;
     amountOut = quoteAsset === 'ETH' ? (trace ? ethReceived(trace, from) : 0n) : tokenFlow(logs, QUOTES.USDG, from);
   }
-  // Fee rate on the quote notional: buys pay it out of the input, sells out of the gross output.
-  const notional = s.side === 'buy' ? amountIn : amountOut + fee;
-  const feeBps = notional > 0n ? (Number(fee) * 10_000) / Number(notional) : null;
-
   const cfg = DEFAULT_TRADE_CONFIG;
   const ref = await referralFor(sql, from);
-  const expectedBps = ref ? (cfg.feeBps * (10_000 - cfg.referralDiscountBps)) / 10_000 : cfg.feeBps;
-  if (fee === 0n) flags.push('no_fee');
-  else if (feeBps != null && Math.abs(feeBps - expectedBps) > 1) flags.push(`fee_bps_${feeBps.toFixed(1)}_expected_${expectedBps}`);
+  const expectedBps = effectiveFeeBps(cfg, ref ? { referrer: ref.referrer as `0x${string}` } : null);
+
+  // Direct curve trade: the fee is the follow-up transfer, checked against the curve's own fill.
+  const fill = String(tx.to ?? '').toLowerCase() !== cfg.universalRouter.toLowerCase() ? curveFillFromLogs(logs, from) : null;
+  let notional: bigint;
+  if (fill) {
+    const feeTxHash = feeTxFlag?.slice('fee_tx:'.length) ?? null;
+    if (!feeTxHash && !finalAttempt) return 'retry';
+    let feeTx: FeeTxInfo | null = null;
+    if (feeTxHash) {
+      const [fr, ft] = await rpc.batch<Record<string, unknown> | null>([
+        { method: 'eth_getTransactionReceipt', params: [feeTxHash] },
+        { method: 'eth_getTransactionByHash', params: [feeTxHash] },
+      ]);
+      if (!fr || !ft) {
+        if (!finalAttempt) return 'retry';
+      } else {
+        feeTx = { hash: feeTxHash as `0x${string}`, from: String(ft.from) as `0x${string}`, to: (ft.to ?? null) as `0x${string}` | null, value: BigInt((ft.value as string) ?? '0x0'), input: String(ft.input ?? '0x') as `0x${string}`, nonce: Number(BigInt(ft.nonce as string)), status: fr.status === '0x1' ? 'success' : 'reverted' };
+      }
+    }
+    const audit = auditCurveFee({
+      hash: txHash as `0x${string}`, from: from as `0x${string}`, nonce: Number(BigInt(tx.nonce as string)), value: BigInt((tx.value as string) ?? '0x0'),
+      status: 'success', logs, trace, feeTx, treasury: cfg.feeRecipient, feeBps: cfg.feeBps, referredFeeBps: expectedBps, referred: !!ref,
+    });
+    flags.push(...audit.flags);
+    // A fee transfer that doesn't check out (wrong nonce, recipient, sender, reverted) counts as missed.
+    if (audit.flags.some((f) => f.startsWith('fee_tx_'))) flags.push('fee_missed');
+    fee = audit.fee;
+    feeToken = NATIVE_ETH;
+    notional = fill.quoteAmount;
+    // Sells: the fee came out of what the curve paid, so the seller ended with that minus the fee.
+    if (s.side === 'sell') amountOut = amountOut > fee ? amountOut - fee : 0n;
+  } else {
+    // Fee rate on the quote notional: buys pay it out of the input, sells out of the gross output.
+    notional = s.side === 'buy' ? amountIn : amountOut + fee;
+  }
+  const feeBps = notional > 0n ? (Number(fee) * 10_000) / Number(notional) : null;
+  if (!fill) {
+    if (fee === 0n) flags.push('no_fee');
+    else if (feeBps != null && Math.abs(feeBps - expectedBps) > 1) flags.push(`fee_bps_${feeBps.toFixed(1)}_expected_${expectedBps}`);
+  }
   const baseFee = (notional * BigInt(cfg.feeBps)) / 10_000n;
   const discount = ref && baseFee > fee ? baseFee - fee : 0n;
   const accrual = ref ? (fee * BigInt(cfg.referrerShareBps)) / 10_000n : 0n;
