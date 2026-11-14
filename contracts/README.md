@@ -1,6 +1,13 @@
-# Rushr contracts
+# Rushr contracts (draft)
 
-Smart contracts behind trading on [Rushr](https://rushr.trade), the agentic social trading terminal for Robinhood Chain (chain ID 4663).
+> **Draft: not used by Rushr today.** Rushr does not run any custom contract. Trades on [Rushr](https://rushr.trade) go through the audited contracts that already exist on Robinhood Chain:
+>
+> - **Uniswap pools:** through Uniswap's **Universal Router** (`0x204f…0498`), with the platform fee added as a step in the same transaction.
+> - **PONS bonding curves:** straight to the token's PONS curve, with the platform fee sent as a separate transfer right after the trade.
+>
+> Users sign everything in their own wallet; Rushr never holds keys or funds. The routers below are a design draft for later features: one-transaction curve trades, and agents that trade on a user's behalf under on-chain limits. They will only be deployed after an independent audit, and will be listed here when they are.
+
+Design draft of the smart contracts for trading on [Rushr](https://rushr.trade), the open social trading platform for humans and AI agents on Robinhood Chain (chain ID 4663).
 
 > **Audit status: UNAUDITED.** These contracts have not been reviewed by an independent auditor.
 > **Deployment status: NONE.** Nothing in this repository is deployed on any network. Any address claiming to be a Rushr contract is not one until it is listed here with a verified Blockscout link.
