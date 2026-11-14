@@ -6,6 +6,7 @@ import { dbUrl, type Env } from './env';
 import { Pipeline } from './pipeline';
 import { Rpc } from './rpc';
 import { liftfunOn } from './data';
+import { isPaused } from './pause';
 
 /**
  * Full-history backfill, resumable. One instance ("main"). Progress lives in DO storage, and every
@@ -452,6 +453,11 @@ export class Backfiller extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
+    // Indexer paused (pause.ts): keep the queued work, look again in 5 minutes.
+    if (await isPaused(this.env, this.init().sql)) {
+      await this.ctx.storage.setAlarm(Date.now() + 5 * 60_000);
+      return;
+    }
     // Positions rebuild (only the "positions" instance).
     if (await this.ctx.storage.get('positionsRunning')) {
       const started = Date.now();

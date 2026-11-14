@@ -14,6 +14,15 @@ import { Rpc } from './rpc';
 const RANGE = 500n;
 /** Stop a catch-up loop after this long and reschedule, to stay well within alarm limits. */
 const BUDGET_MS = 20_000;
+/**
+ * Catch-up cap (after a pause or an outage): when the cursor is more than CATCHUP_LAG blocks behind
+ * (~9 min of chain), run at most CATCHUP_STEPS ranges per alarm and wait CATCHUP_GAP_MS between alarms:
+ * about 1,000 blocks/s (~110x real time), so a 24h pause catches up in ~15 min at ~2 getLogs/s instead
+ * of a tight loop.
+ */
+const CATCHUP_LAG = 5_000n;
+const CATCHUP_STEPS = 2;
+const CATCHUP_GAP_MS = 1_000;
 /** A poll step that takes longer than this is treated as hung (see resetDb). */
 const STEP_TIMEOUT_MS = 90_000;
 
@@ -146,6 +155,8 @@ export class ChainPoller extends DurableObject<Env> {
   }
 
   async start(): Promise<void> {
+    // Paused (see pause.ts): the every-minute cron calls start(); it must not wake the poller.
+    if (await this.ctx.storage.get<boolean>('paused')) return;
     await this.ctx.storage.put('enabled', true);
     if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + 100);
   }
@@ -165,6 +176,18 @@ export class ChainPoller extends DurableObject<Env> {
     this.ws?.close(1000, 'stopped');
     this.ws = undefined;
     this.live.connected = false;
+  }
+
+  /** Off switch: stop, close the socket, and refuse start() until resume(). */
+  async pause(): Promise<void> {
+    await this.ctx.storage.put('paused', true);
+    await this.stop();
+  }
+
+  /** Clear the pause and start from the stored cursor (catch-up is capped, see CATCHUP_LAG). */
+  async resume(): Promise<void> {
+    await this.ctx.storage.delete('paused');
+    await this.start();
   }
 
   /** Dev: index launch windows for tokens discovered mid-life, then queue their signals. */
@@ -330,6 +353,7 @@ export class ChainPoller extends DurableObject<Env> {
     return {
       cursor: cursor?.toString() ?? null,
       running: (await this.ctx.storage.getAlarm()) !== null,
+      paused: (await this.ctx.storage.get<boolean>('paused')) ?? false,
       live: {
         ...this.live,
         pairPools: this.env.LIVE_PAIRS === '1' ? this.pairSub.pools : null,
@@ -351,7 +375,7 @@ export class ChainPoller extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     await this.stage('alarm');
-    if (!(await this.ctx.storage.get<boolean>('enabled'))) return;
+    if (!(await this.ctx.storage.get<boolean>('enabled')) || (await this.ctx.storage.get<boolean>('paused'))) return;
     const pipeline = this.init();
     await this.openSocket();
     await this.stage('socket');
@@ -359,6 +383,8 @@ export class ChainPoller extends DurableObject<Env> {
     const rpc = new Rpc(this.env.RPC_URL);
     const started = Date.now();
     let caughtUp = false;
+    let throttled = false;
+    let steps = 0;
     try {
       const head = (await rpc.blockNumber()) - BigInt(ROBINHOOD_CHAIN.confirmations);
       await this.stage('head');
@@ -377,6 +403,11 @@ export class ChainPoller extends DurableObject<Env> {
           caughtUp = true;
           break;
         }
+        if (head - cursor > CATCHUP_LAG && steps >= CATCHUP_STEPS) {
+          throttled = true;
+          break;
+        }
+        steps++;
         const from = cursor + 1n;
         const to: bigint = cursor + range > head ? head : cursor + range;
         await this.ctx.storage.put('attempt', { from: from.toString(), range: range.toString() });
@@ -417,7 +448,7 @@ export class ChainPoller extends DurableObject<Env> {
       await this.ctx.storage.put('previousError', lastError);
       await this.ctx.storage.delete('lastError');
     }
-    await this.ctx.storage.setAlarm(Date.now() + (caughtUp ? POLL_MS : 10));
+    await this.ctx.storage.setAlarm(Date.now() + (caughtUp ? POLL_MS : throttled ? CATCHUP_GAP_MS : 10));
   }
 
   /** Drop every connection and start over (after a hung step). In-flight work on the old pool is abandoned. */

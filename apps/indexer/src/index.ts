@@ -13,6 +13,7 @@ import { GATEWAY_COUNT, gateway } from './gateway';
 import { v1, adminV1 } from './agents/app';
 import { LLMS_TXT } from '@rushr/agents/llms-txt';
 import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
+import { PAUSED_REQUEUE_S, isPaused, readPause, writePause } from './pause';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
@@ -29,6 +30,17 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors());
 
 app.get('/health', async (c) => {
+  // Paused: answer from the database alone (no eth_blockNumber, no poller wake-up).
+  const pdb = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const pause = await readPause(pdb, { fresh: true });
+    if (pause.paused) {
+      const [cur] = await pdb<{ value: { block: string } }[]>`select value from indexer_state where key = 'cursor'`;
+      return c.json({ ok: true, paused: true, pausedAt: pause.pausedAt, reason: pause.reason, cursor: cur?.value.block ?? null, running: false });
+    }
+  } finally {
+    c.executionCtx.waitUntil(pdb.end({ timeout: 5 }));
+  }
   const head = await fetch(c.env.RPC_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -45,6 +57,7 @@ app.get('/health', async (c) => {
   const chainHead = head.result ? Number(head.result) : null;
   return c.json({
     ok: true,
+    paused: false,
     chainHead,
     cursor: status.cursor,
     lagBlocks: chainHead && status.cursor ? chainHead - Number(status.cursor) : null,
@@ -77,6 +90,34 @@ app.use('/admin/*', async (c, next) => {
   return next();
 });
 
+// The off switch (pause.ts, scripts/indexer-switch.sh). pause: store the flag, stop the poller and close its
+// Alchemy socket. resume: clear the flag and start the poller from its cursor (catch-up is capped in poller.ts).
+// Queue delivery is paused and resumed by the script with wrangler; the consumers also hold messages back.
+app.get('/admin/indexer/state', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const flag = await readPause(sql, { fresh: true });
+    const [cur] = await sql<{ value: { block: string }; updated_at: Date }[]>`select value, updated_at from indexer_state where key = 'cursor'`;
+    const poller = await pollerOf(c.env).status().catch((err) => ({ error: String(err) }));
+    return c.json({ ...flag, cursor: cur?.value.block ?? null, cursorAt: cur?.updated_at ?? null, poller });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+app.post('/admin/indexer/:action{pause|resume}', async (c) => {
+  const pause = c.req.param('action') === 'pause';
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const state = await writePause(sql, pause, pause ? (c.req.query('reason') ?? null) : null);
+    if (pause) await pollerOf(c.env).pause();
+    else await pollerOf(c.env).resume();
+    console.log(`indexer ${pause ? 'paused' : 'resumed'}`);
+    return c.json({ ...state, poller: await pollerOf(c.env).status().catch((err) => ({ error: String(err) })) });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 // The retired US-placed poller: stop it so only the Asia-Pacific one indexes.
 app.post('/admin/poller-legacy/stop', async (c) => {
   await c.env.CHAIN_POLLER.get(c.env.CHAIN_POLLER.idFromName('main')).stop();
@@ -86,7 +127,10 @@ app.post('/admin/poller-legacy/stop', async (c) => {
 // Dev controls for the poller.
 app.post('/admin/poller/:action', async (c) => {
   const poller = pollerOf(c.env);
-  if (c.req.param('action') === 'start') await poller.start();
+  if (c.req.param('action') === 'start') {
+    if (await isPaused(c.env)) return c.json({ error: 'indexer is paused: POST /admin/indexer/resume' }, 409);
+    await poller.start();
+  }
   else if (c.req.param('action') === 'stop') await poller.stop();
   else if (c.req.param('action') === 'restart') {
     // After a deploy: make the running poller instance pick up the new code (alarm and cursor are kept).
@@ -350,6 +394,8 @@ export default {
   fetch: app.fetch,
   // Cron keeps the poller alive in case its alarm chain ever stops.
   async scheduled(event, env) {
+    // Switched off (pause.ts): no poller wake-up and no jobs, RPC or not. They pick up again on resume.
+    if (await isPaused(env)) return;
     await pollerOf(env).start();
     // Every 5 minutes: confirm PONS graduations near the threshold (events can be missed or new).
     if (new Date(event.scheduledTime).getUTCMinutes() % 5 === 1) {
@@ -449,6 +495,23 @@ export default {
     // Workers allow 6 simultaneous outgoing connections per invocation, and Hyperdrive stalls when the
     // client pipelines queries on a busy connection: so 2 connections and never more than 2 queries at once.
     const sql = postgres(dbUrl(env), { max: 2, fetch_types: false, prepare: false });
+    // Switched off (pause.ts): put every message back for later, without calling RPC. Re-sent rather than
+    // retried, so a long pause doesn't use up max_retries (delivery is normally paused by the script too).
+    if (await isPaused(env, sql)) {
+      try {
+        const q = batch.queue === 'rushr-metadata' ? env.METADATA_QUEUE : env.ENRICH_QUEUE;
+        for (let i = 0; i < batch.messages.length; i += 100) {
+          await q.sendBatch(batch.messages.slice(i, i + 100).map((m) => ({ body: m.body, delaySeconds: PAUSED_REQUEUE_S })));
+        }
+        batch.ackAll();
+      } catch (err) {
+        console.error('paused requeue failed', err);
+        batch.retryAll({ delaySeconds: PAUSED_REQUEUE_S });
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+      return;
+    }
     const rpc = new Rpc(env.RPC_URL);
     const done = new Set<string>();
     // Tokens whose card changed (signals or metadata), pushed to open terminals at the end.
@@ -494,7 +557,11 @@ export default {
         try {
           const final = attempt >= CONFIRM_DELAYS_S.length - 1;
           const r = await confirmTrade(sql, env, tx, final);
-          if (r === 'retry') await env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx, attempt: attempt + 1 }, { delaySeconds: CONFIRM_DELAYS_S[attempt + 1] });
+          // Past the last delay, rows still 'submitted' are left to the 2-minute sweep (e.g. after a pause,
+          // until the poller has caught up with the trade's block).
+          if (r === 'retry' && attempt + 1 < CONFIRM_DELAYS_S.length) {
+            await env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx, attempt: attempt + 1 }, { delaySeconds: CONFIRM_DELAYS_S[attempt + 1] });
+          }
           msg.ack();
         } catch (err) {
           console.error('trade confirm failed', tx, err);

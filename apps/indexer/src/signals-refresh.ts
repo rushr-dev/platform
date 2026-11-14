@@ -6,6 +6,7 @@ import postgres from 'postgres';
 import { dbUrl, type Env } from './env';
 import { Rpc } from './rpc';
 import { recomputeSignals } from './signals';
+import { isPaused } from './pause';
 
 /** Same threshold as the agents API's `stale` flag. */
 export const SIGNALS_STALE_MS = 10 * 60_000;
@@ -40,6 +41,7 @@ export function refreshSignalsIfStale(
     (async () => {
       const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
       try {
+        if (await isPaused(env, sql)) return; // indexer switched off: no chain reads
         await recomputeSignals(sql, new Rpc(env.RPC_URL), token);
       } catch (err) {
         console.error('signal refresh failed', token, err);

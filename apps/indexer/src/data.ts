@@ -159,7 +159,8 @@ const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
  * Liquidity: v3/v2 = the pool's token balances (matches DexScreener), refreshed on read every 30s.
  * v4 pools share the PoolManager's balance, so their liquidity is null for now.
  */
-export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
+/** `rpcUrl` null (indexer paused): answer from the last measured TVL, no chain refresh. */
+export async function tokenPools(sql: Sql, rpcUrl: string | null, token: string) {
   const [t] = await sql<{ decimals: number; price_usd: string | null }[]>`select decimals, price_usd from tokens where address = ${token}`;
   if (!t) return null;
   const pools = await sql<
@@ -175,7 +176,7 @@ export async function tokenPools(sql: Sql, rpcUrl: string, token: string) {
 
   // Refresh stale v3/v2 TVL in one batched RPC call.
   const stale = pools.filter((p) => (p.dex === 'v3' || p.dex === 'v2') && (!p.liquidity_at || Date.now() - p.liquidity_at.getTime() > POOL_TVL_TTL_S * 1000));
-  if (stale.length && t.price_usd) {
+  if (rpcUrl && stale.length && t.price_usd) {
     const quotes = [...new Set(stale.map((p) => p.quote))];
     const qrows = await sql<{ address: string; decimals: number; price_usd: string | null }[]>`
       select address, decimals, price_usd from tokens where address = any(${quotes})`;
@@ -402,7 +403,7 @@ export async function walletPnl(sql: Sql, wallet: string, pg: { offset: number; 
 }
 
 /** Everything a token page needs at once (the realtime `token:` snapshot, docs/realtime.md). */
-export async function tokenSnapshot(sql: Sql, rpcUrl: string, token: string) {
+export async function tokenSnapshot(sql: Sql, rpcUrl: string | null, token: string) {
   const card = await tokenDetail(sql, token);
   if (!card) return null;
   const [stats, pools, trades, c1s, c1m] = await Promise.all([

@@ -192,6 +192,12 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     select s.token, s.side, s.pool, s.quote, p.venue, p.dex from swaps s left join pools p on p.id = s.pool
     where s.tx = ${txHash} and s.trader = ${from} order by s.usd desc nulls last`;
   if (!swaps.length && !finalAttempt) return 'retry';
+  if (!swaps.length) {
+    // Even on the last attempt: if the poller hasn't indexed this block yet (catching up after a pause or
+    // an outage), wait for it rather than settle as swap_not_indexed. The 2-minute sweep comes back.
+    const [cur] = await sql<{ value: { block: string } }[]>`select value from indexer_state where key = 'cursor'`;
+    if (!cur || BigInt(cur.value.block) < block) return 'retry';
+  }
   const logs = receipt.logs as { address: string; topics: string[]; data: string }[];
   const treasury = DEFAULT_TRADE_CONFIG.feeRecipient.toLowerCase();
   let s = swaps[0];

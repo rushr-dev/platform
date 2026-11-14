@@ -13,6 +13,7 @@ import { loadSnapshot } from './signals';
 import { searchTokens } from './search';
 import { refreshSignalsIfStale } from './signals-refresh';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
+import { PAUSED_BODY, readPause } from './pause';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
 
@@ -29,6 +30,9 @@ api.use('*', async (c, next) => {
   }
 });
 
+/** The RPC URL for best-effort chain refreshes inside reads, or null while the indexer is paused. */
+const chainUrl = async (c: { env: Env; var: { sql: Sql } }) => ((await readPause(c.var.sql)).paused ? null : c.env.RPC_URL);
+
 const cache = (seconds: number) => ({ 'cache-control': `public, max-age=${seconds}, s-maxage=${seconds}` });
 const addr = (s: string | undefined) => (s ?? '').toLowerCase();
 
@@ -36,9 +40,12 @@ const addr = (s: string | undefined) => (s ?? '').toLowerCase();
  * A token we have nothing on: ask its hydrator to fetch it from chain (coalesced per token, rate
  * limited) and answer 202 so the page can show "fetching from chain" and follow the socket.
  */
-async function hydrating(c: { env: Env; json: (b: unknown, s: 202 | 404) => Response }, token: string) {
+async function hydrating(c: { env: Env; var: { sql: Sql }; json: (b: unknown, s: 202 | 404 | 503) => Response }, token: string) {
   if (!/^0x[0-9a-f]{40}$/.test(token)) return c.json({ error: 'not found' }, 404);
+  // Paused: no chain lookups at all (checked here too, so a paused indexer doesn't even wake the hydrator).
+  if ((await readPause(c.var.sql)).paused) return c.json(PAUSED_BODY, 503);
   const { state } = await hydrator(c.env, token).hydrate(token);
+  if (state === 'paused') return c.json(PAUSED_BODY, 503);
   if (state === 'not_token') return c.json({ error: 'not found' }, 404);
   return c.json({ address: token, state, source: 'chain' }, 202);
 }
@@ -76,7 +83,7 @@ api.get('/tokens/:address', async (c) => {
 
 /** Every pool of a token with its routing key, 24h volume and liquidity (see tokenPools). */
 api.get('/tokens/:address/pools', async (c) => {
-  const pools = await tokenPools(c.var.sql, c.env.RPC_URL, addr(c.req.param('address')));
+  const pools = await tokenPools(c.var.sql, await chainUrl(c), addr(c.req.param('address')));
   if (!pools) return c.json({ error: 'not found' }, 404);
   return c.json({ pools }, 200, cache(POOL_TVL_TTL_S));
 });
@@ -91,9 +98,10 @@ api.get('/tokens/:address/stats', async (c) => {
 /** The realtime `token:` snapshot (docs/realtime.md), for server rendering. */
 api.get('/tokens/:address/snapshot', async (c) => {
   const token = addr(c.req.param('address'));
-  const snap = await tokenSnapshot(c.var.sql, c.env.RPC_URL, token);
+  const rpcUrl = await chainUrl(c);
+  const snap = await tokenSnapshot(c.var.sql, rpcUrl, token);
   if (!snap) return hydrating(c, token);
-  if (!snap.trades.length) c.executionCtx.waitUntil(hydrator(c.env, token).hydrate(token).catch(() => undefined));
+  if (!snap.trades.length && rpcUrl) c.executionCtx.waitUntil(hydrator(c.env, token).hydrate(token).catch(() => undefined));
   return c.json({ ...snap, state: 'live', source: 'index' }, 200, cache(2));
 });
 
@@ -215,7 +223,7 @@ api.get('/wallets/:address/holdings', async (c) => {
   const wallet = addr(c.req.param('address'));
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
   const out = await walletHoldings(c.var.sql, wallet, page((k) => c.req.query(k), 200));
-  c.executionCtx.waitUntil(
+  if (!(await readPause(c.var.sql)).paused) c.executionCtx.waitUntil(
     (async () => {
       const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
       try { await repairBalances(sql, c.env.RPC_URL, wallet); } catch { /* best effort */ } finally { await sql.end({ timeout: 5 }); }
