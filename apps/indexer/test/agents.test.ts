@@ -4,26 +4,43 @@ import { pgAvailable, setup } from './harness';
 
 // No RPC in tests: the trade package is replaced with a recorder.
 interface PrepareCall {
-  req: { side: 'buy' | 'sell'; amountIn: bigint; trader: string; source: { kind: string } };
-  opts: { forSigning?: boolean };
+  req: { side: 'buy' | 'sell'; token: string; amountIn: bigint; trader: string; source: { kind: string } };
+  opts: { forSigning?: boolean; simulate?: boolean; simulateFundEth?: bigint };
 }
+const PERMIT2 = '0x000000000022d473030f116ddee9f6b43ac78ba3';
+const UR = '0x00000000000000000000000000000000000000ff';
+const THIN = '0x00000000000000000000000000000000000000ee';
+const POOR = '0x00000000000000000000000000000000000000dd';
+const CURVE = '0x00000000000000000000000000000000000000c1';
+const CURVE_LATE = '0x00000000000000000000000000000000000000c2';
 const calls: PrepareCall[] = [];
-vi.mock('@rushr/trade/agent', () => ({
-  prepareSwap: async (_client: unknown, req: PrepareCall['req'], opts: PrepareCall['opts']) => {
-    calls.push({ req, opts });
-    return {
-      quote: { amountIn: req.amountIn, amountOut: 123n, minAmountOut: 120n, warnings: [] },
-      alternatives: [],
-      tx: { chainId: 4663, to: '0x00000000000000000000000000000000000000ff', data: '0xabcdef', value: req.side === 'buy' ? req.amountIn : 0n },
-      approvals: [],
-      commands: [],
-      deadline: 1700000000n,
-      record: {},
-      warnings: [],
-    };
-  },
-  toJsonSafe: (v: unknown) => JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x))),
-}));
+vi.mock('@rushr/trade/agent', async () => {
+  const { TradeError } = await import('@rushr/trade/errors');
+  return {
+    prepareSwap: async (_client: unknown, req: PrepareCall['req'], opts: PrepareCall['opts']) => {
+      calls.push({ req, opts });
+      if (req.token === POOR) throw new TradeError('RPC_ERROR', 'simulation request failed: -38014 insufficient funds for gas * price + value');
+      if (req.token === CURVE_LATE) throw new TradeError('UNSUPPORTED_VENUE', 'PONS curve trading needs RushrPonsRouter, which is not deployed yet');
+      const sell = req.side === 'sell';
+      return {
+        quote: { amountIn: req.amountIn, amountOut: 123n, minAmountOut: 120n, priceImpactBps: req.token === THIN ? 9999 : 12, warnings: [] },
+        alternatives: [],
+        tx: { chainId: 4663, to: '0x00000000000000000000000000000000000000ff', data: '0xabcdef', value: sell ? 0n : req.amountIn },
+        approvals: sell
+          ? [
+              { kind: 'erc20', token: req.token, spender: PERMIT2, amount: req.amountIn },
+              { kind: 'permit2', token: req.token, spender: UR, amount: req.amountIn },
+            ]
+          : [],
+        commands: [],
+        deadline: 1700000000n,
+        record: {},
+        warnings: [],
+      };
+    },
+    toJsonSafe: (v: unknown) => JSON.parse(JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? x.toString() : x))),
+  };
+});
 
 const pg = await pgAvailable();
 const TOKEN = '0x00000000000000000000000000000000000000aa';
@@ -49,6 +66,13 @@ describe.skipIf(!pg)('independent agents', () => {
     }
   });
   afterAll(async () => t?.teardown());
+
+  beforeAll(async () => {
+    for (const [addr, launchpad, status] of [[THIN, null, 'migrated'], [POOR, null, 'migrated'], [CURVE, 'pons', 'bonding'], [CURVE_LATE, null, 'migrated']] as const) {
+      await t.sql`insert into tokens (address, name, symbol, decimals, total_supply, deployer, created_block, created_at, price_usd, launchpad, status)
+        values (${addr}, 'T', 'T', 18, '1', '0xd', 1, now(), 1, ${launchpad}, ${status})`;
+    }
+  });
 
   it('registers with a signed SIWE message, no invite needed, and gets a key once', async () => {
     const r = await t.call('POST', '/agents/register', { body: { ...(await signIn('register')), handle: 'alphabot', bio: 'momentum' } });
@@ -117,6 +141,52 @@ describe.skipIf(!pg)('independent agents', () => {
     // Selling is never blocked.
     expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, token: SPAM, side: 'sell' } })).status).toBe(200);
     expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, amountIn: '1.5' } })).json.error.code).toBe('invalid_field');
+  });
+
+  it('refuses PONS curve tokens with curve_not_supported, before using the quota', async () => {
+    const body = { token: CURVE, side: 'buy', amountIn: '1000' };
+    const q = await t.call('POST', '/trade/quote', { auth: apiKey, body });
+    expect(q.json.error).toMatchObject({ code: 'curve_not_supported', message: expect.stringContaining('bonding curve') });
+    expect((await t.call('POST', '/trade/build', { auth: apiKey, body })).json.error.code).toBe('curve_not_supported');
+    expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, token: CURVE_LATE } })).json.error.code).toBe('curve_not_supported');
+  });
+
+  it('returns ready-to-send approval transactions for sells', async () => {
+    const b = await t.call('POST', '/trade/build', { auth: apiKey, body: { token: TOKEN, side: 'sell', amountIn: '5000' } });
+    const [erc20, permit] = b.json.approvals as { kind: string; tx: { to: string; data: string; value: string } }[];
+    expect(erc20!.tx.to).toBe(TOKEN);
+    expect(erc20!.tx.data.startsWith('0x095ea7b3')).toBe(true); // approve(address,uint256)
+    expect(erc20!.tx.data).toContain(PERMIT2.slice(2));
+    expect(permit!.tx.to.toLowerCase()).toBe(PERMIT2);
+    expect(permit!.tx.data.startsWith('0x87517c45')).toBe(true); // approve(address,address,uint160,uint48)
+    expect(permit!.tx.value).toBe('0');
+  });
+
+  it('funds dry runs for unfunded wallets and maps insufficient funds', async () => {
+    await t.call('POST', '/trade/build', { auth: apiKey, body: { token: TOKEN, side: 'buy', amountIn: '1000', simulate: true } });
+    expect(calls.at(-1)!.opts).toMatchObject({ simulate: true, simulateFundEth: 1000n + 10n ** 16n });
+    expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { token: POOR, side: 'buy', amountIn: '1000' } })).json.error.code).toBe('insufficient_funds');
+  });
+
+  it('refuses builds above 30% price impact unless acceptImpact', async () => {
+    const acct = privateKeyToAccount(generatePrivateKey());
+    const apiKey = (await t.call('POST', '/agents/register', { body: { ...(await signIn('register', acct)), handle: 'impactbot' } })).json.apiKey.key as string;
+    const body = { token: THIN, side: 'buy', amountIn: '1000000000000000000000000' };
+    expect((await t.call('POST', '/trade/quote', { auth: apiKey, body })).json.wouldBuild).toBe(false);
+    expect((await t.call('POST', '/trade/build', { auth: apiKey, body })).json.error).toMatchObject({ code: 'high_price_impact', priceImpactBps: 9999 });
+    expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, acceptImpact: true } })).status).toBe(200);
+  });
+
+  it('enforces the read limit on keyed GETs and keeps invalid posts off the callout quota', async () => {
+    const acct = privateKeyToAccount(generatePrivateKey());
+    const reg = await t.call('POST', '/agents/register', { body: { ...(await signIn('register', acct)), handle: 'reader' } });
+    const key = reg.json.apiKey.key as string;
+    for (let i = 0; i < 12; i++) expect((await t.call('POST', '/callouts', { auth: key, body: { token: 'bad', body: 'x' } })).status).toBe(422);
+    expect((await t.call('POST', '/callouts', { auth: key, body: { token: TOKEN, body: 'still have quota' } })).status).toBe(201);
+    const statuses: number[] = [];
+    for (let i = 0; i < 62; i++) statuses.push((await t.call('GET', '/agents/me', { auth: key })).status);
+    expect(statuses.slice(0, 59).every((s) => s === 200)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
   });
 
   it('keeps humans out of the trade API and limits builds per key', async () => {

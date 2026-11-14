@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { CaretDown, Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phosphor-icons/react';
+import { CaretDown, Globe, MagnifyingGlass, ShareNetwork, TelegramLogo, XLogo } from '@phosphor-icons/react';
 import type { TokenDetail } from '@/lib/api';
 import { auth, useAuth } from '@/lib/auth';
 import { compact, countFmt, pctSigned, usd } from '@/lib/format';
@@ -16,39 +16,91 @@ import { TokenAvatar } from './bits';
 
 /* ------------------------------------------------------------------ position */
 
-/** Your position in this token: value now, PnL, what you put in and your average entry (as market cap). */
-export function PositionCard({ t, position, supply }: { t: TokenDetail; position: LivePosition; supply: number }) {
-  if (!position.loaded || position.held <= 0) return null;
-  const up = (position.pnlUsd ?? 0) >= 0;
-  const tone = position.pnlUsd == null ? 'text-muted' : up ? 'text-go' : 'text-risk-high';
-  const avgEntry = position.boughtTokens > 0 ? position.boughtUsd / position.boughtTokens : null;
+/** Dollars with cents below $1K ("$9.31"), compact above ("$12.4K"): PnL on small trades needs the cents. */
+const cash = (n: number | null) => (n == null || !Number.isFinite(n) ? '—' : Math.abs(n) < 1000 ? `$${Math.abs(n).toFixed(2)}` : usd(Math.abs(n)));
+const money = (n: number) => `${n < 0 ? '-' : n > 0 ? '+' : ''}${cash(n)}`;
+
+/**
+ * Your result on this token as one compact strip under the trade card. It stays after you exit, so
+ * you always see that you traded the token and how it went:
+ * - holding: amount and value now, with the total PnL;
+ * - partly sold: the same, plus what's realised so far;
+ * - fully sold: "Closed · bought $X · sold $Y" with the realised result, muted.
+ * Tap to expand for invested, average entry (as market cap) and the realised / unrealised split.
+ * Numbers come from the live position (server totals plus our own trades applied optimistically),
+ * so they survive a refresh and move the moment a trade lands.
+ */
+export function PositionCard({ t, position: p, supply }: { t: TokenDetail; position: LivePosition; supply: number }) {
+  const [open, setOpen] = useState(false);
+  if (!p.loaded || (!p.holding && p.boughtUsd <= 0)) return null;
+  const closed = !p.holding;
+  const partly = !closed && p.soldUsd > 0;
+  const pnl = closed ? p.realizedUsd : p.pnlUsd;
+  const pct = pnl != null && p.boughtUsd > 0 ? (pnl / p.boughtUsd) * 100 : null;
+  const tone = pnl == null || Math.abs(pnl) < 0.005 ? 'text-muted' : pnl > 0 ? 'text-go' : 'text-risk-high';
+  const avgEntry = p.boughtTokens > 0 ? p.boughtUsd / p.boughtTokens : null;
   return (
-    <section className="shrink-0 rounded-2xl border border-white/[0.06] bg-surface p-4" aria-label="Your position">
-      <div className="flex items-center gap-3">
-        <TokenAvatar t={t} size={40} />
-        <div className="min-w-0 flex-1">
-          <div className="font-mono text-2xl font-semibold leading-tight">{usd(position.heldUsd)}</div>
-          <div className="truncate font-mono text-xs text-muted">
-            {compact(position.held)} {t.symbol}
+    <section
+      className={`shrink-0 rounded-2xl border border-white/[0.06] bg-surface ${closed ? 'opacity-80' : ''}`}
+      aria-label={closed ? `Your closed ${t.symbol} trade` : `Your ${t.symbol} position`}
+    >
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left">
+        <TokenAvatar t={t} size={24} />
+        <span className="min-w-0 flex-1">
+          {closed ? (
+            <>
+              <span className="block text-[13px] font-medium text-ink/80">Closed</span>
+              <span className="block truncate text-[11px] text-muted">
+                bought <span className="font-mono">{cash(p.boughtUsd)}</span> · sold <span className="font-mono">{cash(p.soldUsd)}</span>
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="block truncate font-mono text-[13px] text-ink">
+                {compact(p.held)} {t.symbol} · {cash(p.heldUsd)}
+              </span>
+              {(partly || p.syncing) && (
+                <span className="block truncate text-[11px] text-muted">
+                  {p.syncing ? 'Updating with your latest trade…' : <>Realised <span className="font-mono">{money(p.realizedUsd)}</span></>}
+                </span>
+              )}
+            </>
+          )}
+        </span>
+        {/* PnL in dollars over the percentage, so the strip fits the narrow rail. */}
+        <span className={`shrink-0 text-right font-mono leading-tight ${closed ? `${tone} opacity-80` : tone}`}>
+          <span className="block text-[13px] font-semibold">{pnl == null ? '—' : money(pnl)}</span>
+          {pct != null && <span className="block text-[11px]">{pctSigned(pct, 1)}</span>}
+        </span>
+        <CaretDown size={12} className={`shrink-0 text-muted transition ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="border-t border-white/[0.05] px-3 pb-3 pt-2">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+            <Fig k="Invested" v={cash(p.boughtUsd)} />
+            <Fig k="Avg entry" v={avgEntry != null && supply ? `${usd(avgEntry * supply)} MC` : '—'} />
+            <Fig k="Sold" v={p.soldUsd > 0 ? cash(p.soldUsd) : '—'} />
+            <Fig k="Realised" v={p.soldUsd > 0 ? money(p.realizedUsd) : '—'} />
+            {!closed && <Fig k="Unrealised" v={p.unrealizedUsd == null ? '—' : money(p.unrealizedUsd)} />}
+          </dl>
+          {/* Spot for sharing a PnL card to X (not built yet). */}
+          <div className="mt-2 flex justify-end">
+            <button type="button" disabled title="Sharing your PnL card is coming soon" aria-label="Share PnL card (coming soon)" className="rounded-lg p-1.5 text-muted/50">
+              <ShareNetwork size={14} />
+            </button>
           </div>
         </div>
-        <div className={`text-right font-mono ${tone}`}>
-          <div className="text-base font-semibold">{position.pnlUsd == null ? '—' : `${up ? '+' : '-'}${usd(Math.abs(position.pnlUsd))}`}</div>
-          <div className="text-xs">{position.pnlPct == null ? '' : pctSigned(position.pnlPct, 1)}</div>
-        </div>
-      </div>
-      <dl className="mt-3 space-y-1.5 border-t border-white/[0.05] pt-3 text-sm">
-        <div className="flex justify-between">
-          <dt className="text-muted">Invested</dt>
-          <dd className="font-mono">{usd(position.boughtUsd)}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt className="text-muted">Avg entry</dt>
-          <dd className="font-mono">{avgEntry != null && supply ? `${usd(avgEntry * supply)} MC` : '—'}</dd>
-        </div>
-        {position.syncing && <p className="text-[11px] text-muted">Updating with your latest trade…</p>}
-      </dl>
+      )}
     </section>
+  );
+}
+
+function Fig({ k, v }: { k: string; v: string }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <dt className="text-muted">{k}</dt>
+      <dd className="font-mono text-ink/85">{v}</dd>
+    </div>
   );
 }
 

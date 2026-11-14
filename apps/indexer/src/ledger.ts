@@ -70,7 +70,9 @@ trades.post('/trades', async (c) => {
       where id = ${row!.id} and not exists (select 1 from unnest(flags) f where f like 'fee_tx:%')
       returning status, (${row!.status} = 'confirmed') as reconfirm`;
     if (u) status = u.status;
-    if (u?.reconfirm && row!.id !== id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
+    // The fee transfer is what a curve trade's confirmation waits for: confirm now, whatever happened
+    // to the job queued with the trade (confirming twice is harmless). The cron sweep is the backstop.
+    if (u && row!.id !== id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
   }
   if (row!.id === id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
   return c.json({ id: row!.id, status }, 202, PRIVATE);
@@ -133,6 +135,25 @@ export function tokenFlow(logs: { address: string; topics: string[]; data: strin
     if (from === w) net -= v;
   }
   return net;
+}
+
+/** A trade still `submitted` this long after its last attempt has lost its confirmation job. */
+export const STUCK_AFTER_S = 180;
+/** Past this age, the sweep's attempt is the final one (the same window as CONFIRM_DELAYS_S, ~10 min). */
+export const FINAL_AFTER_S = CONFIRM_DELAYS_S.reduce((a, b) => a + b, 0) + 60;
+
+/**
+ * Backstop for confirmation jobs that never ran (a queue send that failed after the row was written,
+ * a message dropped after its retries): confirms trades left `submitted`. Run from the cron.
+ */
+export async function sweepStuckTrades(sql: Sql, env: Env, limit = 20): Promise<{ tx: string; result: 'done' | 'retry' }[]> {
+  const rows = await sql<{ tx_hash: string; final: boolean }[]>`
+    select tx_hash, ts < now() - make_interval(secs => ${FINAL_AFTER_S}) as final from trades_ledger
+    where status = 'submitted' and chain_id = ${CHAIN_ID} and updated_at < now() - make_interval(secs => ${STUCK_AFTER_S})
+    order by ts limit ${limit}`;
+  const out: { tx: string; result: 'done' | 'retry' }[] = [];
+  for (const r of rows) out.push({ tx: r.tx_hash, result: await confirmTrade(sql, env, r.tx_hash, r.final) });
+  return out;
 }
 
 /**

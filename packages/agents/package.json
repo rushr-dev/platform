@@ -10,7 +10,8 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:llms": "node scripts/gen-llms.mjs"
   },
   "dependencies": {
     "postgres": "^4.1.0",

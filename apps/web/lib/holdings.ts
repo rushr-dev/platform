@@ -88,7 +88,7 @@ export function useWalletHoldings(wallet: Address | null): Holdings {
   const eth = useEthQuote();
   const pnl = useWalletPnl(wallet, tick);
   // Fresh every 15s, and right after this wallet's own trades (the `rushr:trade` event from
-  // components/trade/use-quick-trade.ts): once on confirmation and again when the indexer has caught up.
+  // components/trade/use-quick-trade.ts): on confirmation and a few times after, as the RPC and the indexer catch up.
   useEffect(() => {
     if (!wallet) return;
     const w = wallet.toLowerCase();
@@ -101,8 +101,9 @@ export function useWalletHoldings(wallet: Address | null): Holdings {
     const on = (e: Event) => {
       const d = (e as CustomEvent<{ phase?: string; wallet?: string }>).detail;
       if (d?.wallet?.toLowerCase() !== w || (d.phase !== 'confirmed' && d.phase !== 'failed')) return;
+      // Now, then again as the RPC and the indexer catch up.
       bump();
-      timers.push(setTimeout(bump, 4_000));
+      for (const ms of [1_500, 4_000, 10_000]) timers.push(setTimeout(bump, ms));
     };
     window.addEventListener('rushr:trade', on);
     return () => {

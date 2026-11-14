@@ -12,6 +12,7 @@ import { useEthUsd } from '@/lib/profile';
 import { LIMITS, updateSettings, useSettings } from '@/lib/settings';
 import { Modal } from './profile/modal';
 import { useTokenBalance } from '@/lib/balances';
+import type { LivePosition } from '@/lib/position';
 
 /**
  * The simple trade card (the token page's default): Buy/Sell, one big amount in US dollars,
@@ -20,7 +21,7 @@ import { useTokenBalance } from '@/lib/balances';
  * send as the full panel (components/trade/use-quick-trade.ts). Slippage, the cap, presets, gas and
  * quote details sit behind the gear, next to the Pro mode switch.
  */
-export function SimpleTrade(props: { token: TradeToken; priceUsd: number | null; initialSide?: Side; onDone?: () => void }) {
+export function SimpleTrade(props: { token: TradeToken; priceUsd: number | null; initialSide?: Side; onDone?: () => void; position?: LivePosition | null }) {
   if (!tradingAvailable()) return null;
   return <Card {...props} />;
 }
@@ -35,7 +36,20 @@ const GAS_RESERVE = parseEther('0.0005');
 const cents = (n: number) => (Math.floor(n * 100) / 100).toFixed(2).replace(/\.00$/, '');
 const whole = (v: bigint, decimals: number) => Number(formatUnits(v, decimals));
 
-function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeToken; priceUsd: number | null; initialSide?: Side; onDone?: () => void }) {
+function Card({
+  token,
+  priceUsd,
+  initialSide = 'buy',
+  onDone,
+  position,
+}: {
+  token: TradeToken;
+  priceUsd: number | null;
+  initialSide?: Side;
+  onDone?: () => void;
+  /** The page's live position: tells a chain read that lags our own fresh buy apart from a real 0. */
+  position?: LivePosition | null;
+}) {
   const q = useQuickTrade(token);
   const settings = useSettings();
   const ethUsd = useEthUsd();
@@ -44,7 +58,11 @@ function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeTo
   /** Exact token amount from a sell percentage (so Max sells everything, not a rounded dollar value). */
   const [sellExact, setSellExact] = useState<{ pct: number; v: bigint } | null>(null);
   const [tick, setTick] = useState(0);
-  const bal = useTokenBalance(q.wallet, token.address, tick);
+  const { bal: chainBal, refresh: refreshBal } = useTokenBalance(q.wallet, token.address, tick);
+  // Right after our own buy the RPC can still report 0 for a moment; the position already counts the
+  // buy, so treat that as "still loading" (skeleton, re-read on a schedule) instead of a real 0.
+  const lagging = !!chainBal && chainBal.token === 0n && !!position?.syncing && position.held > 0;
+  const bal = lagging ? null : chainBal;
   const [gear, setGear] = useState(false);
   const signedIn = q.session.authenticated && !!q.wallet;
   const busy = q.status.kind === 'sending' || q.status.kind === 'pending';
@@ -89,6 +107,14 @@ function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeTo
       onDone?.();
     }
   }, [q.status.kind]);
+
+  // Keep "sell everything" prebuilt while we hold the token, so a sell right after a buy quotes at once.
+  const warmRef = useRef(q.warm);
+  warmRef.current = q.warm;
+  const held = bal?.token ?? 0n;
+  useEffect(() => {
+    if (signedIn && held > 0n && !busy) warmRef.current('sell', held);
+  }, [held, signedIn, busy]);
 
   const submit = () => {
     if (!signedIn) return void q.execute(); // opens sign-in
@@ -137,6 +163,7 @@ function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeTo
                 setSide(s);
                 setAmount('');
                 setSellExact(null);
+                refreshBal();
               }}
               className={`rounded-lg py-2 text-sm font-semibold capitalize transition ${
                 side === s ? (s === 'buy' ? 'bg-go text-bg' : 'bg-risk-high text-bg') : 'text-muted hover:text-ink'
@@ -199,9 +226,9 @@ function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeTo
               <button
                 key={p}
                 type="button"
-                disabled={!bal || bal.token <= 0n}
+                disabled={!bal || bal.token <= 0n || (holdUsd != null && holdUsd < 0.01)}
                 onClick={() => pickSell(p)}
-                className={`rounded-xl border py-2 font-mono text-sm transition disabled:opacity-40 ${sellExact?.pct === p ? 'border-risk-high/60 bg-risk-high/10 text-risk-high' : 'border-white/[0.06] text-ink/85 hover:border-white/20'}`}
+                className={`rounded-xl border py-2 font-mono text-sm transition disabled:opacity-40 ${signedIn && !bal ? 'animate-pulse' : ''} ${sellExact?.pct === p ? 'border-risk-high/60 bg-risk-high/10 text-risk-high' : 'border-white/[0.06] text-ink/85 hover:border-white/20'}`}
               >
                 {p === 100 ? 'Max' : `${p}%`}
               </button>
@@ -212,7 +239,11 @@ function Card({ token, priceUsd, initialSide = 'buy', onDone }: { token: TradeTo
         <div className="mt-3 flex items-center justify-between text-xs text-muted">
           <span>
             {side === 'buy' ? 'Balance' : `Your ${token.symbol}`}{' '}
-            <span className="font-mono text-ink/85">{side === 'buy' ? (ethBalUsd == null ? '…' : `$${cents(ethBalUsd)}`) : holdUsd == null ? '…' : `$${cents(holdUsd)}`}</span>
+            {(side === 'buy' ? ethBalUsd : holdUsd) == null ? (
+              <span className="inline-block h-3 w-12 animate-pulse rounded bg-white/[0.08] align-middle" aria-label="Loading balance" />
+            ) : (
+              <span className="font-mono text-ink/85">${cents((side === 'buy' ? ethBalUsd : holdUsd)!)}</span>
+            )}
           </span>
           <button
             type="button"

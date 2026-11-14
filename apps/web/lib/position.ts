@@ -61,6 +61,8 @@ export interface LivePosition {
   /** Whole tokens held, pending trades included. */
   held: number;
   heldUsd: number | null;
+  /** Holding more than dust (a few wei left after a sell counts as closed). */
+  holding: boolean;
   boughtUsd: number;
   /** Whole tokens bought in total (for the average entry). */
   boughtTokens: number;
@@ -110,7 +112,7 @@ const whole = (raw: string | null | undefined, decimals: number) => {
   }
 };
 
-const RECONCILE_MS = [1_200, 3_000, 6_000, 12_000, 25_000];
+const RECONCILE_MS = [1_200, 3_000, 6_000, 12_000, 25_000, 45_000, 90_000];
 
 export function usePosition({
   wallet,
@@ -220,7 +222,18 @@ export function usePosition({
   }, [feedMine]);
 
   const current = server && server.key === key ? server : null;
-  const serverTx = useMemo(() => new Set((current?.trades ?? []).map((x) => x.tx.toLowerCase())), [current]);
+  // Hashes the server's totals already include. The trade list can show a trade before the
+  // position totals (held, sold, realised) count it; dropping our optimistic copy then would put a
+  // sold bag back on screen. So a hash only counts once the totals have caught up with the list.
+  const serverTx = useMemo(() => {
+    const trades = current?.trades ?? [];
+    const pos = current?.position;
+    // Checked per side: totals that already count a buy but not yet a sell drop only the buy.
+    const listed = { buy: 0, sell: 0 };
+    for (const x of trades) listed[x.side] += 1;
+    const counted = { buy: !!pos && pos.buys >= listed.buy, sell: !!pos && pos.sells >= listed.sell };
+    return new Set(trades.filter((x) => counted[x.side]).map((x) => x.tx.toLowerCase()));
+  }, [current]);
 
   // Drop pending trades once the indexer has them.
   useEffect(() => {
@@ -272,7 +285,7 @@ export function usePosition({
       trades.push({ id: x.id, tx: x.tx, time: x.time, side: x.side, usd: x.usd, tokens: x.tokens, priceUsd: x.priceUsd, pending: false });
     }
     for (const p of live) {
-      if (p.hash && ids.has(p.hash.toLowerCase())) continue;
+      if (p.hash && ids.has(p.hash.toLowerCase())) continue; // already drawn from the server's list
       const tokens = p.side === 'buy' ? p.out : p.amountIn;
       const usdV = ethUsd ? (p.side === 'buy' ? p.amountIn : p.out) * ethUsd : null;
       trades.push({ id: `pending:${p.key}`, tx: p.hash, time: Math.floor(p.time), side: p.side, usd: usdV, tokens, priceUsd: priceUsd, pending: true });
@@ -282,6 +295,7 @@ export function usePosition({
       loaded: !!current,
       held,
       heldUsd,
+      holding: held > 0 && (heldUsd == null || heldUsd >= 0.01),
       boughtUsd: bought,
       boughtTokens,
       soldUsd: sold,

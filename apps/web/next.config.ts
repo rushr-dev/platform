@@ -16,7 +16,7 @@ const UNUSED_PRIVY_PEERS = [
 ];
 
 const nextConfig: NextConfig = {
-  transpilePackages: ['@rushr/core', '@rushr/trade'],
+  transpilePackages: ['@rushr/agents', '@rushr/core', '@rushr/trade'],
   images: { unoptimized: true },
   turbopack: {
     resolveAlias: Object.fromEntries(UNUSED_PRIVY_PEERS.map((p) => [p, './lib/empty-module.ts'])),

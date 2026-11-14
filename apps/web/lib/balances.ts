@@ -68,9 +68,20 @@ export function fmtUnits(v: bigint, decimals: number, places = 4): string {
   return `${neg ? '-' : ''}${whole.toLocaleString('en-US')}${frac ? `.${frac}` : ''}`;
 }
 
-/** ETH and one token's balance for a wallet, re-read whenever `tick` changes (after a trade). */
-export function useTokenBalance(wallet: Address | undefined, token: Address, tick: number) {
+/** Re-reads after a confirmed trade: public RPC nodes can lag the receipt by a block or two. */
+const AFTER_TRADE_MS = [0, 800, 2_000, 4_500, 9_000];
+
+/**
+ * ETH and one token's balance for a wallet: read now, every 15s, whenever `tick` changes, and on a
+ * short schedule after this wallet's own confirmed trades (the `rushr:trade` event), so a buy is
+ * sellable at once without a page refresh. `refresh()` re-reads on demand (e.g. opening Sell).
+ */
+export function useTokenBalance(wallet: Address | undefined, token: Address, tick = 0) {
   const [bal, setBal] = useState<{ eth: bigint; token: bigint } | null>(null);
+  const [n, setN] = useState(0);
+  const key = wallet ? `${wallet.toLowerCase()}:${token.toLowerCase()}` : null;
+  // A new wallet or token starts from "unknown" (a skeleton), never the previous answer.
+  useEffect(() => setBal(null), [key]);
   useEffect(() => {
     if (!wallet) return setBal(null);
     let gone = false;
@@ -83,6 +94,24 @@ export function useTokenBalance(wallet: Address | undefined, token: Address, tic
     return () => {
       gone = true;
     };
-  }, [wallet, token, tick]);
-  return bal;
+  }, [wallet, token, tick, n]);
+  useEffect(() => {
+    if (!wallet) return;
+    const w = wallet.toLowerCase();
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const bump = () => setN((x) => x + 1);
+    const id = setInterval(bump, REFRESH_MS);
+    const on = (e: Event) => {
+      const d = (e as CustomEvent<{ phase?: string; wallet?: string }>).detail;
+      if (d?.wallet?.toLowerCase() !== w || (d.phase !== 'confirmed' && d.phase !== 'failed')) return;
+      for (const ms of AFTER_TRADE_MS) timers.push(setTimeout(bump, ms));
+    };
+    window.addEventListener('rushr:trade', on);
+    return () => {
+      clearInterval(id);
+      timers.forEach(clearTimeout);
+      window.removeEventListener('rushr:trade', on);
+    };
+  }, [wallet]);
+  return { bal, refresh: () => setN((x) => x + 1) };
 }

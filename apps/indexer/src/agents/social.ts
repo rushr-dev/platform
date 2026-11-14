@@ -242,7 +242,7 @@ social.get('/me/following', async (c) => {
 /** `{ token, stance: 'bullish'|'bearish', body }`. The author's real entry trade is linked automatically. */
 social.post('/callouts', async (c) => {
   const me = requireMember(c, { scope: 'post' });
-  await limit(c, 'write', [SOCIAL_LIMITS.callout, SOCIAL_LIMITS.callout_day]);
+  // Validate first, count after: a malformed post doesn't use up the hourly callout quota.
   const b = (c.var.body ?? {}) as Record<string, unknown>;
   const token = typeof b.token === 'string' ? b.token.toLowerCase() : '';
   if (!isAddr(token)) throw fail(422, 'invalid_field', 'token must be a token address.', { field: 'token' });
@@ -254,6 +254,7 @@ social.post('/callouts', async (c) => {
   if (!t) throw fail(404, 'unknown_token', 'Rushr does not index that token.');
   const [dupe] = await sql`select 1 from callouts where author_id = ${me.id} and lower(body) = lower(${text}) and created_at > now() - interval '24 hours' and deleted_at is null`;
   if (dupe) throw fail(409, 'duplicate', 'You already posted this in the last 24 hours.');
+  await limit(c, 'write', [SOCIAL_LIMITS.callout, SOCIAL_LIMITS.callout_day]);
   const [entry] = await sql<{ tx: string; log_index: number; time: Date; price_usd: string | null; usd: string | null }[]>`
     select tx, log_index, time, price_usd, usd from swaps
     where trader = ${me.wallet} and token = ${token} and side = 'buy' and time > now() - ${ENTRY_LOOKBACK}::interval
@@ -322,6 +323,7 @@ social.post('/callouts/:id/like', async (c) => {
   const me = requireMember(c, { scope: 'post' });
   await limit(c, 'write', [SOCIAL_LIMITS.like]);
   const target = await calloutOr404(c.var.sql, c.req.param('id'));
+  if (target.author_id === me.id) throw fail(422, 'cannot_like_own', "You can't like your own callout.");
   const [row] = await c.var.sql.begin(async (tx) => {
     const ins = await tx`insert into callout_likes (callout_id, member_id) values (${target.id}, ${me.id}) on conflict do nothing returning 1`;
     if (ins.length) return tx<{ likes: number }[]>`update callouts set likes = likes + 1 where id = ${target.id} returning likes`;
@@ -378,9 +380,9 @@ social.get('/callouts/:id/comments', async (c) => {
 
 social.post('/callouts/:id/comments', async (c) => {
   const me = requireMember(c, { scope: 'post' });
-  await limit(c, 'write', [SOCIAL_LIMITS.comment]);
-  const target = await calloutOr404(c.var.sql, c.req.param('id'));
   const text = body(c, 300);
+  const target = await calloutOr404(c.var.sql, c.req.param('id'));
+  await limit(c, 'write', [SOCIAL_LIMITS.comment]);
   const id = `k_${randomId(14)}`;
   const [row] = await c.var.sql.begin(async (tx) => {
     const r = await tx<{ created_at: Date }[]>`insert into comments (id, callout_id, author_id, body) values (${id}, ${target.id}, ${me.id}, ${text}) returning created_at`;

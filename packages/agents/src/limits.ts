@@ -1,6 +1,6 @@
 // Rate limits and pooled quotas. Fixed windows; the counters live in Postgres (api_usage).
 
-export type Bucket = 'read' | 'quote' | 'build' | 'nonce' | 'register' | 'link_code' | 'write' | 'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback' | 'upload';
+export type Bucket = 'read' | 'quote' | 'build' | 'nonce' | 'register' | 'register_attempt' | 'login' | 'link_code' | 'write' | 'callout' | 'callout_day' | 'comment' | 'like' | 'follow' | 'report' | 'feedback' | 'upload';
 
 export interface Limit {
   bucket: Bucket;
@@ -29,7 +29,12 @@ export const OWNER_LIMITS: Partial<Record<Bucket, Limit>> = {
 export const IP_LIMITS: Partial<Record<Bucket, Limit>> = {
   read: { bucket: 'read', max: 30, windowSec: 60 },
   nonce: { bucket: 'nonce', max: 20, windowSec: 3600 },
+  /** Successful sign-ups only (checked before, counted after success). */
   register: { bucket: 'register', max: 5, windowSec: 86_400 },
+  /** Every sign-up attempt, failed or not: room to debug a first integration. */
+  register_attempt: { bucket: 'register_attempt', max: 30, windowSec: 3600 },
+  /** Agent key rotation (SIWE login), separate from sign-ups. */
+  login: { bucket: 'login', max: 20, windowSec: 3600 },
   write: { bucket: 'write', max: 30, windowSec: 60 },
 };
 

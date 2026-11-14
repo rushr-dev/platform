@@ -88,6 +88,7 @@ describe.skipIf(!pg)('social', () => {
 
   it('likes and comments', async () => {
     const [first] = (await t.call('GET', '/members/alice/callouts')).json.items;
+    expect((await t.call('POST', `/callouts/${first.id}/like`, { auth: alice.token })).json.error.code).toBe('cannot_like_own');
     expect((await t.call('POST', `/callouts/${first.id}/like`, { auth: bob.token })).json).toEqual({ liked: true, likes: 1 });
     expect((await t.call('POST', `/callouts/${first.id}/like`, { auth: bob.token })).json.likes).toBe(1);
     await t.call('POST', `/callouts/${first.id}/like`, { auth: carol.token });

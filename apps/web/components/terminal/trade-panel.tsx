@@ -47,7 +47,7 @@ function Panel({ token, priceUsd, position }: { token: TradeToken; priceUsd: num
   const [amount, setAmount] = useState('');
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
-  const chainBal = useTokenBalance(q.wallet, token.address, tick);
+  const { bal: chainBal } = useTokenBalance(q.wallet, token.address, tick);
   // Applied when the swap is broadcast, dropped once the chain is re-read.
   const [optimistic, setOptimistic] = useState<Bal | null>(null);
   const bal = optimistic ?? chainBal;

@@ -20,7 +20,7 @@
 // Optional overrides: AGENT_E2E_GRADUATED (a token trading on Uniswap), AGENT_E2E_CURVE (a PONS token
 // still on its curve), AGENT_E2E_HIGH_RISK, AGENT_E2E_BLOCKED, AGENT_E2E_OUT (write results as JSON),
 // AGENT_E2E_SKIP_LIMITS=1 (skip the rate-limit floods).
-import { encodeFunctionData, formatEther, getAddress, maxUint256, parseEther, type Address, type Hex } from 'viem';
+import { encodeFunctionData, formatEther, getAddress, maxUint256, parseEther, type Address } from 'viem';
 import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { writeFileSync } from 'node:fs';
 
@@ -78,14 +78,18 @@ function section(s: string) {
 // ---------------------------------------------------------------------------------------------
 // HTTP
 
-interface Res<T = any> {
+// API responses are explored loosely in this script; the typed contract lives in the route tests.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Loose = any;
+
+interface Res<T = Loose> {
   status: number;
   headers: Headers;
   json: T;
   ms: number;
 }
 
-async function api<T = any>(method: string, path: string, opts: { body?: unknown; raw?: string; key?: string; ip?: string; headers?: Record<string, string> } = {}): Promise<Res<T>> {
+async function api<T = Loose>(method: string, path: string, opts: { body?: unknown; raw?: string; key?: string; ip?: string; headers?: Record<string, string> } = {}): Promise<Res<T>> {
   const headers: Record<string, string> = { accept: 'application/json', ...opts.headers };
   if (LOCAL) headers['cf-connecting-ip'] = opts.ip ?? RUN_IP;
   if (opts.key) headers.authorization = `Bearer ${opts.key}`;
@@ -96,7 +100,7 @@ async function api<T = any>(method: string, path: string, opts: { body?: unknown
   const t0 = performance.now();
   const r = await fetch(BASE + path, { method, headers, body });
   const text = await r.text();
-  let json: any = null;
+  let json: Loose = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
@@ -171,7 +175,7 @@ async function simulate(blocks: SimBlock[]): Promise<{ ok: boolean; blocks?: { c
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_simulateV1', params: [{ blockStateCalls: blocks, traceTransfers: true, validation: false }, 'latest'] }),
   });
-  const j: any = await r.json();
+  const j: Loose = await r.json();
   if (j.error) return { ok: false, error: `${j.error.code}: ${j.error.message}` };
   return { ok: true, blocks: j.result };
 }
@@ -187,7 +191,9 @@ function received(calls: SimCallResult[], asset: string, to: string): bigint {
   return sum;
 }
 
-function approvalCall(a: { kind: string; token: string; spender: string; amount: string }, from: string): SimCall {
+function approvalCall(a: { kind: string; token: string; spender: string; amount: string; tx?: { to: string; data: string; value: string } }, from: string): SimCall {
+  // The API returns each approval as a ready-to-send tx; use it as an agent would.
+  if (a.tx) return txCall(a.tx, from);
   if (a.kind === 'erc20') {
     return { from, to: a.token, data: encodeFunctionData({ abi: erc20ApproveAbi, functionName: 'approve', args: [a.spender as Address, maxUint256] }) };
   }
@@ -284,7 +290,7 @@ async function main() {
 
   // ---- 3. Read ----
   section('3 read');
-  const columns: Record<string, any[]> = {};
+  const columns: Record<string, Loose[]> = {};
   let copycats: string[] = [];
   for (const col of ['new', 'almost', 'migrated']) {
     const r = await api('GET', `/tokens?column=${col}`);
@@ -308,7 +314,7 @@ async function main() {
     const sym = t.json?.symbol ?? t.json?.token?.symbol;
     if (sym) {
       const s = await api('GET', `/search?q=${encodeURIComponent(sym)}`);
-      const hits: any[] = s.json?.tokens ?? [];
+      const hits: Loose[] = s.json?.tokens ?? [];
       check(s.status === 200 && hits.some((h) => h.address === graduated), `search by ticker "${sym}" finds the real (migrated) token`, `${hits.length} results, ${hits.filter((h) => h.risk === 'high').length} high-risk, real one ${hits.findIndex((h) => h.address === graduated) < 0 ? 'missing' : `#${hits.findIndex((h) => h.address === graduated) + 1}`}`);
       copycats = hits.filter((h) => h.address !== graduated).map((h) => h.address);
       const byAddr = await api('GET', `/search?q=${graduated}`);
@@ -364,10 +370,10 @@ async function main() {
     // The followee posts; the follower's feed should show it.
     const theirs = await api('POST', '/v1/callouts', { key: other.agent.key, body: { token: graduated, stance: 'bearish', body: `Bearish e2e ${RUN}` } });
     const myFeed = await api('GET', '/v1/me/feed', { key: me.key });
-    const ids = (myFeed.json?.items ?? []).map((i: any) => i.id);
+    const ids = (myFeed.json?.items ?? []).map((i: Loose) => i.id);
     check(myFeed.status === 200 && ids.includes(callout) && ids.includes(theirs.json?.callout?.id), '/v1/me/feed has my callout and the followee’s', brief(myFeed));
     const tokenCallouts = await api('GET', `/v1/tokens/${graduated}/callouts`);
-    check(tokenCallouts.status === 200 && tokenCallouts.json?.items?.some((i: any) => i.id === callout), 'token callouts list it');
+    check(tokenCallouts.status === 200 && tokenCallouts.json?.items?.some((i: Loose) => i.id === callout), 'token callouts list it');
     const del = await api('DELETE', `/v1/callouts/${callout}`, { key: me.key });
     check(del.status === 200, 'delete the test callout', brief(del));
     const gone = await api('GET', `/v1/callouts/${callout}`);
@@ -387,6 +393,14 @@ async function main() {
   async function tradeCase(label: string, token: string) {
     if (!token) return record('skip', `${label}: trade`, 'no token');
     const buyIn = parseEther('0.001').toString();
+    if (label === 'curve') {
+      // Launch policy: agents trade graduated (Uniswap) tokens only; curve tokens get a clear refusal.
+      const cq = await tradeOf({ token, side: 'buy', amountIn: buyIn }, 'quote');
+      check(cq.status === 422 && errCode(cq) === 'curve_not_supported', `${label}: quote refused with curve_not_supported`, brief(cq));
+      const cb = await tradeOf({ token, side: 'buy', amountIn: buyIn, acceptRisk: 'high' }, 'build');
+      check(cb.status === 422 && errCode(cb) === 'curve_not_supported', `${label}: build refused with curve_not_supported`, brief(cb));
+      return;
+    }
     const q = await tradeOf({ token, side: 'buy', amountIn: buyIn }, 'quote');
     if (!check(q.status === 200 && q.json?.quote, `${label}: buy quote`, q.status === 200 ? `${q.json.quote.pool?.venue} out=${q.json.quote.amountOut} fee=${q.json.quote.fee?.feeAmount} (${q.json.quote.fee?.feeBps}bps) ${q.ms}ms` : brief(q))) return;
     const quote = q.json.quote;
@@ -407,7 +421,7 @@ async function main() {
     if (!RPC) return record('skip', `${label}: simulation`, 'no AGENT_E2E_RPC_URL');
 
     // Buy: approvals (none for ETH) + tx, from the throwaway wallet funded only inside the simulation.
-    const buyCalls = [...b.json.approvals.map((a: any) => approvalCall(a, from)), txCall(b.json.tx, from)];
+    const buyCalls = [...b.json.approvals.map((a: Loose) => approvalCall(a, from)), txCall(b.json.tx, from)];
     const sim = await simulate([{ stateOverrides: fundOverride(from, '1'), calls: buyCalls }]);
     if (!check(sim.ok, `${label}: eth_simulateV1 accepted`, sim.error)) return;
     const calls = sim.blocks![0]!.calls;
@@ -435,8 +449,9 @@ async function main() {
     const sq = await tradeOf({ token, side: 'sell', amountIn: sellIn }, 'quote');
     check(sq.status === 200, `${label}: sell quote`, sq.status === 200 ? `out=${formatEther(BigInt(sq.json.quote.amountOut))} ETH fee=${sq.json.quote.fee?.feeAmount} (${sq.json.quote.fee?.feeBps}bps)` : brief(sq));
     const sb = await tradeOf({ token, side: 'sell', amountIn: sellIn }, 'build');
-    if (!check(sb.status === 200 && sb.json?.tx, `${label}: build unsigned sell tx`, sb.status === 200 ? `approvals=${sb.json.approvals.map((a: any) => a.kind).join('+') || 'none'}` : brief(sb))) return;
-    const sellCalls = [...sb.json.approvals.map((a: any) => approvalCall(a, from)), txCall(sb.json.tx, from)];
+    if (!check(sb.status === 200 && sb.json?.tx, `${label}: build unsigned sell tx`, sb.status === 200 ? `approvals=${sb.json.approvals.map((a: Loose) => a.kind).join('+') || 'none'}` : brief(sb))) return;
+    check(sb.json.approvals.every((a: Loose) => a.tx?.to && a.tx?.data), `${label}: sell approvals come as ready-to-send txs`, sb.json.approvals.map((a: Loose) => `${a.kind}→${a.tx?.to ?? 'none'}`).join(', '));
+    const sellCalls = [...sb.json.approvals.map((a: Loose) => approvalCall(a, from)), txCall(sb.json.tx, from)];
     const ss = await simulate([{ stateOverrides: fundOverride(from, '1'), calls: buyCalls }, { calls: sellCalls }]);
     if (!check(ss.ok, `${label}: sell simulation accepted`, ss.error)) return;
     const sc = ss.blocks![1]!.calls;
@@ -578,7 +593,7 @@ async function main() {
     check(after.status === 401, 'revoked key → 401', brief(after));
   }
 
-  // Rate limits. Floods use invalid bodies where possible so they cost no RPC calls.
+  // Rate limits. Floods avoid RPC calls where possible (reads, refused builds on a blocked token).
   if (process.env.AGENT_E2E_SKIP_LIMITS === '1') record('skip', 'rate limits', 'AGENT_E2E_SKIP_LIMITS=1');
   else {
     const limited = await register(`e2e_${RUN}_rl`, { ip: freshIp() });
@@ -587,16 +602,20 @@ async function main() {
       let reads429 = 0;
       for (let i = 0; i < 65; i++) if ((await api('GET', '/v1/agents/me', { key: k })).status === 429) reads429++;
       check(reads429 > 0, 'read limit: 65 reads in a minute hit 429 (llms.txt: 60/min)', `${reads429} limited`);
+      // Invalid bodies are refused before the quota is counted (validate first), so they never hit 429.
+      let invalid429 = 0;
+      for (let i = 0; i < 25; i++) if ((await api('POST', '/v1/trade/quote', { key: k, body: { token: '0x1', side: 'x' } })).status === 429) invalid429++;
+      check(invalid429 === 0, 'invalid quote requests do not use up the quote quota', `${invalid429} of 25 limited`);
+      // Valid requests count. Builds on a blocked token are counted, then refused before any RPC call.
+      const limitToken = blocked ?? graduated;
       let quote429: Res | null = null;
       for (let i = 0; i < 22 && !quote429; i++) {
-        const r = await api('POST', '/v1/trade/quote', { key: k, body: { token: '0x1', side: 'x' } });
+        const r = await api('POST', '/v1/trade/quote', { key: k, body: { token: limitToken, side: 'buy', amountIn: '1000' } });
         if (r.status === 429) quote429 = r;
       }
       check(quote429 && quote429.headers.get('retry-after'), 'quote limit: 429 with Retry-After within 21 quotes', quote429 ? `${brief(quote429)} retry-after=${quote429.headers.get('retry-after')}` : 'never limited');
-      const afterQuoteLimit = await api('POST', '/v1/trade/quote', { key: k, body: { token: '0x1', side: 'x' } });
-      if (afterQuoteLimit.status === 429) note('invalid requests count against the quote limit (limit is checked before validation)');
       let build429 = false;
-      for (let i = 0; i < 12 && !build429; i++) build429 = (await api('POST', '/v1/trade/build', { key: k, body: {} })).status === 429;
+      for (let i = 0; i < 12 && !build429; i++) build429 = (await api('POST', '/v1/trade/build', { key: k, body: { token: limitToken, side: 'buy', amountIn: '1000' } })).status === 429;
       check(build429, 'build limit: 429 within 11 builds');
       let callout429 = 0;
       for (let i = 0; i < 11; i++) if ((await api('POST', '/v1/callouts', { key: k, body: { token: 'bad' } })).status === 429) callout429++;
@@ -647,7 +666,7 @@ async function main() {
   check(seasons.status === 200, 'GET /v1/seasons', `${JSON.stringify(seasons.json).slice(0, 160)}`);
   const lb = await api('GET', '/v1/leaderboard?window=season&kind=agent');
   check(lb.status === 200, 'season leaderboard (agents)', `${lb.json?.items?.length ?? lb.json?.rows?.length ?? '?'} rows`);
-  const listed = (lb.json?.rows ?? []).some((r: any) => r.member?.handle === handle);
+  const listed = (lb.json?.rows ?? []).some((r: Loose) => r.member?.handle === handle);
   check(!listed, 'an agent with no trades is not ranked', listed ? 'listed' : 'not listed');
   const rank = await api('GET', `/v1/members/${handle}/rank`);
   check(rank.status === 200, 'GET /v1/members/:handle/rank', `${rank.status} ${JSON.stringify(rank.json).slice(0, 200)}`);

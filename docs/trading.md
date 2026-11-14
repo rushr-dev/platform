@@ -107,6 +107,7 @@ Nothing in a direct curve call can pay us, so the fee is a **second transaction*
 - **Ledger:** the client posts the trade as usual, then the same trade again with `feeTxHash` once the transfer is broadcast (`POST /v1/trades { txHash, chainId, feeTxHash }`; the key guard allows `feeTxHash`, which is checked on chain to be a tx from the member's wallet). The confirmation waits for it, then checks it with `auditCurveFee`: from the trader, to the treasury, no calldata, successful, **at the trade's nonce + 1** (so one transfer can't be claimed for two trades), and at the expected rate on the fill.
   - `fee_amount` = the transfer's value, `fee_bps` on the fill. Sells: `amount_out` is what the seller kept (received − fee).
   - No transfer by the last attempt (~9 minutes), or one that doesn't check out: confirmed with `fee_missed` and fee 0 (plus e.g. `fee_tx_nonce_40_expected_17`). A fee hash that arrives later confirms the trade again.
+  - Posting the fee hash always queues a confirmation. A cron sweep (every 2 minutes, `sweepStuckTrades`) confirms any row still `submitted` 3 minutes after its last attempt, final once it is older than the retry window. It is the backstop for a confirmation job that never ran, which happened to the first two live curve trades (2026-11-14): both rows stayed `submitted` with `confirm_attempts = 0`.
   - **Schema:** no change needed now. The hash is kept in `flags` as `fee_tx:<hash>`. Proposed for later: a `fee_tx_hash text unique` column on `trades_ledger` (backfilled from those flags), so the hash is queryable and unique by constraint.
 - **Audit:** `scripts/fee-audit.ts` checks curve trades too (see "Fee audit" below).
 - **Known limits:** the fee is not atomic. A user who closes the tab between the trade and the transfer, or a modified client, can skip it; the ledger shows those as `fee_missed`. Users pay a second transaction's gas (~21.5k gas, a fraction of a cent).
@@ -362,6 +363,7 @@ pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev
   - `DATABASE_URL`: the indexer database, needed for `--last` and `--wallet`. It's read in a read-only transaction.
   - Either can come from `--env <file>` with `KEY=VALUE` lines. `--env` can repeat: later files win, and real environment variables win over files. Nothing is printed.
 - **Options:** `--bps <n>` sets the expected base rate (default: the config's), and `--json` prints raw results.
+- **Rows:** `--last` / `--wallet` take ledger rows of any status (each trade is checked on the chain), so trades the ledger hasn't confirmed yet are audited too.
 - **Exit code:** 1 when any trade is flagged.
 - **Flags:**
   - Shared with the ledger: `no_fee`, `fee_bps_<x>_expected_<y>` (more than 1 bp off).

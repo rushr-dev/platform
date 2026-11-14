@@ -657,7 +657,7 @@ const Row = memo(function Row({
   const sells = t.sells_24h ?? null;
   const split = buys != null || sells != null;
   const txns = split ? (buys ?? 0) + (sells ?? 0) : (t.trades_24h ?? null);
-  const fees = t.fees_24h_usd ?? t.fees_paid_usd ?? null;
+  const moveTone = dir > 0 ? 'text-go' : dir < 0 ? 'text-risk-high' : '';
   const handle = t.creator_x ?? t.twitter_handle ?? null;
   const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
   const flags = [
@@ -718,14 +718,6 @@ const Row = memo(function Row({
                 </span>
               </>
             )}
-            {fees != null && (
-              <>
-                <Dot />
-                <span title="Fees paid">
-                  <span className="font-mono text-ink/75">{usd(fees)}</span> fees
-                </span>
-              </>
-            )}
             {quote && (
               <>
                 <Dot />
@@ -749,15 +741,15 @@ const Row = memo(function Row({
             )}
           </div>
         </div>
-        <div className="shrink-0 text-right">
-          <div
-            className={`font-mono text-[15px] font-semibold leading-tight ${dir > 0 ? 'text-go' : dir < 0 ? 'text-risk-high' : t.market_cap_usd == null && mcap != null ? 'text-ink/70' : ''}`}
-            title={t.market_cap_usd == null && mcap != null ? 'Market cap at launch' : 'Market cap'}
-          >
-            {usd(mcap)}
+        {/* Right-aligned stack: small muted labels right before each value. */}
+        <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono">
+          <div className="flex items-baseline gap-1" title={t.market_cap_usd == null && mcap != null ? 'Market cap at launch' : 'Market cap'}>
+            <span className="text-[10px] text-muted">MC</span>
+            <span className={`text-[14px] font-semibold leading-tight ${moveTone || (t.market_cap_usd == null && mcap != null ? 'text-ink/70' : '')}`}>{usd(mcap)}</span>
           </div>
-          <div className="mt-1 font-mono text-[11px] text-muted" title="Volume, 24h">
-            vol {usd(t.volume_24h_usd)}
+          <div className="flex items-baseline gap-1" title="Volume, 24h">
+            <span className="text-[10px] text-muted">V</span>
+            <span className={`text-[14px] font-semibold leading-tight ${moveTone}`}>{usd(t.volume_24h_usd)}</span>
           </div>
           {split && (
             <span className="ml-auto mt-1 flex h-[3px] w-14 overflow-hidden rounded-full bg-risk-high/70" title={`${buys ?? 0} buys / ${sells ?? 0} sells, 24h`}>

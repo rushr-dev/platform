@@ -8,7 +8,8 @@
  *
  *   # specific transactions (a curve trade with its fee transfer: trade:fee)
  *   pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --tx 0xabc… 0xdef…:0x123…
- *   # the last N trades in the trade ledger (all wallets, or one wallet)
+ *   # the last N trades in the trade ledger (all wallets, or one wallet; any status: each trade is
+ *   # checked on the chain, so rows the ledger hasn't confirmed yet are audited too)
  *   pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --last 20
  *   pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --wallet 0x… --last 10
  *
@@ -77,8 +78,8 @@ if (txIdx >= 0) {
   try {
     rows = await sql.begin('read only', (tx) =>
       wallet
-        ? tx<LedgerRow[]>`select tx_hash, trader, referrer, status, fee_amount::text, flags from trades_ledger where chain_id = 4663 and router is not null and trader = ${wallet} order by ts desc limit ${n}`
-        : tx<LedgerRow[]>`select tx_hash, trader, referrer, status, fee_amount::text, flags from trades_ledger where chain_id = 4663 and router is not null order by ts desc limit ${n}`,
+        ? tx<LedgerRow[]>`select tx_hash, trader, referrer, status, fee_amount::text, flags from trades_ledger where chain_id = 4663 and trader = ${wallet} order by ts desc limit ${n}`
+        : tx<LedgerRow[]>`select tx_hash, trader, referrer, status, fee_amount::text, flags from trades_ledger where chain_id = 4663 order by ts desc limit ${n}`,
     );
   } finally {
     await sql.end();
