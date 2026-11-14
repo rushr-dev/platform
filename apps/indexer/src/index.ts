@@ -11,6 +11,7 @@ import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
 import { GATEWAY_COUNT, gateway } from './gateway';
 import { v1, adminV1 } from './agents/app';
+import { LLMS_TXT } from '@rushr/agents/llms-txt';
 import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
 
 export { ChainPoller } from './poller';
@@ -311,13 +312,23 @@ app.use('*', async (c, next) => {
 // Trade ledger routes run inside /v1 (its auth, limits, errors). Hono copies routes on route(), so
 // they must be added before /v1 is mounted.
 v1.route('/', trades);
-// Members, social, leaderboard and agents (Agents stream). Off unless AGENTS_ENABLED=1; after the edge
+// Members, social, leaderboard and agents. Off unless AGENTS_ENABLED=1; after the edge
 // cache so public /v1 responses with s-maxage are cached; authenticated ones are private, no-store.
 app.route('/v1', v1);
 // Agents' admin endpoints, behind the /admin/* ADMIN_TOKEN check above.
 app.route('/admin/agents', adminV1);
 
 app.route('/', api);
+
+/** Agent instructions (packages/agents/llms.txt), also served at rushr.trade/llms.txt. */
+app.get('/llms.txt', (c) => c.body(LLMS_TXT, 200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=300, s-maxage=300' }));
+
+/** Unknown /v1 routes answer in the /v1 error shape (Hono uses the parent's not-found for mounted apps). */
+app.notFound((c) =>
+  c.req.path.startsWith('/v1/')
+    ? c.json({ error: { code: 'not_found', message: 'No such endpoint.', docs: 'https://rushr.trade/llms.txt' } }, 404)
+    : c.text('404 Not Found', 404),
+);
 
 app.get('/ws', (c) => {
   // v2 (docs/realtime.md): snapshot + sequenced deltas, spread over the gateways. v1: the original feed.

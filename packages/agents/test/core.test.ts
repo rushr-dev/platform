@@ -69,6 +69,8 @@ describe('guard', () => {
     expect(checkHandle('0xdeadbeef')).toEqual({ ok: false, error: 'handle_invalid' });
     expect(checkHandle('rushr_0fficial')).toEqual({ ok: false, error: 'handle_reserved' });
     expect(checkHandle('admin')).toEqual({ ok: false, error: 'handle_reserved' });
+    for (const h of ['ru5hr', 'rushr_8ot', 'adm1n', '5upp0rt', '0ff1c1al', '5y5tem']) expect(checkHandle(h)).toEqual({ ok: false, error: 'handle_reserved' });
+    expect(checkHandle('web3_trader')).toEqual({ ok: true, handle: 'web3_trader' });
   });
   it('allows only the exact opted-in top-level fields', () => {
     const hash = generatePrivateKey();
@@ -93,5 +95,13 @@ describe('limits', () => {
     const t = new Date('2026-11-12T10:00:42Z');
     expect(windowStart(t, 60).toISOString()).toBe('2026-11-12T10:00:00.000Z');
     expect(retryAfter(t, 60)).toBe(18);
+  });
+});
+
+describe('llms.txt', () => {
+  it('src/llms-txt.ts is generated from the current llms.txt (run gen:llms after editing it)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { LLMS_TXT } = await import('../src/llms-txt');
+    expect(LLMS_TXT).toBe(readFileSync(new URL('../llms.txt', import.meta.url), 'utf8'));
   });
 });

@@ -226,7 +226,7 @@ export function TokenView({
               hydration={live.hydration}
               marks={myWallet ? position.trades : null}
               calls={calls.items}
-              avgBuy={myWallet && position.loaded && position.held > 0 && position.boughtTokens > 0 ? position.boughtUsd / position.boughtTokens : null}
+              avgBuy={myWallet && position.loaded && position.holding && position.boughtTokens > 0 ? position.boughtUsd / position.boughtTokens : null}
               selectedCall={selectedCall}
               onSelectCall={(id) => {
                 setSelectedCall(id);
@@ -250,7 +250,7 @@ export function TokenView({
           ) : (
             <>
               {/* On phones the trade card opens from the sticky Buy/Sell bar instead. */}
-              {trading ? desktop && <SimpleTrade token={tradeToken} priceUsd={priceNow} /> : <TradeSoon symbol={t.symbol} />}
+              {trading ? desktop && <SimpleTrade token={tradeToken} priceUsd={priceNow} position={position} /> : <TradeSoon symbol={t.symbol} />}
               <PositionCard t={t} position={position} supply={supply} />
               <ThesisBox t={t} position={position} />
               <About
@@ -287,7 +287,7 @@ export function TokenView({
       )}
       {sheet && !desktop && (
         <Sheet onClose={() => setSheet(null)}>
-          <SimpleTrade token={tradeToken} priceUsd={priceNow} initialSide={sheet} />
+          <SimpleTrade token={tradeToken} priceUsd={priceNow} initialSide={sheet} position={position} />
         </Sheet>
       )}
     </div>

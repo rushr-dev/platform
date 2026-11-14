@@ -218,6 +218,37 @@ export async function limit(c: C, bucket: Bucket, extra: Limit[] = []) {
   }
 }
 
+/** How many times `subject` used `l` in the current window, without counting this request. */
+async function used(sql: Sql, subject: string, l: Limit, now: Date): Promise<number> {
+  const [row] = await sql<{ count: number }[]>`
+    select count from api_usage where subject = ${subject} and bucket = ${l.bucket} and window_start = ${windowStart(now, l.windowSec)}`;
+  return row?.count ?? 0;
+}
+
+/**
+ * A per-IP cap that only successful requests count against (e.g. 5 sign-ups a day): check it before
+ * doing the work, then call `countSuccess` once the request has succeeded. Failed attempts don't use it.
+ */
+export async function checkSuccessQuota(c: C, l: Limit) {
+  const now = new Date();
+  if ((await used(c.var.sql, `ip:${c.var.ipHash}`, l, now)) >= l.max) {
+    throw fail(429, 'rate_limited', `Too many requests (${l.bucket}: ${l.max} per ${l.windowSec}s).`, { retryAfter: retryAfter(now, l.windowSec) });
+  }
+}
+
+export async function countSuccess(c: C, l: Limit) {
+  await bump(c.var.sql, `ip:${c.var.ipHash}`, l, new Date());
+}
+
+/**
+ * The documented read limit. Every GET with an agent key counts (60/min per key, see app.ts); expensive
+ * public reads (leaderboard, rank, suggestions) also count for everyone else: per IP, or per member.
+ */
+export async function expensiveRead(c: C) {
+  if (c.var.viewer.keyId) return; // already counted by the keyed-GET middleware
+  await limit(c, 'read');
+}
+
 export const flag = (name: keyof AgentsEnv, what: string): MiddlewareHandler<Ctx> => async (c, next) => {
   if (!on(c.env[name] as string | undefined)) throw fail(404, 'feature_disabled', `${what} is not enabled yet.`);
   await next();
