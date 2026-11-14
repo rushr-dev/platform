@@ -21,6 +21,12 @@ REASON="${2:-}"
 
 token() {
   local f="$INDEXER/.dev.vars.prod"
+  # In a git worktree the (gitignored) secrets live in the main checkout.
+  if [[ ! -f "$f" ]]; then
+    local main
+    main="$(cd "$ROOT" && git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's#/\.git$##')"
+    [[ -n "$main" ]] && f="$main/apps/indexer/.dev.vars.prod"
+  fi
   [[ -f "$f" ]] || { echo "missing $f" >&2; exit 1; }
   local t
   t="$(grep -E '^ADMIN_TOKEN=' "$f" | tail -1 | cut -d= -f2- | sed -e 's/^["'\'']//' -e 's/["'\'']$//')"
@@ -30,8 +36,9 @@ token() {
 
 # The token goes to curl on stdin (-H @-), so it never shows in the process list or the terminal.
 admin() {
-  local method="$1" path="$2"
-  printf 'Authorization: Bearer %s\n' "$(token)" | curl -sS --fail-with-body -X "$method" -H @- "$URL$path"
+  local method="$1" path="$2" t
+  t="$(token)" || exit 1
+  printf 'Authorization: Bearer %s\n' "$t" | curl -sS --fail-with-body -X "$method" -H @- "$URL$path"
   echo
 }
 
@@ -50,19 +57,19 @@ case "$ACTION" in
     q=""
     [[ -n "$REASON" ]] && q="?reason=$(printf '%s' "$REASON" | jq -sRr @uri)"
     echo "pausing indexer at $URL"
-    admin POST "/admin/indexer/pause$q"
+    admin POST "/admin/indexer/pause$q" || exit 1
     queues pause-delivery
     ;;
   on)
     echo "resuming queues, then indexer at $URL"
     queues resume-delivery
-    admin POST /admin/indexer/resume
+    admin POST /admin/indexer/resume || exit 1
     ;;
   status) ;;
   *) echo "usage: $0 off [reason] | on | status" >&2; exit 2 ;;
 esac
 
 echo "--- state"
-state="$(admin GET /admin/indexer/state)"
+state="$(admin GET /admin/indexer/state)" || { echo "$state" >&2; exit 1; }
 echo "$state" | jq '{paused, pausedAt, resumedAt, reason, cursor, cursorAt, poller: {running: .poller.running, paused: .poller.paused, lag: .poller.last.lag, stage: .poller.stage.name, live: .poller.live.connected}}' 2>/dev/null || echo "$state"
 # `wrangler queues info` doesn't report whether delivery is paused; off/on above print each queue's result.
