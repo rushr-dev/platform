@@ -79,7 +79,7 @@ export class TradePills implements ISeriesPrimitive<Time> {
         ctx.beginPath();
         ctx.roundRect(cx - w / 2, top, w, h, h / 2);
         ctx.fill();
-        ctx.fillStyle = '#0b0d0b';
+        ctx.fillStyle = '#121315';
         ctx.fillText(label, cx, top + h / 2 + 0.5 * vr);
       }
       ctx.globalAlpha = 1;

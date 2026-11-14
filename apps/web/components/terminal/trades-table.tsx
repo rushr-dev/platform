@@ -262,7 +262,7 @@ const Row = memo(function Row({
     if (animate) flash(ref.current, x.side);
   }, []);
   return (
-    <tr ref={ref} className={`border-t border-white/[0.03] hover:bg-white/[0.025] ${active ? 'bg-brand/[0.04]' : ''}`}>
+    <tr ref={ref} className={`border-t border-white/[0.03] hover:bg-white/[0.025] ${active ? 'bg-white/[0.04]' : ''}`}>
       <td className="whitespace-nowrap py-1.5 pl-3 text-muted">
         <Age time={x.time} serverNow={serverNow} />
       </td>

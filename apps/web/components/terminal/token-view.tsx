@@ -21,6 +21,7 @@ import { usePosition } from '@/lib/position';
 import { useHint } from '@/lib/session-hint';
 import { updateSettings, useSettings } from '@/lib/settings';
 import { AboutCard, PositionCard, ThesisBox } from './simple-rail';
+import { SafetyGrid } from './safety-grid';
 import { useTokenCallouts, type Callout } from '@/lib/callouts';
 import { CallsFeed } from './calls-feed';
 import { useEthUsd } from '@/lib/profile';
@@ -263,7 +264,7 @@ export function TokenView({
                   <>
                     {stats}
                     <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
-                    <Safety t={t} />
+                    <Safety t={t} grid={false} />
                     <DevRecord t={t} />
                   </>
                 }
@@ -313,7 +314,7 @@ function About({
 }) {
   const windows = useWindows(server, trades, candles, priceNow, serverNow);
   const nowMs = useNow(serverNow);
-  return <AboutCard t={t} windows={windows} trades={trades} nowMs={nowMs} more={more} />;
+  return <AboutCard t={t} windows={windows} trades={trades} nowMs={nowMs} safety={<SafetyGrid t={t} />} more={more} />;
 }
 
 /** Desktop breakpoint, read after mount (false during server render). */
@@ -768,34 +769,27 @@ function Row({ k, v }: { k: string; v: string }) {
 const REASON_ICON = { high: WarningOctagon, medium: Warning, low: CheckCircle, info: Info } as const;
 const REASON_COLOR = { high: 'text-risk-high', medium: 'text-risk-medium', low: 'text-brand', info: 'text-muted' } as const;
 
-function Safety({ t }: { t: TokenDetail }) {
+/**
+ * Safety check: verdict, the indicator grid (left out where the page already shows it, as in
+ * the simple rail's About card) and the reasons behind the verdict.
+ */
+function Safety({ t, grid = true }: { t: TokenDetail; grid?: boolean }) {
   const reasons: SignalReason[] = t.signals?.reasons ?? [];
-  const rows: [string, string, boolean][] = [
-    ['Top 10 holders', pct(t.top10_pct), (t.top10_pct ?? 0) >= 30],
-    ['Dev holds', pct(t.dev_pct), (t.dev_pct ?? 0) >= 10],
-    ['Launch bundle', pct(t.bundled_pct), (t.bundled_pct ?? 0) >= 20],
-    [`Snipers${t.signals?.sniperCount ? ` (${t.signals.sniperCount})` : ''}`, pct(t.snipers_pct), (t.snipers_pct ?? 0) >= 20],
-    ['Insiders', pct(t.insiders_pct), (t.insiders_pct ?? 0) >= 10],
-    ['Fresh wallets', pct(t.fresh_pct), (t.fresh_pct ?? 0) >= 30],
-    ['Airdropped holders', t.airdropped == null ? '—' : nf.format(t.airdropped), (t.airdropped ?? 0) > 10],
-    ['Copycat', t.copycat == null ? '—' : t.copycat ? 'Yes' : 'No', !!t.copycat],
-  ];
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-surface p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Safety check</h2>
         <RiskTag risk={t.risk} />
       </div>
+      {grid && <SafetyGrid t={t} className="mt-3" />}
       {t.verdict && <p className={`mt-3 text-sm leading-relaxed ${riskText(t.risk)}`}>{t.verdict}</p>}
       {!t.launch_indexed && <p className="mt-2 text-xs text-muted">Found after launch. Launch-time checks fill in once its first blocks are indexed.</p>}
-      <dl className="mt-4 space-y-2 text-[13px]">
-        {rows.map(([k, v, bad]) => (
-          <div key={k} className="flex justify-between">
-            <dt className="text-muted">{k}</dt>
-            <dd className={`font-mono ${bad ? 'text-risk-high' : ''}`}>{v}</dd>
-          </div>
-        ))}
-      </dl>
+      {(t.airdropped ?? 0) > 0 && (
+        <div className="mt-3 flex justify-between text-[13px]">
+          <span className="text-muted">Airdropped holders</span>
+          <span className={`font-mono ${(t.airdropped ?? 0) > 10 ? 'text-risk-high' : ''}`}>{nf.format(t.airdropped!)}</span>
+        </div>
+      )}
       {reasons.length > 0 && (
         <ul className="mt-4 space-y-1.5 border-t border-white/[0.05] pt-3">
           {reasons.map((r) => {

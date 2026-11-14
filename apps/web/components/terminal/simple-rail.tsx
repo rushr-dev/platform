@@ -205,7 +205,7 @@ const LABEL: Record<WindowId, string> = { m5: '5M', h1: '1H', h6: '6H', h24: '1D
 
 /**
  * About the token: description, price change per window, and for the chosen window who is buying
- * versus selling (trades, volume, wallets). "View more" opens the full stats, pools, contract and
+ * versus selling (trades, volume, wallets), with the safety indicators above. "View more" opens the full stats, pools, contract and
  * safety notes (passed in by the page).
  */
 export function AboutCard({
@@ -213,12 +213,15 @@ export function AboutCard({
   windows,
   trades,
   nowMs,
+  safety,
   more,
 }: {
   t: TokenDetail;
   windows: Record<WindowId, WindowStats> | null;
   trades: Tx[] | null;
   nowMs: number;
+  /** Safety indicators, shown above the buy/sell bars so they're visible without "View more". */
+  safety?: React.ReactNode;
   more: React.ReactNode;
 }) {
   const [w, setW] = useState<WindowId>('h24');
@@ -261,6 +264,8 @@ export function AboutCard({
       ) : (
         <p className="mt-1.5 text-sm text-muted">{t.name} has no description yet.</p>
       )}
+
+      {safety && <div className="mt-3">{safety}</div>}
 
       <div className="mt-3 grid grid-cols-4 gap-1 rounded-xl bg-white/[0.03] p-1">
         {WINDOWS.map((x) => {

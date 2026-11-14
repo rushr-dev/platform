@@ -342,7 +342,7 @@ function Toolbar({
         Plain pools
       </label>
       <div
-        className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-[#121315] py-1 pl-3 pr-1 text-xs"
+        className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface py-1 pl-3 pr-1 text-xs"
         title="The first Buy amount on every card, in US dollars (converted to ETH at the live price)"
       >
         <Lightning size={14} weight="fill" className="text-brand" />
@@ -423,7 +423,7 @@ function ColumnPanel({
   const Icon = col.icon;
   const n = activeCount(filters);
   return (
-    <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[#121315] ${className}`}>
+    <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-surface ${className}`}>
       <header className="flex items-center gap-2 border-b border-white/[0.05] px-4 py-3">
         <Icon size={16} weight="fill" className="text-brand" />
         <h2 className="text-sm font-semibold">{col.title}</h2>
