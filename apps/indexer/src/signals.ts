@@ -2,6 +2,7 @@ import type { Sql } from 'postgres';
 import type { Address } from 'viem';
 import { BURN_ADDRESSES, INFRA_ADDRESSES, computeSignals, isContractCode, type TokenSignals, type TokenSnapshot } from '@rushr/core';
 import type { Rpc } from './rpc';
+import { CONTRACT_TAX_TTL_S, readPonsTax, type ContractTax } from './pons-tax';
 
 /** How many wallets per token get a funding lookup (each costs one Alchemy call, cached forever). */
 const FUND_TOP_HOLDERS = 20;
@@ -23,7 +24,7 @@ export async function recomputeSignals(sql: Sql, rpc: Rpc, token: string): Promi
   if (!loaded) return null;
   const { snapshot, devFunder } = loaded;
   const signals = computeSignals(snapshot);
-  await saveSignals(sql, snapshot, signals, devFunder);
+  await saveSignals(sql, snapshot, { ...signals, contractTax: loaded.contractTax } as TokenSignals, devFunder);
   return signals;
 }
 
@@ -35,7 +36,10 @@ export async function loadSnapshot(
   sql: Sql,
   token: string,
   rpc: Rpc | null,
-): Promise<{ snapshot: TokenSnapshot; devFunder: string | null; excluded: { wallet: string; amount: bigint; kind: HolderKind }[] } | null> {
+): Promise<{
+  snapshot: TokenSnapshot; devFunder: string | null; excluded: { wallet: string; amount: bigint; kind: HolderKind }[];
+  contractTax: ContractTax | null;
+} | null> {
   const [t] = await sql<
     { address: string; symbol: string; name: string; total_supply: string; deployer: string; created_at: Date; created_block: string; main_pool: string | null; launch_indexed: boolean; launchpad: string | null; holders: number }[]
   >`select address, symbol, name, total_supply, deployer, created_at, created_block, main_pool, launch_indexed, launchpad, holders from tokens where address = ${token}`;
@@ -153,6 +157,16 @@ export async function loadSnapshot(
       and deployer <> ${t.deployer} and created_at >= ${t.created_at}::timestamptz - interval '24 hours'
       and created_at < ${t.created_at}::timestamptz`;
 
+  // PONS: the curve's creator tax and fee (cached in the signals, refreshed weekly; without rpc, cache only).
+  let contractTax: ContractTax | null = null;
+  if (t.launchpad === 'pons') {
+    const [prev] = await sql<{ ct: ContractTax | null }[]>`select data->'contractTax' as ct from signals where token = ${token}`;
+    contractTax = prev?.ct ?? null;
+    if (rpc && (!contractTax || Date.now() / 1000 - contractTax.at > CONTRACT_TAX_TTL_S)) {
+      contractTax = (await readPonsTax(sql, rpc, token).catch(() => null)) ?? contractTax;
+    }
+  }
+
   const snapshot: TokenSnapshot = {
     address: t.address,
     symbol: t.symbol,
@@ -181,10 +195,11 @@ export async function loadSnapshot(
     now: Math.floor(Date.now() / 1000),
     taxSamples: taxRows.map((r) => ({ side: r.side, swapAmount: BigInt(r.token_amount), traderNet: BigInt(r.net) })),
     tradeCounts: counts ?? { buys: 0, sells: 0 },
+    contractTax: contractTax ? { buyBps: contractTax.creatorTaxBps, sellBps: contractTax.creatorTaxBps, venueFeeBps: contractTax.feeBps } : null,
     sameNameDeployers24h: farm?.n ?? 0,
   };
 
-  return { snapshot, devFunder, excluded: others };
+  return { snapshot, devFunder, excluded: others, contractTax };
 }
 
 /**

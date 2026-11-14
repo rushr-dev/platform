@@ -71,6 +71,11 @@ export interface TokenSnapshot {
    * the trader gave up `-traderNet` and the pool got `swapAmount`. Optional (older callers).
    */
   taxSamples?: { side: 'buy' | 'sell'; swapAmount: bigint; traderNet: bigint }[];
+  /**
+   * Tax the token's contract charges, when it can be read (PONS curves and their v4 hook: the creator tax
+   * on both sides, plus the launchpad's own fee). Wins over the measured tax. Optional.
+   */
+  contractTax?: { buyBps: number; sellBps: number; venueFeeBps: number } | null;
   /** Buys and sells so far (honeypot check). Optional. */
   tradeCounts?: { buys: number; sells: number };
   /**
@@ -110,9 +115,16 @@ export interface TokenSignals {
     farm?: boolean;
     bestAthMarketCapUsd: number | null;
   };
-  /** Transfer tax measured from real trades, in bps (null = not enough trades yet). */
+  /**
+   * Buy/sell tax in bps: from the contract when known (PONS creator tax), else measured from real
+   * trades (null = not enough trades yet).
+   */
   buyTaxBps?: number | null;
   sellTaxBps?: number | null;
+  /** Where the tax comes from; null when neither is known. */
+  taxSource?: 'contract' | 'measured' | null;
+  /** The launchpad's own trading fee (PONS protocol fee), not a tax. null when unknown. */
+  venueFeeBps?: number | null;
   /** Many buys, no sell at all: possibly can't be sold. */
   noSells?: boolean;
   copycat: boolean;
@@ -305,7 +317,11 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     farm: isFarmCopy(s),
     bestAthMarketCapUsd: athValues.length ? Math.max(...athValues) : null,
   };
-  const tax = measureTax(s.taxSamples);
+  const measured = measureTax(s.taxSamples);
+  // A contract tax is the truth; a measured 0 (tax taken in the quote, invisible to transfers) never overrides it.
+  const ct = s.contractTax ?? null;
+  const tax = ct ? { buyTaxBps: ct.buyBps, sellTaxBps: ct.sellBps } : measured;
+  const taxSource = ct ? 'contract' : measured.buyTaxBps != null || measured.sellTaxBps != null ? 'measured' : null;
   const noSells =
     !!s.tradeCounts && s.tradeCounts.buys >= THRESHOLDS.noSellsMinBuys && s.tradeCounts.sells === 0 &&
     s.now - s.createdAt >= THRESHOLDS.noSellsMinAgeSeconds;
@@ -325,6 +341,8 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     dev,
     buyTaxBps: tax.buyTaxBps,
     sellTaxBps: tax.sellTaxBps,
+    taxSource,
+    venueFeeBps: ct?.venueFeeBps ?? null,
     noSells,
     copycat: isCopycat(s),
     twinOrganicHolders: isCopycat(s) ? s.twinOrganicHolders : 0,

@@ -31,8 +31,10 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
         else (select q.symbol from tokens q where q.address = t.quote) end as quote_symbol,
       (select count(*)::int from swaps x where x.token = t.address and x.time > now() - interval '24 hours') as trades_24h,
       coalesce(substring(t.twitter from '(?:x|twitter)\.com/([A-Za-z0-9_]{1,30})(?:[/?#]|$)'), null) as twitter_handle,
-      -- Tax is measured from real trades (signals); null until a token has 2 buys / 2 sells. Fees: not tracked yet.
+      -- Tax (signals): read from the contract for PONS (creator tax), else measured from real trades (null until
+      -- 2 buys / 2 sells). tax_source says which; venue_fee_bps is the launchpad's own fee (not a tax).
       coalesce((s.data->>'buyTaxBps')::int, t.tax_bps) as buy_tax_bps, coalesce((s.data->>'sellTaxBps')::int, t.tax_bps) as sell_tax_bps,
+      s.data->>'taxSource' as tax_source, (s.data->>'venueFeeBps')::int as venue_fee_bps,
       coalesce((s.data->>'noSells')::bool, false) as no_sells, coalesce((s.data->'dev'->>'farm')::bool, false) as farm,
       null::float8 as fees_paid_usd,
       -- Launch platform behind a hooked v4 pool (Fobo, Clanker, ...), else the launchpad itself.

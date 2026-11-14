@@ -145,6 +145,24 @@ describe('holder concentration counts people only', () => {
   });
 });
 
+describe('contract tax (PONS creator tax)', () => {
+  it('uses the contract tax over a measured 0 and reports the venue fee separately', () => {
+    // MORPH: 3% creator tax + 1% PONS fee, both taken in ETH, so transfers measure 0.
+    const zeroSamples = [
+      { side: 'buy' as const, swapAmount: 100n * E18, traderNet: 100n * E18 },
+      { side: 'buy' as const, swapAmount: 50n * E18, traderNet: 50n * E18 },
+      { side: 'sell' as const, swapAmount: 100n * E18, traderNet: -100n * E18 },
+      { side: 'sell' as const, swapAmount: 50n * E18, traderNet: -50n * E18 },
+    ];
+    const s = computeSignals(base({ taxSamples: zeroSamples, contractTax: { buyBps: 300, sellBps: 300, venueFeeBps: 100 } }));
+    expect(s).toMatchObject({ buyTaxBps: 300, sellTaxBps: 300, taxSource: 'contract', venueFeeBps: 100 });
+    expect(s.risk).toBe('low'); // 3% is under the 10% medium rule
+    // Without a readable contract the measurement stands.
+    expect(computeSignals(base({ taxSamples: zeroSamples }))).toMatchObject({ buyTaxBps: 0, sellTaxBps: 0, taxSource: 'measured', venueFeeBps: null });
+    expect(computeSignals(base()).taxSource).toBeNull();
+  });
+});
+
 describe('tax, no-sells and launch farms', () => {
   it('measures buy and sell tax from what reached the trader or the pool', () => {
     // 5% buy tax: the pool sent 100, the trader kept 95. 10% sell tax: the trader gave 100, the pool got 90.
