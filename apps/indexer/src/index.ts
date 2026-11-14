@@ -5,6 +5,7 @@ import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, ty
 import { liftfunOn, refreshWalletPnl } from './data';
 import { checkGraduations, updateCurveProgress } from './curves';
 import { Rpc } from './rpc';
+import { isContractCode } from '@rushr/core';
 import { ensureFunding, recomputeSignals } from './signals';
 import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
@@ -219,6 +220,30 @@ app.post('/admin/wallet-pnl/refresh', async (c) => {
 
 // Full-history holder backfill. POST ?tokens=a,b,c, or ?top=N for the N tracked tokens with the most 24h volume.
 app.get('/admin/holders', async (c) => c.json(await holderHistory(c.env).holderStatus()));
+// Re-check wallets cached as contracts before EIP-7702 EOAs were told apart (any code counted then).
+// Pages by address: POST ?after=<last address>&max=500 until next is null. One eth_getCode per wallet.
+app.post('/admin/wallets/recheck-code', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    const max = Math.min(Number(c.req.query('max') ?? 500), 1000);
+    const after = (c.req.query('after') ?? '').toLowerCase();
+    const rows = await sql<{ address: string }[]>`
+      select address from wallets where is_contract and address > ${after} order by address limit ${max}`;
+    const rpc = new Rpc(c.env.RPC_URL);
+    let people = 0;
+    for (let i = 0; i < rows.length; i += 100) {
+      const chunk = rows.slice(i, i + 100);
+      const codes = await rpc.batch<string>(chunk.map((r) => ({ method: 'eth_getCode', params: [r.address, 'latest'] })));
+      const flip = chunk.filter((_, j) => isContractCode(codes[j]) === false).map((r) => r.address);
+      if (flip.length) await sql`update wallets set is_contract = false where address = any(${flip})`;
+      people += flip.length;
+    }
+    return c.json({ checked: rows.length, nowPeople: people, next: rows.length === max ? rows.at(-1)!.address : null });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 app.post('/admin/holders/backfill', async (c) => {
   let tokens = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
   const top = Number(c.req.query('top') ?? 0);

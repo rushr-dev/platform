@@ -109,22 +109,31 @@ api.get('/tokens/:address/trades', async (c) => {
   return c.json({ trades: rows }, 200, cache(1));
 });
 
-/** Holders with tags (dev, sniper, bundler, insider, fresh, airdrop). */
+/**
+ * Holders with tags (dev, sniper, bundler, insider, fresh, airdrop), largest first. Burn addresses, pools
+ * (curves, hooks, the PoolManager) and contracts are listed too, tagged `burn` / `pool` / `contract` with
+ * `excluded: true`: they don't count in top-10 or other concentration signals.
+ */
 api.get('/tokens/:address/holders', async (c) => {
   const sql = c.var.sql;
   const token = addr(c.req.param('address'));
   const loaded = await loadSnapshot(sql, token, null);
   if (!loaded) return c.json({ error: 'not found' }, 404);
-  const { snapshot } = loaded;
+  const { snapshot, excluded } = loaded;
   const tags = tagHolders(snapshot);
   const supply = Number(snapshot.totalSupply);
-  const holders = snapshot.holders.map((h) => ({
-    wallet: h.wallet,
-    amount: h.amount.toString(),
-    pct: supply ? (Number(h.amount) / supply) * 100 : 0,
-    tags: tags[h.wallet] ?? [],
-    funder: snapshot.wallets[h.wallet]?.firstFunder ?? null,
-  }));
+  const holders = [
+    ...snapshot.holders.map((h) => ({
+      wallet: h.wallet,
+      amount: h.amount,
+      tags: (tags[h.wallet] ?? []) as string[],
+      excluded: false,
+      funder: snapshot.wallets[h.wallet]?.firstFunder ?? null,
+    })),
+    ...excluded.map((h) => ({ wallet: h.wallet, amount: h.amount, tags: [h.kind] as string[], excluded: true, funder: null })),
+  ]
+    .sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))
+    .map((h) => ({ ...h, amount: h.amount.toString(), pct: supply ? (Number(h.amount) / supply) * 100 : 0 }));
   return c.json({ holders, total: snapshot.holderCount }, 200, cache(5));
 });
 

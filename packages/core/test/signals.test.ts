@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeSignals, measureTax, type TokenSnapshot } from '../src/signals/compute';
+import { isContractCode } from '../src/chain/robinhood';
 
 const E18 = 10n ** 18n;
 const SUPPLY = 1_000_000_000n * E18;
@@ -121,6 +122,26 @@ describe('computeSignals', () => {
     expect(s.freshWalletsPct).toBe(75);
     expect(s.risk).toBe('high');
     expect(s.reasons.map((r) => r.text)).toContain('20% still held by the launch bundle');
+  });
+});
+
+describe('holder concentration counts people only', () => {
+  it('tells contracts from EOAs and EIP-7702 delegated EOAs by code size', () => {
+    expect(isContractCode('0x')).toBe(false);
+    // 7702 delegation: 0xef0100 + 20-byte address = 23 bytes. Still a person.
+    expect(isContractCode('0xef0100' + 'ab'.repeat(20))).toBe(false);
+    // A locker/hook (MORPH's #1 holder has 1,969 bytes).
+    expect(isContractCode('0x' + '60'.repeat(1969))).toBe(true);
+    expect(isContractCode(null)).toBeNull();
+  });
+
+  it('reports burnt supply and computes top 10 over the people passed in', () => {
+    // MORPH-shaped: the loader dropped the 8.16% locker, so the 11th wallet moves into the top 10.
+    const pcts = [3.96, 3.89, 3.72, 3.05, 3.04, 2.95, 2.36, 2.34, 2.24, 2.15, 2.04];
+    const holders = pcts.map((p, i) => ({ wallet: `p${i}`, amount: (SUPPLY * BigInt(Math.round(p * 100))) / 10_000n }));
+    const s = computeSignals(base({ holders, holderCount: 266, burnt: SUPPLY / 20n }));
+    expect(s.top10Pct).toBe(29.7);
+    expect(s.burntPct).toBe(5);
   });
 });
 

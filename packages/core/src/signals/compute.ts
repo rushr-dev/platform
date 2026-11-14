@@ -38,8 +38,13 @@ export interface TokenSnapshot {
   deployer: string;
   createdAt: number;
   createdBlock: bigint;
-  /** Wallets that hold the token, excluding pools, the PoolManager, curves and burn addresses. */
+  /**
+   * People holding the token, largest first: pools, the PoolManager, curves, hooks, burn addresses, the
+   * token itself and contracts (code over 23 bytes) are left out. EIP-7702 delegated EOAs stay in.
+   */
   holders: SnapshotHolder[];
+  /** Held by burn addresses (out of circulation). Optional. */
+  burnt?: bigint;
   holderCount: number;
   /** Buys in the first minute, oldest first. */
   earlyBuys: SnapshotBuy[];
@@ -82,7 +87,10 @@ export interface Reason {
 
 export interface TokenSignals {
   holders: number;
+  /** Top 10 people (pools, burns and contracts excluded), % of total supply. */
   top10Pct: number;
+  /** % of total supply held by burn addresses. */
+  burntPct?: number;
   devPct: number;
   /** null = not measured (launch trades not indexed). */
   snipersPct: number | null;
@@ -305,6 +313,7 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
   const signals: Omit<TokenSignals, 'risk' | 'verdict' | 'reasons'> = {
     holders: s.holderCount,
     top10Pct: round1(pct(top10, s.totalSupply)),
+    burntPct: round1(pct(s.burnt ?? 0n, s.totalSupply)),
     devPct: round1(pct(devHeld, s.totalSupply)),
     snipersPct: s.launchIndexed ? round1(pct(sniperBought, s.totalSupply)) : null,
     sniperCount: s.launchIndexed ? new Set(snipers.map((b) => b.trader)).size : null,
