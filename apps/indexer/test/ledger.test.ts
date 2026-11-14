@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CURVE_BUY_TOPIC, CURVE_SELL_TOPIC, DEFAULT_TRADE_CONFIG, effectiveFeeBps } from '@rushr/trade';
 import { v1 } from '../src/agents/app';
-import { confirmTrade, ethReceived, tokenFlow, trades } from '../src/ledger';
+import { confirmTrade, ethReceived, sweepStuckTrades, tokenFlow, trades } from '../src/ledger';
 import { pgAvailable, setup } from './harness';
 
 v1.route('/', trades);
@@ -42,6 +42,8 @@ const CSELL_FEE_TX = `0x${'f5'.repeat(32)}`;
 const CMISS_TX = `0x${'c9'.repeat(32)}`;
 const CBAD_TX = `0x${'ca'.repeat(32)}`;
 const CBAD_FEE_TX = `0x${'fa'.repeat(32)}`;
+const CSTUCK_TX = `0x${'cb'.repeat(32)}`;
+const CSTUCK_FEE_TX = `0x${'fb'.repeat(32)}`;
 const CBUY_FEE = (E18 * REF_BPS) / 10_000n; // Bob is referred
 const CSELL_FEE = (SELL_GROSS * BASE_BPS) / 10_000n; // Carol isn't
 const word = (v: bigint) => v.toString(16).padStart(64, '0');
@@ -97,6 +99,12 @@ const chain: Record<string, { tx: object; receipt: object; trace: object }> = {
     receipt: { status: '0x1', blockNumber: '0x6d', logs: [transfer(CTOKEN, CURVE, CAROL, 1000n * E18), fill('buy', CAROL, E18, 1000n * E18)] },
     trace: { type: 'CALL', from: CAROL, to: CURVE, value: hex(E18) },
   },
+  [CSTUCK_TX]: {
+    tx: { from: CAROL, to: CURVE, value: hex(E18), nonce: '0x20' },
+    receipt: { status: '0x1', blockNumber: '0x6e', logs: [transfer(CTOKEN, CURVE, CAROL, 1000n * E18), fill('buy', CAROL, E18, 1000n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: CURVE, value: hex(E18) },
+  },
+  [CSTUCK_FEE_TX]: feeTx(CAROL, 33, (E18 * BASE_BPS) / 10_000n),
   // Not the next nonce: some other transfer to the treasury, not this trade's fee.
   [CBAD_FEE_TX]: feeTx(CAROL, 40, (E18 * BASE_BPS) / 10_000n),
 };
@@ -144,13 +152,14 @@ describe.skipIf(!pg)('trade ledger', () => {
       (${BUY_TX}, 1, ${TOKEN}, ${POOL}, 100, now(), ${BOB}, 'buy', ${(1000n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${E18.toString()}, 1, 3000),
       (${SELL_TX}, 1, ${TOKEN}, ${POOL}, 101, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${(2n * E18).toString()}, 1, 6000)`;
     await t.sql`insert into pools (id, token, quote, token_is_currency0, dex, venue, created_block, created_at)
-      values (${CURVE}, ${CTOKEN}, '0x0000000000000000000000000000000000000000', true, 'pons', 'pons', 1, now())`;
+      values (${CURVE}, ${CTOKEN}, '0x0000000000000000000000000000000000000000', true, 'pons-curve', null, 1, now())`;
     const eth = '0x0000000000000000000000000000000000000000';
     await t.sql`insert into swaps (tx, log_index, token, pool, block, time, trader, side, token_amount, quote, quote_amount, price_usd, usd) values
       (${CBUY_TX}, 1, ${CTOKEN}, ${CURVE}, 106, now(), ${BOB}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
       (${CSELL_TX}, 1, ${CTOKEN}, ${CURVE}, 107, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, ${eth}, ${SELL_GROSS.toString()}, 1, 6000),
       (${CMISS_TX}, 1, ${CTOKEN}, ${CURVE}, 108, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
-      (${CBAD_TX}, 1, ${CTOKEN}, ${CURVE}, 109, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000)`;
+      (${CBAD_TX}, 1, ${CTOKEN}, ${CURVE}, 109, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
+      (${CSTUCK_TX}, 1, ${CTOKEN}, ${CURVE}, 110, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000)`;
     // RPC goes to the fake chain (Privy is only needed for sign-up above).
     vi.stubGlobal('fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] } | { id: number; method: string; params: unknown[] }[];
@@ -259,6 +268,17 @@ describe.skipIf(!pg)('trade ledger', () => {
       await post(carol, CBAD_TX, CBAD_FEE_TX);
       expect(await confirmTrade(t.sql, t.env as never, CBAD_TX, false)).toBe('done');
       expect(await rowOf(CBAD_TX)).toMatchObject({ status: 'confirmed', fee_amount: '0', flags: [`fee_tx:${CBAD_FEE_TX}`, 'fee_tx_nonce_40_expected_17', 'fee_missed'] });
+    });
+
+    it('the cron sweep confirms a trade whose confirmation job never ran', async () => {
+      // As seen live: the row and its fee hash were written, but no confirmation ever ran.
+      await post(carol, CSTUCK_TX, CSTUCK_FEE_TX);
+      await t.sql`update trades_ledger set updated_at = now() - interval '10 minutes' where tx_hash = ${CSTUCK_TX}`;
+      const swept = await sweepStuckTrades(t.sql, t.env as never);
+      expect(swept).toContainEqual({ tx: CSTUCK_TX, result: 'done' });
+      expect(await rowOf(CSTUCK_TX)).toMatchObject({ status: 'confirmed', venue: 'pons-curve', side: 'buy', fee_amount: ((E18 * BASE_BPS) / 10_000n).toString(), flags: [`fee_tx:${CSTUCK_FEE_TX}`] });
+      // Fresh rows are left to their own job.
+      expect((await sweepStuckTrades(t.sql, t.env as never)).map((x) => x.tx)).not.toContain(CSTUCK_TX);
     });
   });
 });
