@@ -10,7 +10,7 @@ import { resolveMetadata } from './metadata';
 import { api, tokenSummaries } from './api';
 import { GATEWAY_COUNT, gateway } from './gateway';
 import { v1, adminV1 } from './agents/app';
-import { CONFIRM_DELAYS_S, confirmTrade, trades } from './ledger';
+import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
@@ -273,6 +273,18 @@ export default {
         if (done.length) console.log(`graduated: ${done.join(', ')}`);
       } catch (err) {
         console.error('graduation check failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 2 minutes: trade-ledger rows whose confirmation job never ran (backstop for the queue).
+    if (new Date(event.scheduledTime).getUTCMinutes() % 2 === 0) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const swept = await sweepStuckTrades(sql, env);
+        if (swept.length) console.log(`trade ledger sweep: ${swept.map((s) => `${s.tx.slice(0, 10)} ${s.result}`).join(', ')}`);
+      } catch (err) {
+        console.error('trade ledger sweep failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }
