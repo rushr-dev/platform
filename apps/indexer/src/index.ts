@@ -101,6 +101,14 @@ app.post('/admin/poller/:action', async (c) => {
 app.post('/admin/signals/all', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
+    // ?tokens=a,b (max 10): recompute now and return the new signals (spot checks after a rule change).
+    const now = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean).slice(0, 10);
+    if (now.length) {
+      const rpc = new Rpc(c.env.RPC_URL);
+      const out: Record<string, unknown> = {};
+      for (const t of now) out[t] = await recomputeSignals(sql, rpc, t);
+      return c.json(out);
+    }
     // ?active: only tokens traded in the last 24h (the ones on cards), missing or oldest signals first.
     // ?flagged&days=N: tokens of the last N days flagged farm or serial dev, newest first, recomputed even if
     // fresh (after a rule change that can only clear those flags).
