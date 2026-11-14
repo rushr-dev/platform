@@ -9,7 +9,7 @@ describe.skipIf(!pg)('members (Privy)', () => {
   let t: Awaited<ReturnType<typeof setup>>;
   beforeAll(async () => {
     t = await setup('members', { INVITES_REQUIRED: '1' });
-    await t.sql`insert into invite_codes (code, batch) values ('BETA-ONE', 'b1'), ('BETA-TWO', 'b1')`;
+    await t.sql`insert into invite_codes (code, batch) values ('BETA-ONE', 'b1'), ('BETA-TWO', 'b1'), ('CAP-0', 'c'), ('CAP-1', 'c'), ('CAP-2', 'c'), ('CAP-3', 'c'), ('CAP-4', 'c'), ('CAP-5', 'c')`;
   });
   afterAll(async () => t?.teardown());
 
@@ -70,14 +70,21 @@ describe.skipIf(!pg)('members (Privy)', () => {
     expect(r.json.error.code).toBe('never_send_keys');
   });
 
-  it('limits sign-up attempts per IP', async () => {
+  it('counts only successful sign-ups against the daily cap, and caps attempts hourly', async () => {
+    const ip = { 'cf-connecting-ip': '10.9.9.9' };
     const tok = await t.human('did:privy:spam', '0x3333333333333333333333333333333333333333');
-    const codes: number[] = [];
+    // 30 failed attempts an hour are fine (they don't touch the 5/day cap); the 31st is limited.
+    for (let i = 0; i < 30; i++) expect((await t.call('POST', '/me', { auth: tok, body: { handle: 'x' }, headers: ip })).status).toBe(422);
+    expect((await t.call('POST', '/me', { auth: tok, body: { handle: 'x' }, headers: ip })).status).toBe(429);
+    // From another IP: 5 successful sign-ups a day, failures in between don't count.
+    const ip2 = { 'cf-connecting-ip': '10.9.9.10' };
+    const ok: number[] = [];
     for (let i = 0; i < 6; i++) {
-      codes.push((await t.call('POST', '/me', { auth: tok, body: { handle: 'x' }, headers: { 'cf-connecting-ip': '10.9.9.9' } })).status);
+      const u = await t.human(`did:privy:cap${i}`, `0x${(0x4000 + i).toString(16).padStart(40, '0')}`);
+      await t.call('POST', '/me', { auth: u, body: { handle: 'no' }, headers: ip2 }); // invalid handle: not counted
+      ok.push((await t.call('POST', '/me', { auth: u, body: { handle: `capuser${i}`, inviteCode: `CAP-${i}` }, headers: ip2 })).status);
     }
-    expect(codes.slice(0, 5).every((s) => s === 422)).toBe(true);
-    expect(codes[5]).toBe(429);
+    expect(ok).toEqual([201, 201, 201, 201, 201, 429]);
   });
 
   it('is off without the flag', async () => {

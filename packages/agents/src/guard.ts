@@ -13,8 +13,12 @@ export function checkHandle(raw: unknown): { ok: true; handle: string } | { ok: 
   if (typeof raw !== 'string') return { ok: false, error: 'handle_invalid' };
   const handle = raw.trim().replace(/^@/, '').toLowerCase();
   if (!/^[a-z0-9_]{3,20}$/.test(handle) || /^0x[0-9a-f]+$/.test(handle) || /^_|_$/.test(handle)) return { ok: false, error: 'handle_invalid' };
-  const bare = handle.replace(/_/g, '').replace(/0/g, 'o').replace(/1/g, 'l');
-  if (RESERVED.has(handle) || RESERVED.has(bare) || bare.startsWith('rushr')) return { ok: false, error: 'handle_reserved' };
+  // Look-alike digits read as letters (r0shr, ru5hr, rushr_0ff1c1al...).
+  // '1' reads as both l and i, so check both spellings.
+  const LOOK: Record<string, string> = { '0': 'o', '3': 'e', '4': 'a', '5': 's', '7': 't', '8': 'b' };
+  const base = handle.replace(/_/g, '').replace(/[034578]/g, (d) => LOOK[d]!);
+  const spellings = [base.replace(/1/g, 'l'), base.replace(/1/g, 'i')];
+  if (RESERVED.has(handle) || spellings.some((b) => RESERVED.has(b) || b.startsWith('rushr'))) return { ok: false, error: 'handle_reserved' };
   return { ok: true, handle };
 }
 

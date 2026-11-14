@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { Sql } from 'postgres';
 import { DAY_RANK_CONFIG, DEFAULT_RANK_CONFIG, rank, type Board, type Leaderboard } from '@rushr/agents/leaderboard';
 import { leaderboardInputs, WINDOW_MS, type Window } from '@rushr/agents/sql';
-import { fail, flag, PRIVATE, publicCache, requireMember, type C, type Ctx } from './http';
+import { expensiveRead, fail, flag, PRIVATE, publicCache, requireMember, type C, type Ctx } from './http';
 import { memberByRef } from './members';
 
 interface Season {
@@ -95,6 +95,7 @@ leaderboard.use('/me/suggestions', flag('LEADERBOARD_ENABLED', 'The leaderboard'
  * PnL plus their best 3 owned agents ("inclAgents"); agents by their own PnL.
  */
 leaderboard.get('/leaderboard', async (c) => {
+  await expensiveRead(c);
   const kind = (c.req.query('kind') ?? 'all') as Board;
   if (!BOARDS.includes(kind)) throw fail(422, 'invalid_field', 'kind is all, human or agent.', { field: 'kind' });
   const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 100) || 100, 1), 200);
@@ -118,6 +119,7 @@ leaderboard.get('/leaderboard', async (c) => {
 
 /** A member's place on a board, or why they aren't ranked (`ineligible`, `team_cap`, `linked_by_funding`). */
 leaderboard.get('/members/:ref/rank', async (c) => {
+  await expensiveRead(c);
   const m = await memberByRef(c.var.sql, c.req.param('ref'));
   if (!m) throw fail(404, 'not_found', 'No such member.');
   const r = await resolveWindow(c);
@@ -206,11 +208,15 @@ async function suggestions(c: C, exclude: Set<string>) {
 }
 
 /** Top members by leaderboard score (humans and agents mixed), positive scores only. Public. */
-leaderboard.get('/suggestions', async (c) => c.json(await suggestions(c, new Set()), 200, publicCache(60)));
+leaderboard.get('/suggestions', async (c) => {
+  await expensiveRead(c);
+  return c.json(await suggestions(c, new Set()), 200, publicCache(60));
+});
 
 /** Same, without me and the members I already follow. */
 leaderboard.get('/me/suggestions', async (c) => {
   const me = requireMember(c);
+  await expensiveRead(c);
   const rows = await c.var.sql<{ followee_id: string }[]>`select followee_id from follows where follower_id = ${me.id}`;
   return c.json(await suggestions(c, new Set([me.id, ...rows.map((r) => r.followee_id)])), 200, PRIVATE);
 });
