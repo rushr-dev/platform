@@ -48,8 +48,15 @@ const LIMITS = {
   minTokens: 3,
   /** Stop after this many failures in a row. */
   maxErrorStreak: 3,
-  /** Skip tokens whose buy would move the price more than this. */
-  maxImpactBps: 300,
+  /**
+   * Price impact caps for buys. The API's `priceImpactBps` includes any fixed tax a token's pool hook
+   * takes (PONS-hooked pools charge 1-4%), which doesn't grow with size. So Talos measures that floor
+   * with a tiny probe quote and caps two things:
+   * - the part caused by the trade's size (full quote minus the floor) at `maxSizeImpactBps`;
+   * - the total, floor included, at `maxImpactBps`.
+   */
+  maxSizeImpactBps: 300,
+  maxImpactBps: 500,
   slippageBps: 150,
   /** Token filters (graduated tokens only: column=migrated). */
   minHolders: 100,
@@ -265,6 +272,29 @@ function vet(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint) {
   if (problems.length) throw new Error(`refusing to sign: ${problems.join('; ')}`);
 }
 
+type Impact = { totalBps: number; floorBps: number; sizeBps: number };
+
+/** A buy refused on price impact. `run` skips the token without counting it as an error. */
+class ImpactError extends Error {}
+
+/**
+ * Splits a buy's quoted impact into the fixed floor (pool hook tax, measured by quoting 1/20 of the
+ * size) and the part caused by the size, then enforces both caps. Throws ImpactError on a refusal.
+ * Only quotes: nothing is built or signed here.
+ */
+async function measureImpact(key: string, body: Record<string, unknown>, quotedBps: number | null, maxTotalBps: number): Promise<Impact> {
+  if (quotedBps == null) throw new ImpactError('quote has no price impact; refusing to guess');
+  const probeIn = BigInt(String(body.amountIn)) / 20n || 1n;
+  const probe = await api<{ quote: Built['quote'] }>('POST', '/v1/trade/quote', { key, body: { ...body, amountIn: probeIn.toString() } });
+  // A probe can't sensibly show more impact than the full size; if it does, treat it all as size impact.
+  const floorBps = Math.max(0, Math.min(probe.quote.priceImpactBps ?? 0, quotedBps));
+  const sizeBps = quotedBps - floorBps;
+  const what = `impact ${quotedBps} bps (floor ${floorBps} from the pool's fixed tax, ${sizeBps} from size)`;
+  if (sizeBps > LIMITS.maxSizeImpactBps) throw new ImpactError(`${what}: size impact over ${LIMITS.maxSizeImpactBps} bps`);
+  if (quotedBps > maxTotalBps) throw new ImpactError(`${what}: total over ${maxTotalBps} bps`);
+  return { totalBps: quotedBps, floorBps, sizeBps };
+}
+
 /** The signing side: one wallet, one API key. `dryRun` quotes, builds and simulates but never sends. */
 function trader(dryRun: boolean) {
   const w = loadWallet();
@@ -292,12 +322,15 @@ function trader(dryRun: boolean) {
     const maxImpact = opts.maxImpactBps ?? LIMITS.maxImpactBps;
     const body = { token: token.address, side, amountIn: amountIn.toString(), quoteAsset: 'ETH', slippageBps: LIMITS.slippageBps, from: account.address };
     const q = await api<{ quote: Built['quote']; wouldBuild: boolean; warnings: string[] }>('POST', '/v1/trade/quote', { key, body });
-    if (side === 'buy' && !q.wouldBuild) throw new Error(`quote says wouldBuild=false (${q.warnings.join('; ')})`);
-    if (side === 'buy' && (q.quote.priceImpactBps ?? 10_000) > maxImpact) throw new Error(`price impact ${q.quote.priceImpactBps} bps (max ${maxImpact})`);
+    let impact: Impact | null = null;
+    if (side === 'buy') {
+      if (!q.wouldBuild) throw new Error(`quote says wouldBuild=false (${q.warnings.join('; ')})`);
+      impact = await measureImpact(key, body, q.quote.priceImpactBps, maxImpact);
+    }
     // Build right before signing: the tx expires 300 s after the build.
     const b = await api<Built>('POST', '/v1/trade/build', { key, body: { ...body, simulate: true } });
     vet(b, side, token.address, amountIn);
-    log(`  ${side} ${token.symbol}: in ${side === 'buy' ? `${formatEther(amountIn)} ETH` : amountIn.toString()} → expected ${b.quote.amountOut} (min ${b.quote.minAmountOut}), fee ${b.quote.fee.feeAmount} (${b.quote.fee.feeBps} bps), impact ${b.quote.priceImpactBps} bps, venue ${b.quote.pool.venue}, sim ok`);
+    log(`  ${side} ${token.symbol}: in ${side === 'buy' ? `${formatEther(amountIn)} ETH` : amountIn.toString()} → expected ${b.quote.amountOut} (min ${b.quote.minAmountOut}), fee ${b.quote.fee.feeAmount} (${b.quote.fee.feeBps} bps), impact ${b.quote.priceImpactBps} bps${impact ? ` (floor ${impact.floorBps} + size ${impact.sizeBps})` : ''}, venue ${b.quote.pool.venue}, sim ok`);
     if (Date.now() / 1000 > Number(b.deadline) - 30) throw new Error('build too close to its deadline');
     const hashes: string[] = [];
     for (const [i, a] of b.approvals.entries()) {
@@ -306,7 +339,7 @@ function trader(dryRun: boolean) {
     }
     const hash = await send(`${side} tx`, b.tx);
     if (!dryRun) journal({ kind: 'trade', status: 'success', mode, ...opts.journalExtra, side, token: token.address, symbol: token.symbol, amountIn: amountIn.toString(), expectedOut: b.quote.amountOut, fee: b.quote.fee.feeAmount, hash, approvalHashes: hashes });
-    return { hash, built: b };
+    return { hash, built: b, impact };
   };
 
   const callout = async (token: Address, body: string) => {
@@ -371,6 +404,8 @@ async function run(dryRun: boolean) {
   const past = journalEntries().filter((e) => e.kind === 'trade' && e.status === 'success' && e.mode !== 'hold');
   let trades = past.length;
   const tokensDone = new Set(past.map((e) => String(e.token).toLowerCase()));
+  /** Tokens tried and given up on this run (errors, impact refusals). Not counted as traded. */
+  const tokensSkipped = new Set<string>();
   let spent = past.filter((e) => e.side === 'buy').reduce((s, e) => s + BigInt(e.amountIn), 0n);
   let errors = 0;
   const start = await t.spendable();
@@ -378,7 +413,7 @@ async function run(dryRun: boolean) {
 
   while (trades < LIMITS.targetTrades || tokensDone.size < LIMITS.minTokens) {
     if (errors >= LIMITS.maxErrorStreak) throw new Error(`stopping after ${errors} errors in a row`);
-    const candidates = await pickCandidates(tokensDone);
+    const candidates = await pickCandidates(new Set([...tokensDone, ...tokensSkipped]));
     if (!candidates.length) throw new Error('no candidate tokens left');
     let token: Token | null = null;
     let safety: Safety | null = null;
@@ -419,7 +454,7 @@ async function run(dryRun: boolean) {
       // A short callout with the reasoning. No links (beta rule). The buy above is linked as the entry.
       await t.callout(
         token.address,
-        `$${token.symbol}: graduated, ${safety.riskLevel} risk on Rushr's checks, ${token.holders} holders, $${Math.round(token.volume_24h_usd ?? 0).toLocaleString('en-US')} 24h volume, ${buy.built.quote.priceImpactBps ?? '?'} bps impact. Small test position, selling back soon. Not advice.`,
+        `$${token.symbol}: graduated, ${safety.riskLevel} risk on Rushr's checks, ${token.holders} holders, $${Math.round(token.volume_24h_usd ?? 0).toLocaleString('en-US')} 24h volume, ${buy.impact ? `${buy.impact.sizeBps} bps size impact` : `${buy.built.quote.priceImpactBps ?? '?'} bps impact`}. Small test position, selling back soon. Not advice.`,
       );
 
       if (dryRun) {
@@ -449,8 +484,13 @@ async function run(dryRun: boolean) {
       tokensDone.add(tok.address.toLowerCase());
       errors = 0;
     } catch (e) {
+      tokensSkipped.add(token.address.toLowerCase()); // don't retry the same token this run
+      if (e instanceof ImpactError) {
+        // Too costly to enter, not a failure: move on to the next token.
+        log(`skip ${token.symbol}: ${e.message}`);
+        continue;
+      }
       errors++;
-      tokensDone.add(token.address.toLowerCase()); // don't retry the same token
       log(`error (${errors}/${LIMITS.maxErrorStreak}) on ${token.symbol}: ${e instanceof Error ? e.message : e}`);
       journal({ kind: 'error', token: token.address, message: e instanceof Error ? e.message : String(e) });
       if (e instanceof ApiError && e.code === 'insufficient_funds') throw e;
@@ -477,7 +517,7 @@ function disclosureCallout(symbol: string): string {
 
 /** Flag value after `name`, or undefined. */
 const flagValue = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
-/** Holds may raise the 3% impact cap explicitly, never past this. */
+/** Holds may set the total impact cap explicitly (default LIMITS.maxImpactBps), never past this. */
 const HOLD_MAX_IMPACT_BPS = 500;
 const MAX_CHUNKS = 10;
 /** Seconds between chunks (at least 60). */
@@ -520,14 +560,14 @@ async function buyHold(args: string[], dryRun: boolean) {
 
   log(
     `BUY-HOLD ${token.symbol} ${address}: ~$${totalUsd.toFixed(2)} = ${formatEther(totalWei)} ETH at $${ethUsd.toFixed(2)}/ETH, in ${chunks} chunk${chunks > 1 ? 's' : ''} of ${formatEther(chunkWei)} ETH (~$${chunkUsd.toFixed(2)})` +
-      `${chunks > 1 ? ` ${CHUNK_GAP_SECONDS}s apart` : ''}, max impact ${maxImpactBps} bps each, risk ${s.safety.riskLevel}, balance ${formatEther(start.bal)} ETH${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`,
+      `${chunks > 1 ? ` ${CHUNK_GAP_SECONDS}s apart` : ''}, impact caps per chunk: size ${LIMITS.maxSizeImpactBps} bps, total ${maxImpactBps} bps (floor included), risk ${s.safety.riskLevel}, balance ${formatEther(start.bal)} ETH${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`,
   );
 
   let filled = 0;
   for (let i = 0; i < chunks; i++) {
     if (i > 0) {
       if (dryRun) {
-        log(`  dry run: chunks ${i + 1}-${chunks} would each be re-quoted, re-checked (impact <= ${maxImpactBps} bps, balance) and simulated ${CHUNK_GAP_SECONDS}s apart; only the first is simulated now`);
+        log(`  dry run: chunks ${i + 1}-${chunks} would each be re-quoted, re-checked (size impact <= ${LIMITS.maxSizeImpactBps} bps, total <= ${maxImpactBps} bps, balance) and simulated ${CHUNK_GAP_SECONDS}s apart; only the first is simulated now`);
         break;
       }
       log(`  waiting ${CHUNK_GAP_SECONDS}s before chunk ${i + 1}/${chunks}`);

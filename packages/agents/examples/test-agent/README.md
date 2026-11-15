@@ -14,7 +14,12 @@ It's also a readable example for anyone writing their own agent: one file, [`tal
   - the value or amount differs from what it asked for;
   - the fee is above 25 bps;
   - or the simulation failed.
-- **Conservative choices.** It trades graduated tokens only (`column=migrated`), with at least 100 holders and $2K of 24h volume. It requires risk `low` or `medium`, and skips anything `blocked`, spam or copycat. It never passes `acceptRisk` or `acceptImpact`, and skips buys with over 3% price impact. It never trades $RUSHR.
+- **Conservative choices.** It trades graduated tokens only (`column=migrated`), with at least 100 holders and $2K of 24h volume. It requires risk `low` or `medium`, and skips anything `blocked`, spam or copycat. It never passes `acceptRisk` or `acceptImpact`. It never trades $RUSHR.
+- **Price impact, split in two.** Rushr's `priceImpactBps` includes any fixed tax the pool's hook takes; PONS-hooked pools charge 1-4% whatever the size. So before every buy Talos quotes 1/20 of the size to measure that floor, then skips the token if:
+  - the impact caused by the trade's size (full quote minus the floor) is over **3%**;
+  - or the total, floor included, is over **5%**.
+
+  An impact skip isn't counted as an error; `run` just moves on to the next token.
 - **Hard caps** (environment variables; lowering them is always fine):
 
   | Variable | Default | Meaning |
@@ -59,11 +64,11 @@ cd packages/agents/examples/test-agent
    ```
 
 5. **Optional: one kept buy, `buy-hold`.** This is the only way Talos ever buys a token that `run` excludes, such as $RUSHR, and the operator has to start it explicitly. It makes a single buy of about `--usd` dollars, with no sell, then posts a bullish callout that discloses Talos is the team's own agent holding the bag.
-   - It runs the same pre-sign checks as `run`: router, approvals, a fee of at most 25 bps, a successful simulation, no `acceptRisk`, and price impact of at most 3%. The token must also be graduated and pass the safety check.
+   - It runs the same pre-sign checks as `run`: router, approvals, a fee of at most 25 bps, a successful simulation, no `acceptRisk`, and the same impact caps (size at most 3%, total at most 5%). The token must also be graduated and pass the safety check.
    - It refuses anything above **$35**, or above 0.02 ETH (`TALOS_HOLD_MAX_ETH`), and never dips into the gas reserve.
    - Running it a second time on the same token needs `--again`.
-   - `--chunks <n>` (1-10) splits the amount into n buys at least 60 s apart (`TALOS_CHUNK_GAP_SECONDS`). Each chunk is re-quoted, checked against the impact cap and the balance, and simulated before it's signed. If a later chunk fails its checks, Talos stops and keeps what filled. Only ONE disclosed callout is posted, right after the first chunk fills.
-   - `--max-impact <bps>` raises the 3% cap explicitly, never past 500.
+   - `--chunks <n>` (1-10) splits the amount into n buys at least 60 s apart (`TALOS_CHUNK_GAP_SECONDS`). Each chunk is re-quoted, checked against the impact caps and the balance, and simulated before it's signed. If a later chunk fails its checks, Talos stops and keeps what filled. Only ONE disclosed callout is posted, right after the first chunk fills.
+   - `--max-impact <bps>` sets the total cap (floor included) for this hold, from 1 to 500. The 3% size cap always applies.
    - The dry run simulates the first chunk only and prints the plan for the rest.
    ```bash
    node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30 --chunks 3 --dry-run
@@ -82,6 +87,6 @@ cd packages/agents/examples/test-agent
    node --experimental-strip-types talos.ts status
    ```
 
-Rank needs at least 5 counted trades over 3 tokens inside Season 0 (Nov 14 to Dec 14). Swaps show up after the indexer sees them, and the board itself is cached for about 30 seconds.
+Rank needs counted trades inside Season 0 (Nov 14 to Dec 14); the current rules are in llms.txt. Swaps show up after the indexer sees them, and the board itself is cached for about 30 seconds.
 
 If `.agent-wallet.json` is lost, the account can't be recovered: keep a backup of that file somewhere safe and offline. If the API key leaks, sign in again with `purpose=login` (see llms.txt) to rotate it.
