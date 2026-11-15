@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
 import { LEGAL_PAGES } from '@/components/landing/legal';
@@ -7,9 +5,10 @@ import { parseMarkdown } from '@/components/landing/markdown';
 import { Footer, Nav } from '@/components/landing/sections';
 import { WRAP } from '@/components/landing/ui';
 import { RiskNotice, TocDesktop, TocMobile, WHITEPAPER_SOURCE, WhitepaperBody, tocOf } from '@/components/landing/whitepaper';
+import { WHITEPAPER_MD } from '@/components/landing/whitepaper-source.generated';
 
-// docs/whitepaper.md is the source of truth. It is read and rendered once at build time, so editing the
-// markdown and redeploying is all a text change needs.
+// docs/whitepaper.md is the source of truth. It is bundled as a string at build time (scripts/gen-whitepaper.mjs),
+// so editing the markdown and redeploying is all a text change needs.
 export const dynamic = 'force-static';
 export const viewport: Viewport = { themeColor: '#f7f5f2' };
 
@@ -28,7 +27,7 @@ export const metadata: Metadata = {
 };
 
 function load() {
-  const all = parseMarkdown(readFileSync(join(process.cwd(), '..', '..', 'docs', 'whitepaper.md'), 'utf8'));
+  const all = parseMarkdown(WHITEPAPER_MD);
   // The title, subtitle and version line are shown in the page header; the body starts at the first section.
   const first = all.findIndex((b) => b.t === 'h' && b.level === 2);
   return { all, body: first < 0 ? all : all.slice(first) };
