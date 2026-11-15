@@ -212,10 +212,39 @@ export default async function TransparencyPage() {
               </p>
             </Section>
 
+            <Section id="creator-tax" title="$RUSHR creator tax">
+              <div className="rounded-xl border border-line bg-surface p-5 text-[15px] leading-relaxed text-ink/85">
+                <p>
+                  Every $RUSHR trade pays a creator tax: in ETH on the PONS curve before graduation, and in $RUSHR through the PONS hook on
+                  the Uniswap v4 pool since then (2% of each swap, on top of PONS&apos;s own 1%). It builds up in the PONS contracts until
+                  it&apos;s claimed.
+                </p>
+                <p className="mt-3">
+                  <span className="font-semibold text-brand-deep">20%</span> of everything claimed is bought back and burned, and listed
+                  below with its transactions. Nothing has been claimed yet.
+                </p>
+              </div>
+            </Section>
+
             <Section id="buybacks" title="Buybacks & burns">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-5 py-4">
+                <div>
+                  <div className="text-sm text-muted">Launch burn · 15 Nov 2026 · dev wallet to 0x…dEaD</div>
+                  <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-brand-deep">50,000,000 $RUSHR burned</div>
+                  <div className="text-sm text-muted">5% of supply, bought on the curve at launch</div>
+                </div>
+                <a
+                  href="https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-mono text-xs underline underline-offset-2"
+                >
+                  {short('0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb')}
+                </a>
+              </div>
               {buybacks.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-ink/20 px-5 py-10 text-center text-muted">
-                  Buybacks start after the $RUSHR launch. Each one will be listed here with its transactions.
+                  No fee buybacks yet. Each one will be listed here with its transactions.
                 </div>
               ) : (
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
