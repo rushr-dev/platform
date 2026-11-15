@@ -38,8 +38,13 @@ export interface TokenSnapshot {
   deployer: string;
   createdAt: number;
   createdBlock: bigint;
-  /** Wallets that hold the token, excluding pools, the PoolManager, curves and burn addresses. */
+  /**
+   * People holding the token, largest first: pools, the PoolManager, curves, hooks, burn addresses, the
+   * token itself and contracts (code over 23 bytes) are left out. EIP-7702 delegated EOAs stay in.
+   */
   holders: SnapshotHolder[];
+  /** Held by burn addresses (out of circulation). Optional. */
+  burnt?: bigint;
   holderCount: number;
   /** Buys in the first minute, oldest first. */
   earlyBuys: SnapshotBuy[];
@@ -57,6 +62,12 @@ export interface TokenSnapshot {
    * ticker before the real launch, so the "original" is whichever one has the real community.
    */
   twinOrganicHolders: number;
+  /**
+   * The same-ticker token launched before this one with the most organic holders, leaving out spam and
+   * airdrop farms (null when there is none). It decides the copycat flag: the earlier launch is the
+   * original unless it was a squat (see isCopycat). Optional (older callers: never a copycat).
+   */
+  earlierTwin?: { organicHolders: number; createdAt: number } | null;
   /** Launchpad id, or 'uniswap-v4' for a plain pool (no launchpad). */
   launchpad: string | null;
   now: number;
@@ -66,9 +77,17 @@ export interface TokenSnapshot {
    * the trader gave up `-traderNet` and the pool got `swapAmount`. Optional (older callers).
    */
   taxSamples?: { side: 'buy' | 'sell'; swapAmount: bigint; traderNet: bigint }[];
+  /**
+   * Tax the token's contract charges, when it can be read (PONS curves and their v4 hook: the creator tax
+   * on both sides, plus the launchpad's own fee). Wins over the measured tax. Optional.
+   */
+  contractTax?: { buyBps: number; sellBps: number; venueFeeBps: number } | null;
   /** Buys and sells so far (honeypot check). Optional. */
   tradeCounts?: { buys: number; sells: number };
-  /** Other tokens with this exact name and symbol launched in the last 24h by different deployers (farms). */
+  /**
+   * Different deployers that launched a token with this exact name and symbol in the 24h *before* this one
+   * (a farm's earlier copies). Later copies don't count: the original isn't blamed for its copycats.
+   */
   sameNameDeployers24h?: number;
 }
 
@@ -79,7 +98,10 @@ export interface Reason {
 
 export interface TokenSignals {
   holders: number;
+  /** Top 10 people (pools, burns and contracts excluded), % of total supply. */
   top10Pct: number;
+  /** % of total supply held by burn addresses. */
+  burntPct?: number;
   devPct: number;
   /** null = not measured (launch trades not indexed). */
   snipersPct: number | null;
@@ -99,13 +121,20 @@ export interface TokenSignals {
     farm?: boolean;
     bestAthMarketCapUsd: number | null;
   };
-  /** Transfer tax measured from real trades, in bps (null = not enough trades yet). */
+  /**
+   * Buy/sell tax in bps: from the contract when known (PONS creator tax), else measured from real
+   * trades (null = not enough trades yet).
+   */
   buyTaxBps?: number | null;
   sellTaxBps?: number | null;
+  /** Where the tax comes from; null when neither is known. */
+  taxSource?: 'contract' | 'measured' | null;
+  /** The launchpad's own trading fee (PONS protocol fee), not a tax. null when unknown. */
+  venueFeeBps?: number | null;
   /** Many buys, no sell at all: possibly can't be sold. */
   noSells?: boolean;
   copycat: boolean;
-  /** Organic holders of the stronger same-ticker token this one copies (0 when not a copycat). */
+  /** Organic holders of the earlier same-ticker token this one copies (0 when not a copycat). */
   twinOrganicHolders: number;
   /**
    * Airdrop-farm spam: a plain pool (no launchpad) whose holder count was padded by mass airdrops.
@@ -133,10 +162,13 @@ export const THRESHOLDS = {
   airdropShareFake: 0.5,
   /** ...or at least this share: worth a warning, not a verdict. */
   airdropShareNotable: 0.2,
-  /** Copycat: a same-ticker token with at least this many organic holders... */
+  /**
+   * Copycat: an earlier same-ticker token is the original unless it was a squat, i.e. it has fewer than
+   * this many organic holders...
+   */
   copycatTwinMinHolders: 50,
-  /** ...and at least this many times this token's organic holders. */
-  copycatTwinRatio: 3,
+  /** ...or under 1/this of this token's organic holders. */
+  copycatSquatRatio: 20,
   /** Same name+symbol launched by at least this many different deployers in 24h: a farm. */
   farmDeployers24h: 3,
   /** Trades of each side needed before a tax is reported. */
@@ -174,10 +206,31 @@ export function measureTax(samples: TokenSnapshot['taxSamples'] = []): { buyTaxB
   return { buyTaxBps: clean(median(buys)), sellTaxBps: clean(median(sells)) };
 }
 
-/** Another token with this ticker has a far bigger organic community: this one rides its name. */
-function isCopycat(s: TokenSnapshot) {
+/**
+ * A copy in a launch farm: at least `farmDeployers24h` other wallets launched this exact name+symbol in the
+ * day before it, and it doesn't lead its ticker by organic holders (tickers get squatted before the real
+ * launch, so the token people actually hold is the original, whatever its launch order). Ties count as copies.
+ */
+function isFarmCopy(s: TokenSnapshot) {
+  if ((s.sameNameDeployers24h ?? 0) < THRESHOLDS.farmDeployers24h) return false;
   const own = Math.max(0, s.holderCount - s.airdropped.length);
-  return s.twinOrganicHolders >= Math.max(THRESHOLDS.copycatTwinMinHolders, own * THRESHOLDS.copycatTwinRatio);
+  return own <= s.twinOrganicHolders;
+}
+
+/** Another token with this ticker has a far bigger organic community: this one rides its name. */
+/**
+ * A copycat: a same-ticker token launched before this one, and that earlier token is the original.
+ * Launch order decides, not size: copies often outgrow the original with farmed volume (PLOG's later
+ * plain-pool copy had 687 holders against the original's 214). The exception is a squat, an earlier
+ * token that never had a real community: fewer than `copycatTwinMinHolders` organic holders, or under
+ * 1/`copycatSquatRatio` of this one's. Spam and airdrop farms are never originals (the loader leaves them out).
+ */
+function isCopycat(s: TokenSnapshot) {
+  const t = s.earlierTwin;
+  if (!t) return false;
+  const own = Math.max(0, s.holderCount - s.airdropped.length);
+  const squat = t.organicHolders < Math.max(THRESHOLDS.copycatTwinMinHolders, own / THRESHOLDS.copycatSquatRatio);
+  return !squat;
 }
 
 /** Share of holders that were airdropped (0 below the minimum count, so a handful never matters). */
@@ -278,11 +331,16 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     launches7d,
     rugs,
     migrated: s.devTokens.filter((t) => t.migrated).length,
-    serialLauncher: launches7d >= THRESHOLDS.serialLaunches7d || (s.sameNameDeployers24h ?? 0) >= THRESHOLDS.farmDeployers24h,
-    farm: (s.sameNameDeployers24h ?? 0) >= THRESHOLDS.farmDeployers24h,
+    // Serial dev: this deployer (or its funding cluster) launched many tokens this week. Nothing else.
+    serialLauncher: launches7d >= THRESHOLDS.serialLaunches7d,
+    farm: isFarmCopy(s),
     bestAthMarketCapUsd: athValues.length ? Math.max(...athValues) : null,
   };
-  const tax = measureTax(s.taxSamples);
+  const measured = measureTax(s.taxSamples);
+  // A contract tax is the truth; a measured 0 (tax taken in the quote, invisible to transfers) never overrides it.
+  const ct = s.contractTax ?? null;
+  const tax = ct ? { buyTaxBps: ct.buyBps, sellTaxBps: ct.sellBps } : measured;
+  const taxSource = ct ? 'contract' : measured.buyTaxBps != null || measured.sellTaxBps != null ? 'measured' : null;
   const noSells =
     !!s.tradeCounts && s.tradeCounts.buys >= THRESHOLDS.noSellsMinBuys && s.tradeCounts.sells === 0 &&
     s.now - s.createdAt >= THRESHOLDS.noSellsMinAgeSeconds;
@@ -290,6 +348,7 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
   const signals: Omit<TokenSignals, 'risk' | 'verdict' | 'reasons'> = {
     holders: s.holderCount,
     top10Pct: round1(pct(top10, s.totalSupply)),
+    burntPct: round1(pct(s.burnt ?? 0n, s.totalSupply)),
     devPct: round1(pct(devHeld, s.totalSupply)),
     snipersPct: s.launchIndexed ? round1(pct(sniperBought, s.totalSupply)) : null,
     sniperCount: s.launchIndexed ? new Set(snipers.map((b) => b.trader)).size : null,
@@ -301,9 +360,11 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     dev,
     buyTaxBps: tax.buyTaxBps,
     sellTaxBps: tax.sellTaxBps,
+    taxSource,
+    venueFeeBps: ct?.venueFeeBps ?? null,
     noSells,
     copycat: isCopycat(s),
-    twinOrganicHolders: isCopycat(s) ? s.twinOrganicHolders : 0,
+    twinOrganicHolders: isCopycat(s) ? s.earlierTwin!.organicHolders : 0,
     spam: isPlainPool(s.launchpad) && airdropShare(s) >= THRESHOLDS.airdropShareFake,
   };
   return { ...signals, ...judge(signals, s) };
@@ -316,9 +377,9 @@ function judge(
   const reasons: Reason[] = [];
   const add = (level: Reason['level'], text: string) => reasons.push({ level, text });
 
-  if (x.copycat) add('high', `copycat: another $${s.symbol} has ${x.twinOrganicHolders} real holders`);
-  if (x.dev.farm) add('high', `launch farm: ${s.sameNameDeployers24h} copies of $${s.symbol} by fresh wallets in 24h`);
-  else if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
+  if (x.copycat) add('high', `copycat: an earlier $${s.symbol} has ${x.twinOrganicHolders} real holders`);
+  if (x.dev.farm) add('high', `launch farm copy: ${s.sameNameDeployers24h} other wallets launched $${s.symbol} in the 24h before it`);
+  if (x.dev.serialLauncher) add('high', `dev launched ${x.dev.launches7d} tokens this week`);
   if (x.noSells) add('high', `${s.tradeCounts!.buys} buys and no sells: may not be sellable`);
   if (x.sellTaxBps != null && x.sellTaxBps >= 5_000) add('high', `sell tax ${x.sellTaxBps / 100}%`);
   else if (x.sellTaxBps != null && x.sellTaxBps >= 1_000) add('medium', `sell tax ${x.sellTaxBps / 100}%`);

@@ -17,6 +17,7 @@ import type { Approval } from '@rushr/trade/types';
 import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
 import { publicMember } from './members';
 import { recordReferral } from './referrals';
+import { refreshSignalsIfStale } from '../signals-refresh';
 
 export const AGENT_SCOPES = ['read', 'profile', 'post', 'trade'];
 const AGENT_PURPOSES: Purpose[] = ['register', 'login'];
@@ -174,7 +175,9 @@ export async function safetyOf(sql: Sql, token: string): Promise<Safety> {
 agents.get('/tokens/:address/safety', async (c) => {
   const token = c.req.param('address').toLowerCase();
   if (!isAddr(token)) throw fail(422, 'invalid_field', 'Bad token address.');
-  return c.json({ safety: await safetyOf(c.var.sql, token), note: 'Data, not advice. A low risk level is not a guarantee.' }, 200, publicCache(5));
+  const safety = await safetyOf(c.var.sql, token);
+  refreshSignalsIfStale(c, token, safety.updatedAt);
+  return c.json({ safety, note: 'Data, not advice. A low risk level is not a guarantee.' }, 200, publicCache(5));
 });
 
 // ---- trade: quotes and unsigned transactions ----
@@ -256,6 +259,7 @@ async function prepare(c: C, mode: 'quote' | 'build') {
   if (await onCurve(sql, req.token)) throw fail(422, 'curve_not_supported', CURVE_MESSAGE);
   await limit(c, mode);
   const safety = await safetyOf(sql, req.token);
+  refreshSignalsIfStale(c, req.token, safety.updatedAt);
   if (mode === 'build') riskGate(req.side, safety, acceptRisk);
   const client = createPublicClient({ chain: robinhoodChain, transport: http(c.env.RPC_URL) });
   // A dry run must work before the agent funds its wallet: top it up inside the simulation only.

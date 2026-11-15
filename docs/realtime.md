@@ -2,7 +2,7 @@
 
 The terminal's live data: one WebSocket per client, a **snapshot** per subscribed topic, then ordered **deltas**. HTTP stays for the first server render and one-off queries; after load the socket is the source of truth.
 
-Owner: Data stream (`apps/indexer`). Client: Terminal (`apps/web/lib/live.ts`). Design background: the read-through hydration design (planner's notes, `design-ws-hydration.md`).
+Server: `apps/indexer` (gateways and token hydrators). Client: `apps/web/lib/live.ts`.
 
 ## Connect
 

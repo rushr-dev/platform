@@ -9,6 +9,8 @@
   "kv_namespaces": [{ "binding": "NEXT_INC_CACHE_KV", "id": "d3b832bd9fa54c1696edffc5802ad1d7" }],
   "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "rushr-web" }],
   "observability": { "enabled": true },
+  // Per-IP limit for the browser RPC proxy (app/api/rpc): every call spends our Alchemy quota.
+  "ratelimits": [{ "name": "RPC_LIMIT", "namespace_id": "4663", "simple": { "limit": 300, "period": 60 } }],
   // Served only on the custom domains; workers.dev and preview URLs would expose the account name.
   "routes": [
     { "pattern": "rushr.trade", "custom_domain": true },

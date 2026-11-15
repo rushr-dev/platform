@@ -5,6 +5,8 @@ import type { Address, Hex } from 'viem';
 import { dbUrl, type Env } from './env';
 import { Pipeline } from './pipeline';
 import { Rpc } from './rpc';
+import { liftfunOn } from './data';
+import { isPaused } from './pause';
 
 /**
  * Full-history backfill, resumable. One instance ("main"). Progress lives in DO storage, and every
@@ -336,6 +338,16 @@ export class Backfiller extends DurableObject<Env> {
     if (!token) return false;
     const { sql, rpc } = this.init();
     const key = `holders:${token}`;
+    // lift.fun is paused (LIFTFUN_ENABLED off): drop its tokens from the queue without spending RPC.
+    // Their saved job rows stay, so re-queueing later resumes from the cursor.
+    if (!liftfunOn(this.env)) {
+      const [t] = await sql<{ launchpad: string | null }[]>`select launchpad from tokens where address = ${token}`;
+      if (t?.launchpad === 'liftfun') {
+        console.log(`holders: skipped ${token} (lift.fun paused)`);
+        await this.ctx.storage.put('holdersPending', pending.slice(1));
+        return true;
+      }
+    }
     let [row] = await sql<{ value: HolderJob }[]>`select value from indexer_state where key = ${key}`;
     if (!row) {
       // Live indexing owns every transfer from the first one it recorded: replay what came before.
@@ -441,6 +453,11 @@ export class Backfiller extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
+    // Indexer paused (pause.ts): keep the queued work, look again in 5 minutes.
+    if (await isPaused(this.env, this.init().sql)) {
+      await this.ctx.storage.setAlarm(Date.now() + 5 * 60_000);
+      return;
+    }
     // Positions rebuild (only the "positions" instance).
     if (await this.ctx.storage.get('positionsRunning')) {
       const started = Date.now();

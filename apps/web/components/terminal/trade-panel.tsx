@@ -15,6 +15,7 @@ import { updateSettings, useSettings, type TradePreset, type TradeSettings } fro
 import { useTokenBalance } from '@/lib/balances';
 import { DepositPanel } from './profile/funding';
 import { Modal } from './profile/modal';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /**
  * GMGN-style trade panel for the token page: your position in this token (balance, bought, sold,
@@ -274,7 +275,7 @@ function Panel({ token, priceUsd, position }: { token: TradeToken; priceUsd: num
               {b.message}
             </p>
           ))}
-        {(needsAck || (q.ack && token.risk === 'high')) && (
+        {SHOW_RISK && (needsAck || (q.ack && token.risk === 'high')) && (
           <label className="flex items-start gap-2 rounded-lg bg-risk-high/10 px-2 py-1.5 text-xs text-risk-high">
             <input type="checkbox" checked={q.ack} onChange={(e) => q.setAck(e.target.checked)} className="mt-0.5" />
             <span>I understand this token is high risk{token.verdict ? ` (${token.verdict})` : ''} and I may lose what I put in.</span>

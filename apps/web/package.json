@@ -10,7 +10,9 @@
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "typecheck": "tsc --noEmit",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "predev": "node scripts/gen-whitepaper.mjs",
+    "prebuild": "node scripts/gen-whitepaper.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

@@ -3,6 +3,7 @@ import postgres, { type Sql } from 'postgres';
 import type { Address, Hex } from 'viem';
 import { NATIVE_ETH, PAIR_SWAP_TOPICS, PONS_LAUNCH_TOPICS, acceptsPrice, QUOTES, ROBINHOOD_CHAIN, STOCK_QUOTES, TOPICS, UNISWAP, decodeLogs, type PoolInfo, type RawLog } from '@rushr/core';
 import { dbUrl, holderHistory, poller as pollerOf, type Env } from './env';
+import { isPaused } from './pause';
 import { Pipeline } from './pipeline';
 import { Rpc } from './rpc';
 import { tokenSnapshot } from './data';
@@ -20,7 +21,8 @@ import { GATEWAY_COUNT, gateway, type DeltaEvent } from './gateway';
 export const hydrator = (env: Env, token: string) =>
   env.HYDRATOR.get(env.HYDRATOR.idFromName(`hyd:${token.toLowerCase()}`), { locationHint: 'apac' });
 
-export type HydrationState = 'hydrating' | 'partial' | 'live' | 'busy' | 'not_token';
+/** `paused`: the indexer is switched off (pause.ts), so nothing is fetched from chain. */
+export type HydrationState = 'hydrating' | 'partial' | 'live' | 'busy' | 'not_token' | 'paused';
 
 const COOLDOWN_MS = 60_000;
 const NOT_TOKEN_TTL_MS = 10 * 60_000;
@@ -58,6 +60,7 @@ export class TokenHydrator extends DurableObject<Env> {
     if (notToken && notToken > Date.now()) return { state: 'not_token' };
     const last = await this.ctx.storage.get<{ at: number; state: HydrationState }>('last');
     if (last && Date.now() - last.at < COOLDOWN_MS) return { state: last.state, snapshot: this.lastSnapshot ?? undefined };
+    if (await isPaused(this.env)) return { state: 'paused' };
     const ok = await this.env.RPC_BUDGET.get(this.env.RPC_BUDGET.idFromName('global')).take(BUDGET_PER_MIN);
     if (!ok) return { state: 'busy' };
     this.state = 'hydrating';
