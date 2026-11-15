@@ -217,3 +217,21 @@ Run against `https://api.rushr.trade` and `https://rushr.trade` after the releas
 - **`AGENT_SIGNUP_ENABLED`: GO.** Discovery works (llms.txt is served from both hosts, and all its links resolve). The disabled state returns clean, documented JSON errors. The registration-limit fix (A3) was verified locally by the e2e run.
 - **`AGENT_TRADE_ENABLED`: GO for graduated tokens, as documented.** The trade docs now cover the fee, curve tokens, approvals, the deadline, simulation and errors. Fix P1 soon after launch, because the safety gate currently protects the copy rather than the original on affected tickers. P1 isn't a blocker, since sells are never blocked and medium-risk buys were already allowed without confirmation.
 - **`LEADERBOARD_ENABLED`: create Season 0 first.** `GET /v1/seasons` is empty in production, so `window=season` would answer `404 no_season`. Before turning the flag on, run `POST /admin/agents/seasons { "id": "s0", "name": "Season 0", "startsAt", "endsAt" }` with the production `ADMIN_TOKEN`. Then check that `/v1/seasons` lists it and that `/v1/leaderboard?window=season&kind=agent` returns 200.
+
+## Building a live agent from llms.txt alone (2026-11-16)
+
+We wrote [Talos](../packages/agents/examples/test-agent/), a real trading agent, using only `llms.txt` as the spec. It hasn't been run against production yet. These are the places where llms.txt left us guessing, roughly in order of how much they would hurt an outside agent:
+
+1. **The $5 minimum isn't tied to trade sizing.** "Trades under $5 don't count" appears only in the Leaderboard section. An agent sized "conservatively" at $1-2 (our own first brief said 0.0003-0.0008 ETH) trades for weeks and is never ranked, with no error to tell it why. Say it next to the trade docs, and expose `unranked` reasons that name it.
+2. **Funding clusters aren't mentioned.** The board links wallets by their first funder, so an agent funded from its operator's Rushr wallet is clustered with the operator, and only one of them is ranked. Outside builders will fund their agent from their own account by default.
+3. **There's no RPC or explorer.** llms.txt gives chain id 4663 but no RPC URL to send transactions with, and no explorer to check them. Talos uses `https://rpc.mainnet.chain.robinhood.com` from the repo.
+4. **There's no router address to verify against.** The Permit2 address is given, but the Universal Router (`tx.to`) isn't, so an agent can't independently check that the unsigned tx goes where it should. Publish the expected `tx.to` addresses.
+5. **No USD price for ETH.** Sizing a buy in dollars needs ETH/USD. We derived it from a probe quote times the token's `price_usd`.
+6. **No documented way to read your own position.** To sell everything, you need your token balance. `/wallets/:w/holdings` and `/wallets/:w/positions/:token` exist but aren't documented, so Talos reads `balanceOf` on-chain.
+7. **It's unclear whether agents should report their trades.** `POST /v1/trades` (the trade ledger) isn't in llms.txt. The leaderboard reads indexed swaps, so Talos doesn't report, but an agent can't tell whether it's expected.
+8. **Fields in the token list are undocumented.** That covers `holders`, `volume_24h_usd`, `liquidity_usd` (null for most migrated tokens), `price_usd`, `decimals` and `risk`. It also isn't said how the list's `risk` relates to the safety view's `riskLevel`, or what `stale` means.
+9. **The invite rule reads ambiguously.** `GET /v1/beta` says `invitesRequired: true`, and llms.txt never says agents are exempt (they are: agent registration doesn't check invites). Say "agents don't need an invite code".
+10. **Small omissions:**
+    - `GET /v1/handles/<handle>` (an availability check before signing) isn't documented.
+    - There's no guidance on how long a swap takes to reach the board.
+    - The trenches include the platform's own token ($RUSHR) with no note on whether team-run agents should avoid it. Talos excludes it.
