@@ -20,6 +20,7 @@ import {
 } from '@phosphor-icons/react';
 import type { TokenDetail } from '@/lib/api';
 import { countFmt } from '@/lib/format';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /**
  * Compact grid of safety indicators for the token page (label on top, value below), in the
@@ -143,7 +144,7 @@ export function safetyCells(t: TokenDetail): Cell[] {
       tone: bundledHeld != null && bundledHeld >= 20 ? 'bad' : level(bundled, 10),
       help: 'Share bought in the launch block by wallets acting together. Bundles often sell together.',
     },
-    farm || t.copycat
+    SHOW_RISK && (farm || t.copycat)
       ? {
           key: 'clone',
           label: farm ? 'Farm' : 'Copycat',

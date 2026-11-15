@@ -111,7 +111,7 @@ function passes(t: TokenCard, f: Filters, now: number) {
   if (f.maxTop10 && (t.top10_pct ?? 0) > f.maxTop10) return false;
   if (f.maxDev && (t.dev_pct ?? 0) > f.maxDev) return false;
   if (SHOW_RISK && f.hideHighRisk && t.risk === 'high') return false;
-  if (f.hideCopycat && t.copycat) return false;
+  if (SHOW_RISK && f.hideCopycat && t.copycat) return false;
   if (f.hasSocial && !t.website && !t.twitter && !t.telegram) return false;
   if (f.launchpad && t.launchpad !== f.launchpad) return false;
   if (f.keyword.trim()) {
@@ -328,6 +328,9 @@ function Toolbar({
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2.5">
       <h1 className="text-lg font-semibold tracking-[-0.03em]">Trenches</h1>
       <span className="rounded-md bg-white/[0.06] px-2 py-0.5 text-xs text-muted">Robinhood Chain</span>
+      {/* Hidden with the risk labels: spam clones and plain pools stay filtered out by default. */}
+      {SHOW_RISK && (
+        <>
       <label
         className="ml-2 flex cursor-pointer items-center gap-1.5 text-xs text-muted hover:text-ink"
         title="Airdrop-farm clones: plain pools whose holder count was padded with mass airdrops"
@@ -337,11 +340,13 @@ function Toolbar({
       </label>
       <label
         className="flex cursor-pointer items-center gap-1.5 text-xs text-muted hover:text-ink"
-        title="Tokens launched straight into a Uniswap pool, without a launchpad. Most copycat clones live here."
+        title="Tokens launched straight into a Uniswap pool, without a launchpad."
       >
         <input type="checkbox" checked={showPlain} onChange={(e) => onShowPlain(e.target.checked)} className="accent-[var(--color-brand)]" />
         Plain pools
       </label>
+        </>
+      )}
       <div
         className="ml-auto flex items-center gap-1.5 rounded-xl border border-white/[0.06] bg-surface py-1 pl-3 pr-1 text-xs"
         title="The first Buy amount on every card, in US dollars (converted to ETH at the live price)"
@@ -552,7 +557,7 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
       </label>
       <div className="col-span-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 lg:col-span-4">
         {SHOW_RISK && toggle('hideHighRisk', 'Hide high risk')}
-        {toggle('hideCopycat', 'Hide copycats')}
+        {SHOW_RISK && toggle('hideCopycat', 'Hide copycats')}
         {toggle('hasSocial', 'Has socials')}
       </div>
       <button type="button" onClick={() => onChange(NO_FILTERS)} className="col-span-2 text-left text-[11px] text-muted hover:text-ink lg:col-span-4">
@@ -663,7 +668,7 @@ const Row = memo(function Row({
   const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
   const flags = [
     SHOW_RISK && t.risk === 'high' && 'High risk',
-    t.copycat && 'Copycat',
+    SHOW_RISK && t.copycat && 'Copycat',
     t.serial_launcher && 'Serial dev',
     !!t.airdropped && t.airdropped > 10 && `${t.airdropped} fake holders`,
   ].filter(Boolean) as string[];
