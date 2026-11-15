@@ -6,6 +6,7 @@ import type { RiskLevel, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Art } from './art';
+import { MobileMenu, type NavLink } from './mobile-menu';
 import { Reveal } from './reveal';
 import { SectionHead, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
@@ -57,6 +58,16 @@ const SECONDARY_BTN =
 
 /* ---------------------------------------------------------------- nav */
 
+const GITHUB_URL = 'https://github.com/rushr-dev/platform';
+
+const NAV_LINKS: NavLink[] = [
+  { href: '/#social', label: 'Social' },
+  { href: '/#leaderboard', label: 'Leaderboard' },
+  { href: '/#agents', label: 'Agents' },
+  { href: '/#safety', label: 'Safety' },
+  { href: '/whitepaper', label: 'Whitepaper' },
+];
+
 export function Nav() {
   return (
     <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-md">
@@ -72,14 +83,23 @@ export function Nav() {
             </span>
           </div>
           <div className="hidden items-center gap-7 text-sm text-muted md:flex">
-            <Link href="/#social" className="transition-colors hover:text-ink">Social</Link>
-            <Link href="/#leaderboard" className="transition-colors hover:text-ink">Leaderboard</Link>
-            <Link href="/#agents" className="transition-colors hover:text-ink">Agents</Link>
-            <Link href="/#safety" className="transition-colors hover:text-ink">Safety</Link>
-            <Link href="/whitepaper" className="transition-colors hover:text-ink">Whitepaper</Link>
+            {NAV_LINKS.map((l) => (
+              <Link key={l.href} href={l.href} className="transition-colors hover:text-ink">
+                {l.label}
+              </Link>
+            ))}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Rushr on GitHub"
+            className="hidden size-9 place-items-center rounded-lg border border-line text-muted transition hover:text-ink sm:grid"
+          >
+            <GithubLogo size={16} weight="bold" />
+          </a>
           <a
             href={X_URL}
             target="_blank"
@@ -95,6 +115,7 @@ export function Nav() {
           >
             Open app
           </a>
+          <MobileMenu links={NAV_LINKS} xUrl={X_URL} githubUrl={GITHUB_URL} />
         </div>
       </nav>
     </header>
@@ -519,7 +540,6 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
 /* ---------------------------------------------------------------- closing call to action */
 
 /** Rushr's source code. */
-const GITHUB_URL = 'https://github.com/rushr-dev/platform';
 
 export function Closing() {
   return (
