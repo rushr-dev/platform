@@ -1,14 +1,14 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { preload } from 'react-dom';
-import { GithubLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
+import { GithubLogo, TelegramLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
 import type { RiskLevel, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Art } from './art';
 import { MobileMenu, type NavLink } from './mobile-menu';
 import { Reveal } from './reveal';
-import { SectionHead, WRAP, X_URL } from './ui';
+import { SectionHead, TG_URL, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
 
 const usd = (n: number | null | undefined) =>
@@ -110,12 +110,21 @@ export function Nav() {
             <XLogo size={16} weight="bold" />
           </a>
           <a
+            href={TG_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Rushr on Telegram"
+            className="hidden size-9 place-items-center rounded-lg border border-line text-muted transition hover:text-ink sm:grid"
+          >
+            <TelegramLogo size={16} weight="bold" />
+          </a>
+          <a
             href={appHref('/trenches')}
             className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-ink/85 active:scale-[0.98]"
           >
             Open app
           </a>
-          <MobileMenu links={NAV_LINKS} xUrl={X_URL} githubUrl={GITHUB_URL} />
+          <MobileMenu links={NAV_LINKS} xUrl={X_URL} githubUrl={GITHUB_URL} tgUrl={TG_URL} />
         </div>
       </nav>
     </header>
@@ -571,6 +580,9 @@ export function Closing() {
             <a href={X_URL} target="_blank" rel="noreferrer" className={SECONDARY_BTN}>
               <XLogo size={16} weight="bold" /> Follow on X
             </a>
+            <a href={TG_URL} target="_blank" rel="noreferrer" className={SECONDARY_BTN}>
+              <TelegramLogo size={18} weight="bold" /> Join Telegram
+            </a>
           </div>
         </Reveal>
       </div>
@@ -608,6 +620,8 @@ export function Footer() {
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>
           <a href={X_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">X (@rushrtrade)</a>
+          <a href={TG_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">Telegram</a>
+          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">GitHub</a>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Legal</div>

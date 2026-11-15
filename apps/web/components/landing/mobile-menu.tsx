@@ -2,12 +2,12 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { GithubLogo, List, X, XLogo } from '@phosphor-icons/react';
+import { GithubLogo, List, TelegramLogo, X, XLogo } from '@phosphor-icons/react';
 
 export type NavLink = { href: string; label: string };
 
 /** The hamburger and drop-down menu for phones (the nav links are hidden below md). */
-export function MobileMenu({ links, xUrl, githubUrl }: { links: NavLink[]; xUrl: string; githubUrl: string }) {
+export function MobileMenu({ links, xUrl, githubUrl, tgUrl }: { links: NavLink[]; xUrl: string; githubUrl: string; tgUrl: string }) {
   const [open, setOpen] = useState(false);
 
   // Close on Escape, and stop the page scrolling behind the open menu.
@@ -45,12 +45,15 @@ export function MobileMenu({ links, xUrl, githubUrl }: { links: NavLink[]; xUrl:
                 {l.label}
               </Link>
             ))}
-            <div className="mt-6 flex items-center gap-3">
+            <div className="mt-6 flex flex-wrap items-center gap-3">
               <a href={githubUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-line px-4 py-2.5 text-sm text-ink">
                 <GithubLogo size={16} weight="bold" /> GitHub
               </a>
               <a href={xUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-line px-4 py-2.5 text-sm text-ink">
                 <XLogo size={16} weight="bold" /> Follow on X
+              </a>
+              <a href={tgUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-lg border border-line px-4 py-2.5 text-sm text-ink">
+                <TelegramLogo size={16} weight="bold" /> Telegram
               </a>
             </div>
           </nav>
