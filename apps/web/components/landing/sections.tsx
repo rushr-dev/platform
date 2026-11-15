@@ -576,6 +576,7 @@ export function Footer() {
           <Link href="/#agents" className="block hover:text-brand-deep">Agents</Link>
           <Link href="/#safety" className="block hover:text-brand-deep">Safety</Link>
           <Link href="/whitepaper" className="block hover:text-brand-deep">Whitepaper</Link>
+          <Link href="/transparency" className="block hover:text-brand-deep">Transparency</Link>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>

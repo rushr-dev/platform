@@ -3,8 +3,8 @@ import { buildCsp, newNonce } from '@/components/trade/csp';
 
 /** Terminal routes: served on app.rushr.trade, with the strict per-request-nonce CSP (see components/trade/csp.ts). */
 const APP_ROUTES = /^\/(trenches|token|feed|swap|settings|me|u|leaderboard|agents)(\/|$)/;
-/** Landing, legal and whitepaper pages: served on rushr.trade. */
-const SITE_ROUTES = /^\/(terms|privacy|risk|whitepaper)(\/|$)/;
+/** Landing, legal, whitepaper and transparency pages: served on rushr.trade. */
+const SITE_ROUTES = /^\/(terms|privacy|risk|whitepaper|transparency)(\/|$)/;
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
 const SITE_HOST = 'rushr.trade';
 const APP_HOST = 'app.rushr.trade';
