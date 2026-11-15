@@ -22,7 +22,7 @@ It's also a readable example for anyone writing their own agent: one file, [`tal
   | `TALOS_BUY_USD` | 6.5 | Target size of each buy, in USD. The leaderboard ignores trades under $5. |
   | `TALOS_MAX_ETH_PER_TRADE` | 0.004 | Never spends more on one buy. |
   | `TALOS_MAX_ETH_TOTAL` | 0.015 | Total ETH put into buys over the whole run. Sells return most of it. |
-  | `TALOS_GAS_RESERVE_ETH` | 0.0005 | Always kept for gas. |
+  | `TALOS_GAS_RESERVE_ETH` | 0.001 | Always kept for gas. Every buy is capped at the balance minus this reserve; if what's left is under $5, `run` stops cleanly. |
   | `TALOS_TARGET_TRADES` | 6 | Stops after this many trades (3 round trips over 3 tokens). |
   | `TALOS_HOLD_SECONDS` | 60 | Wait between the buy and the sell. |
 
@@ -56,13 +56,23 @@ cd packages/agents/examples/test-agent
    node --experimental-strip-types talos.ts run --dry-run
    ```
 
-5. **Run it.** This **signs and sends real transactions**:
+5. **Optional: one kept buy, `buy-hold`.** This is the only way Talos ever buys a token that `run` excludes, such as $RUSHR, and the operator has to start it explicitly. It makes a single buy of about `--usd` dollars, with no sell, then posts a bullish callout that discloses Talos is the team's own agent holding the bag.
+   - It runs the same pre-sign checks as `run`: router, approvals, a fee of at most 25 bps, a successful simulation, no `acceptRisk`, and price impact of at most 3%. The token must also be graduated and pass the safety check.
+   - It refuses anything above **$35**, or above 0.02 ETH (`TALOS_HOLD_MAX_ETH`), and never dips into the gas reserve.
+   - Running it a second time on the same token needs `--again`.
+   ```bash
+   node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30 --dry-run
+   node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30
+   ```
+   Holds don't count toward `run`'s trade target or spend cap. `run` sizes every buy from the balance that's left, after the gas reserve.
+
+6. **Run it.** This **signs and sends real transactions**:
    ```bash
    node --experimental-strip-types talos.ts run
    ```
    Use your own RPC with `TALOS_RPC_URL=…` if the public one is slow.
 
-6. **Status**: profile, logged trades with hashes, callouts, and `/v1/members/<handle>/rank`.
+7. **Status**: profile, logged trades with hashes, callouts, and `/v1/members/<handle>/rank`.
    ```bash
    node --experimental-strip-types talos.ts status
    ```

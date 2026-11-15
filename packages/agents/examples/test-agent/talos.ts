@@ -5,6 +5,7 @@
 //   node --experimental-strip-types talos.ts init     # new wallet + SIWE registration (no transaction)
 //   node --experimental-strip-types talos.ts run      # SIGNS AND SENDS real transactions from the wallet
 //   node --experimental-strip-types talos.ts run --dry-run   # everything up to simulation, sends nothing
+//   node --experimental-strip-types talos.ts buy-hold <token> --usd <n> [--dry-run]   # one kept buy (max $35), disclosed callout
 //   node --experimental-strip-types talos.ts scan     # read-only: which tokens it would trade
 //   node --experimental-strip-types talos.ts status   # profile, trades so far, leaderboard rank
 //
@@ -41,7 +42,7 @@ const LIMITS = {
   /** Total ETH put into buys over the whole run (sells give most of it back). */
   maxEthTotal: parseEther(String(num('TALOS_MAX_ETH_TOTAL', 0.015))),
   /** Always keep this much ETH for gas. */
-  gasReserve: parseEther(String(num('TALOS_GAS_RESERVE_ETH', 0.0005))),
+  gasReserve: parseEther(String(num('TALOS_GAS_RESERVE_ETH', 0.001))),
   /** Stop after this many trades (each round trip is 2) and at least this many distinct tokens. */
   targetTrades: num('TALOS_TARGET_TRADES', 6),
   minTokens: 3,
@@ -264,20 +265,14 @@ function vet(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint) {
   if (problems.length) throw new Error(`refusing to sign: ${problems.join('; ')}`);
 }
 
-async function run(dryRun: boolean) {
+/** The signing side: one wallet, one API key. `dryRun` quotes, builds and simulates but never sends. */
+function trader(dryRun: boolean) {
   const w = loadWallet();
   if (!w?.apiKey) throw new Error('Run init first.');
   const key = w.apiKey;
   const account = privateKeyToAccount(w.privateKey);
   const pub = createPublicClient({ chain: robinhood, transport: http(RPC) });
   const wallet = createWalletClient({ chain: robinhood, transport: http(RPC), account });
-
-  const past = journalEntries().filter((e) => e.kind === 'trade' && e.status === 'success');
-  let trades = past.length;
-  const tokensDone = new Set(past.map((e) => String(e.token).toLowerCase()));
-  let spent = past.filter((e) => e.side === 'buy').reduce((s, e) => s + BigInt(e.amountIn), 0n);
-  let errors = 0;
-  log(`@${w.handle} ${account.address}  trades so far ${trades}, tokens ${tokensDone.size}, ETH spent on buys ${formatEther(spent)}${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`);
 
   const send = async (label: string, tx: { to: Address; data: Hex; value: string }) => {
     if (dryRun) {
@@ -291,11 +286,12 @@ async function run(dryRun: boolean) {
     return hash;
   };
 
-  const trade = async (side: 'buy' | 'sell', token: Token, amountIn: bigint) => {
+  /** quote → build (simulate: true) → vet → approvals → tx. Throws before signing if anything looks off. */
+  const trade = async (side: 'buy' | 'sell', token: Token, amountIn: bigint, mode: 'round_trip' | 'hold' = 'round_trip') => {
     const body = { token: token.address, side, amountIn: amountIn.toString(), quoteAsset: 'ETH', slippageBps: LIMITS.slippageBps, from: account.address };
     const q = await api<{ quote: Built['quote']; wouldBuild: boolean; warnings: string[] }>('POST', '/v1/trade/quote', { key, body });
     if (side === 'buy' && !q.wouldBuild) throw new Error(`quote says wouldBuild=false (${q.warnings.join('; ')})`);
-    if (side === 'buy' && (q.quote.priceImpactBps ?? 10_000) > LIMITS.maxImpactBps) throw new Error(`price impact ${q.quote.priceImpactBps} bps`);
+    if (side === 'buy' && (q.quote.priceImpactBps ?? 10_000) > LIMITS.maxImpactBps) throw new Error(`price impact ${q.quote.priceImpactBps} bps (max ${LIMITS.maxImpactBps})`);
     // Build right before signing: the tx expires 300 s after the build.
     const b = await api<Built>('POST', '/v1/trade/build', { key, body: { ...body, simulate: true } });
     vet(b, side, token.address, amountIn);
@@ -307,9 +303,67 @@ async function run(dryRun: boolean) {
       if (h) hashes.push(h);
     }
     const hash = await send(`${side} tx`, b.tx);
-    if (!dryRun) journal({ kind: 'trade', status: 'success', side, token: token.address, symbol: token.symbol, amountIn: amountIn.toString(), expectedOut: b.quote.amountOut, fee: b.quote.fee.feeAmount, hash, approvalHashes: hashes });
+    if (!dryRun) journal({ kind: 'trade', status: 'success', mode, side, token: token.address, symbol: token.symbol, amountIn: amountIn.toString(), expectedOut: b.quote.amountOut, fee: b.quote.fee.feeAmount, hash, approvalHashes: hashes });
     return { hash, built: b };
   };
+
+  const callout = async (token: Address, body: string) => {
+    if (dryRun) return log(`  dry run: would post callout (${body.length} chars): ${body}`);
+    const c = await api<{ callout: { id: string } }>('POST', '/v1/callouts', { key, body: { token, stance: 'bullish', body } }).catch((e) => {
+      log(`  callout failed: ${e instanceof Error ? e.message : e}`);
+      return null;
+    });
+    if (c) {
+      log(`  callout ${c.callout.id}: ${body}`);
+      journal({ kind: 'callout', id: c.callout.id, token, body });
+    }
+  };
+
+  /** ETH the wallet can put into a buy: its balance minus the gas reserve (never negative). */
+  const spendable = async () => {
+    const bal = await pub.getBalance({ address: account.address });
+    return { bal, free: bal > LIMITS.gasReserve ? bal - LIMITS.gasReserve : 0n };
+  };
+
+  return { w, key, account, pub, send, trade, callout, spendable };
+}
+
+/**
+ * USD per ETH, from two quotes of the same token: tokens per ETH (ETH probe) times the token's USD price.
+ * When the token also has a USDG pool, ETH/USD comes from tokens per ETH ÷ tokens per USDG instead,
+ * which doesn't depend on Rushr's stored price. Refuses results outside a sane range.
+ */
+async function ethUsdVia(key: string, token: Token): Promise<number> {
+  const probeEth = parseEther('0.001');
+  const viaEth = await api<{ quote: Built['quote'] }>('POST', '/v1/trade/quote', { key, body: { token: token.address, side: 'buy', amountIn: probeEth.toString() } });
+  const tokensPerEth = Number(BigInt(viaEth.quote.amountOut)) / 0.001;
+  let ethUsd: number | null = null;
+  const viaUsdg = await api<{ quote: Built['quote'] }>('POST', '/v1/trade/quote', { key, body: { token: token.address, side: 'buy', amountIn: '1000000', quoteAsset: 'USDG' } }).catch(() => null);
+  if (viaUsdg && BigInt(viaUsdg.quote.amountOut) > 0n) ethUsd = tokensPerEth / Number(BigInt(viaUsdg.quote.amountOut));
+  if (ethUsd === null) {
+    const detail = await api<{ decimals?: number; price_usd?: number | null }>('GET', `/tokens/${token.address}`);
+    const price = detail.price_usd ?? token.price_usd ?? 0;
+    ethUsd = Number(formatUnits(BigInt(viaEth.quote.amountOut), detail.decimals ?? 18)) * price / 0.001;
+  }
+  if (!(ethUsd > 500 && ethUsd < 20_000)) throw new Error(`ETH/USD estimate ${ethUsd} looks wrong; refusing to size a trade with it`);
+  return ethUsd;
+}
+
+const usdToWei = (usd: number, ethUsd: number) => parseEther((usd / ethUsd).toFixed(18));
+
+// ---------------------------------------------------------------------------------------------
+// run: the autonomous loop. Other tokens only, buy then sell back, hard caps.
+
+async function run(dryRun: boolean) {
+  const t = trader(dryRun);
+  // Holds (buy-hold) are separate: they don't count toward this loop's trade target, tokens or spend cap.
+  const past = journalEntries().filter((e) => e.kind === 'trade' && e.status === 'success' && e.mode !== 'hold');
+  let trades = past.length;
+  const tokensDone = new Set(past.map((e) => String(e.token).toLowerCase()));
+  let spent = past.filter((e) => e.side === 'buy').reduce((s, e) => s + BigInt(e.amountIn), 0n);
+  let errors = 0;
+  const start = await t.spendable();
+  log(`@${t.w.handle} ${t.account.address}  balance ${formatEther(start.bal)} ETH (${formatEther(start.free)} spendable after the ${formatEther(LIMITS.gasReserve)} ETH gas reserve), round-trip trades so far ${trades}, tokens ${tokensDone.size}, ETH into buys ${formatEther(spent)}${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`);
 
   while (trades < LIMITS.targetTrades || tokensDone.size < LIMITS.minTokens) {
     if (errors >= LIMITS.maxErrorStreak) throw new Error(`stopping after ${errors} errors in a row`);
@@ -317,53 +371,45 @@ async function run(dryRun: boolean) {
     if (!candidates.length) throw new Error('no candidate tokens left');
     let token: Token | null = null;
     let safety: Safety | null = null;
-    for (const t of candidates.slice(0, 15)) {
-      const s = await safeToBuy(t.address);
+    for (const c of candidates.slice(0, 15)) {
+      const s = await safeToBuy(c.address);
       if (s.ok) {
-        token = t;
+        token = c;
         safety = s.safety;
         break;
       }
-      log(`skip ${t.symbol} ${t.address}: ${s.why}`);
+      log(`skip ${c.symbol} ${c.address}: ${s.why}`);
     }
     if (!token || !safety) throw new Error('no safe candidate among the top 15 migrated tokens');
 
     try {
-      // Size: about LIMITS.buyUsd, priced with the token's own USD price and a small probe quote.
-      const probeIn = parseEther('0.001');
-      const probe = await api<{ quote: Built['quote'] }>('POST', '/v1/trade/quote', { key, body: { token: token.address, side: 'buy', amountIn: probeIn.toString() } });
-      const detail = await api<{ decimals?: number; price_usd?: number | null }>('GET', `/tokens/${token.address}`);
-      const decimals = detail.decimals ?? 18;
-      const probeUsd = Number(formatUnits(BigInt(probe.quote.amountOut), decimals)) * (detail.price_usd ?? token.price_usd ?? 0);
-      if (!(probeUsd > 0)) throw new Error('could not price the token');
-      const ethUsd = probeUsd / 0.001;
-      let buyIn = parseEther((LIMITS.buyUsd / ethUsd).toFixed(18));
+      // Size: about LIMITS.buyUsd, never above the per-trade cap, the total cap, or what the wallet can
+      // spend after the gas reserve (read fresh every time, so a hold elsewhere is accounted for).
+      const ethUsd = await ethUsdVia(t.key, token);
+      let buyIn = usdToWei(LIMITS.buyUsd, ethUsd);
       if (buyIn > LIMITS.maxEthPerTrade) buyIn = LIMITS.maxEthPerTrade;
-      if (spent + buyIn > LIMITS.maxEthTotal) throw new Error(`total spend cap reached (${formatEther(spent)} of ${formatEther(LIMITS.maxEthTotal)} ETH)`);
-      if (!dryRun) {
-        const bal = await pub.getBalance({ address: account.address });
-        if (bal < buyIn + LIMITS.gasReserve) throw new Error(`balance ${formatEther(bal)} ETH is below buy ${formatEther(buyIn)} + gas reserve`);
+      if (spent + buyIn > LIMITS.maxEthTotal) {
+        log(`total spend cap reached (${formatEther(spent)} of ${formatEther(LIMITS.maxEthTotal)} ETH into buys); stopping`);
+        break;
       }
+      const { free } = await t.spendable();
+      if (buyIn > free) buyIn = free;
       const usd = Number(formatEther(buyIn)) * ethUsd;
-      if (usd < 5) log(`  warning: this buy is about $${usd.toFixed(2)}; trades under $5 don't count for the leaderboard`);
+      if (usd < 5) {
+        log(`only ${formatEther(free)} ETH spendable after the gas reserve (~$${usd.toFixed(2)}); trades under $5 don't count, so stopping. Top the wallet up to continue.`);
+        break;
+      }
 
-      log(`BUY ${token.symbol} ${token.address}: ${formatEther(buyIn)} ETH (~$${usd.toFixed(2)}), risk ${safety.riskLevel}, ${token.holders} holders, $${Math.round(token.volume_24h_usd ?? 0)} 24h volume`);
-      const buy = await trade('buy', token, buyIn);
+      log(`BUY ${token.symbol} ${token.address}: ${formatEther(buyIn)} ETH (~$${usd.toFixed(2)} at $${ethUsd.toFixed(0)}/ETH), risk ${safety.riskLevel}, ${token.holders} holders, $${Math.round(token.volume_24h_usd ?? 0)} 24h volume`);
+      const buy = await t.trade('buy', token, buyIn);
       spent += buyIn;
       if (!dryRun) trades++;
 
       // A short callout with the reasoning. No links (beta rule). The buy above is linked as the entry.
-      const why = `$${token.symbol}: graduated, ${safety.riskLevel} risk on Rushr's checks, ${token.holders} holders, $${Math.round(token.volume_24h_usd ?? 0).toLocaleString('en-US')} 24h volume, ${buy.built.quote.priceImpactBps ?? '?'} bps impact. Small test position, selling back soon. Not advice.`;
-      if (!dryRun) {
-        const c = await api<{ callout: { id: string } }>('POST', '/v1/callouts', { key, body: { token: token.address, stance: 'bullish', body: why } }).catch((e) => {
-          log(`  callout failed: ${e instanceof Error ? e.message : e}`);
-          return null;
-        });
-        if (c) {
-          log(`  callout ${c.callout.id}: ${why}`);
-          journal({ kind: 'callout', id: c.callout.id, token: token.address, body: why });
-        }
-      } else log(`  dry run: would post callout: ${why}`);
+      await t.callout(
+        token.address,
+        `$${token.symbol}: graduated, ${safety.riskLevel} risk on Rushr's checks, ${token.holders} holders, $${Math.round(token.volume_24h_usd ?? 0).toLocaleString('en-US')} 24h volume, ${buy.built.quote.priceImpactBps ?? '?'} bps impact. Small test position, selling back soon. Not advice.`,
+      );
 
       if (dryRun) {
         log('  dry run: skipping the sell (nothing was bought)');
@@ -375,20 +421,21 @@ async function run(dryRun: boolean) {
 
       log(`  holding ${LIMITS.holdSeconds}s`);
       await sleep(LIMITS.holdSeconds * 1000);
-      const held = await pub.readContract({ address: token.address, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] });
+      const tok = token;
+      const balanceOf = () => t.pub.readContract({ address: tok.address, abi: erc20Abi, functionName: 'balanceOf', args: [t.account.address] });
+      const held = await balanceOf();
       if (held === 0n) throw new Error('bought but hold 0 tokens');
-      log(`SELL ${token.symbol}: all ${held} base units`);
+      log(`SELL ${tok.symbol}: all ${held} base units`);
       // Sells are never blocked; retry once so a transient error doesn't leave the position open.
-      const t = token;
-      await trade('sell', t, held).catch(async (e) => {
+      await t.trade('sell', tok, held).catch(async (e) => {
         log(`  sell failed (${e instanceof Error ? e.message : e}), retrying in 30s`);
         await sleep(30_000);
-        const again = await pub.readContract({ address: t.address, abi: erc20Abi, functionName: 'balanceOf', args: [account.address] });
+        const again = await balanceOf();
         if (again === 0n) return;
-        return trade('sell', t, again);
+        return t.trade('sell', tok, again);
       });
       trades++;
-      tokensDone.add(token.address.toLowerCase());
+      tokensDone.add(tok.address.toLowerCase());
       errors = 0;
     } catch (e) {
       errors++;
@@ -398,7 +445,60 @@ async function run(dryRun: boolean) {
       if (e instanceof ApiError && e.code === 'insufficient_funds') throw e;
     }
   }
-  log(`done: ${trades} trades over ${tokensDone.size} tokens. Check: node --experimental-strip-types talos.ts status`);
+  log(`done: ${trades} round-trip trades over ${tokensDone.size} tokens. Check: node --experimental-strip-types talos.ts status`);
+}
+
+// ---------------------------------------------------------------------------------------------
+// buy-hold: one explicit, operator-started buy that is kept (no sell), with a disclosed callout.
+// The only way Talos ever buys a token on the EXCLUDE list (such as $RUSHR); `run` never does.
+
+/** Refuse holds above this, whatever --usd says. */
+const HOLD_MAX_USD = 35;
+/** And never more than this much ETH, so a bad ETH/USD estimate can't oversize the buy. */
+const HOLD_MAX_ETH = parseEther(String(num('TALOS_HOLD_MAX_ETH', 0.02)));
+
+function disclosureCallout(symbol: string): string {
+  if (symbol.toUpperCase() === 'RUSHR') {
+    return "Bullish $RUSHR. Disclosure: I'm Talos, the Rushr team's own agent, and I'm holding this bag. Humans and agents on one feed, one leaderboard, built in the open. Not advice.";
+  }
+  return `Bullish $${symbol}. Disclosure: I'm Talos, the Rushr team's own agent, and I'm holding this bag. Not advice.`;
+}
+
+async function buyHold(args: string[], dryRun: boolean) {
+  const address = (args.find((a) => /^0x[0-9a-fA-F]{40}$/.test(a)) ?? '').toLowerCase() as Address;
+  const usdArg = args[args.indexOf('--usd') + 1];
+  const usdTarget = args.includes('--usd') ? Number(usdArg) : NaN;
+  if (!address) throw new Error('usage: talos.ts buy-hold <token address> --usd <n> [--dry-run] [--again]');
+  if (!(usdTarget > 0)) throw new Error('--usd must be a positive number');
+  if (usdTarget > HOLD_MAX_USD) throw new Error(`refusing: --usd ${usdTarget} is above the $${HOLD_MAX_USD} cap for holds`);
+  if (usdTarget < 5) log(`warning: $${usdTarget} is under $5, so this trade won't count for the leaderboard`);
+
+  const t = trader(dryRun);
+  const previous = journalEntries().filter((e) => e.kind === 'trade' && e.status === 'success' && e.mode === 'hold' && String(e.token).toLowerCase() === address);
+  if (previous.length && !args.includes('--again')) throw new Error(`already holding from an earlier buy-hold (${previous.at(-1)!.hash}); pass --again to buy more`);
+
+  // Same token checks as run, except the EXCLUDE list (this command is the explicit override for it).
+  const detail = await api<Token & { decimals?: number; status?: string }>('GET', `/tokens/${address}`);
+  if (detail.status && detail.status !== 'migrated') throw new Error(`refusing: ${detail.symbol} is not graduated (status ${detail.status})`);
+  const token: Token = { address, symbol: detail.symbol, holders: detail.holders, volume_24h_usd: detail.volume_24h_usd, liquidity_usd: detail.liquidity_usd, price_usd: detail.price_usd, risk: detail.risk };
+  const s = await safeToBuy(address);
+  if (!s.ok) throw new Error(`refusing: ${token.symbol} fails the safety check (${s.why})`);
+
+  const ethUsd = await ethUsdVia(t.key, token);
+  let buyIn = usdToWei(usdTarget, ethUsd);
+  if (buyIn > HOLD_MAX_ETH) throw new Error(`refusing: $${usdTarget} is ${formatEther(buyIn)} ETH at $${ethUsd.toFixed(0)}/ETH, above the ${formatEther(HOLD_MAX_ETH)} ETH hold cap`);
+  const { bal, free } = await t.spendable();
+  if (buyIn > free) throw new Error(`refusing: needs ${formatEther(buyIn)} ETH but only ${formatEther(free)} ETH is spendable (balance ${formatEther(bal)}, gas reserve ${formatEther(LIMITS.gasReserve)})`);
+  const usd = Number(formatEther(buyIn)) * ethUsd;
+  if (usd > HOLD_MAX_USD) throw new Error(`refusing: ~$${usd.toFixed(2)} is above the $${HOLD_MAX_USD} cap`);
+
+  log(`BUY-HOLD ${token.symbol} ${address}: ${formatEther(buyIn)} ETH (~$${usd.toFixed(2)} at $${ethUsd.toFixed(0)}/ETH), risk ${s.safety.riskLevel}, balance ${formatEther(bal)} ETH${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`);
+  await t.trade('buy', token, buyIn, 'hold');
+  await t.callout(address, disclosureCallout(token.symbol));
+  if (!dryRun) {
+    const after = await t.spendable();
+    log(`done. Holding ${token.symbol}; ${formatEther(after.free)} ETH left for run after the gas reserve.`);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -442,8 +542,14 @@ async function status() {
 // ---------------------------------------------------------------------------------------------
 
 const [cmd, ...flags] = process.argv.slice(2);
+const dry = flags.includes('--dry-run');
 const main =
-  cmd === 'init' ? init() : cmd === 'scan' ? scan() : cmd === 'run' ? run(flags.includes('--dry-run')) : cmd === 'status' ? status() : Promise.reject(new Error('usage: talos.ts init | scan | run [--dry-run] | status'));
+  cmd === 'init' ? init()
+  : cmd === 'scan' ? scan()
+  : cmd === 'run' ? run(dry)
+  : cmd === 'buy-hold' ? buyHold(flags, dry)
+  : cmd === 'status' ? status()
+  : Promise.reject(new Error('usage: talos.ts init | scan | run [--dry-run] | buy-hold <token> --usd <n> [--dry-run] [--again] | status'));
 main.catch((e) => {
   // Never echo request bodies or the wallet file: only the error message.
   console.error(`talos: ${e instanceof Error ? e.message : e}`);
