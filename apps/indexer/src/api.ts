@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import postgres, { type Sql } from 'postgres';
-import { tagHolders } from '@rushr/core';
+import { ROBINHOOD_CHAIN, tagHolders } from '@rushr/core';
 import { dbUrl, type Env } from './env';
 import { hydrator } from './hydrator';
 import {
@@ -266,7 +266,9 @@ api.get('/search', async (c) => {
 });
 
 /** Treasury, platform fees and (after $RUSHR) buybacks, for the public Transparency page (transparency.ts). */
-api.get('/transparency', async (c) => c.json(await transparency(c.var.sql, c.env.PUBLIC_RPC_URL), 200, cache(TRANSPARENCY_CACHE_S)));
+api.get('/transparency', async (c) => c.json(
+    await transparency(c.var.sql, [c.env.PUBLIC_RPC_URL ?? ROBINHOOD_CHAIN.publicRpc, ...[await chainUrl(c)].filter((u): u is string => !!u)]),
+    200, cache(TRANSPARENCY_CACHE_S)));
 
 /** Headline numbers for the landing page. */
 api.get('/stats', async (c) => {

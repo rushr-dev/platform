@@ -121,37 +121,50 @@ async function ledgerTotals(sql: Sql, ethNow: number | null, range?: { from: Dat
 }
 
 /**
- * Treasury balances, one batched call, memoized per isolate for the cache window. Read from the chain's
- * public RPC, not Alchemy: two calls a minute that cost nothing, and still answer while the indexer is
- * paused or Alchemy is out of capacity.
+ * Treasury balances, one batched call per source: the chain's public RPC first (free), then our Alchemy
+ * URL (skipped while paused). The public RPC rate-limits Cloudflare's shared egress, so it often fails
+ * from a Worker. The last good reading is kept in indexer_state ('treasury_balances') and served with its
+ * time when every source fails; memoized per isolate for the cache window.
  */
-let balanceMemo: { at: number; value: Record<'ETH' | 'USDG', { raw: string; amount: string }> | null } | null = null;
-async function treasuryBalances(rpcUrl: string, treasury: string) {
-  if (balanceMemo && Date.now() - balanceMemo.at < TRANSPARENCY_CACHE_S * 1000) return balanceMemo.value;
-  try {
-    const [eth, usdg] = await new Rpc(rpcUrl).batch<string>([
-      { method: 'eth_getBalance', params: [treasury, 'latest'] },
-      { method: 'eth_call', params: [{ to: QUOTES.USDG, data: `0x70a08231${treasury.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'] },
-    ]);
-    if (eth == null || usdg == null) throw new Error('balance call failed');
-    const e = BigInt(eth);
-    const u = BigInt(usdg === '0x' ? 0 : usdg);
-    balanceMemo = { at: Date.now(), value: { ETH: { raw: e.toString(), amount: formatUnits(e, 18) }, USDG: { raw: u.toString(), amount: formatUnits(u, 6) } } };
-  } catch (err) {
-    console.error('treasury balance failed', err);
-    if (!balanceMemo) return null;
-  }
-  return balanceMemo!.value;
+type Balances = { ETH: { raw: string; amount: string }; USDG: { raw: string; amount: string }; at: string };
+let balanceMemo: { at: number; value: Balances } | null = null;
+
+async function readBalances(rpcUrl: string, treasury: string): Promise<Balances> {
+  const [eth, usdg] = await new Rpc(rpcUrl).batch<string>([
+    { method: 'eth_getBalance', params: [treasury, 'latest'] },
+    { method: 'eth_call', params: [{ to: QUOTES.USDG, data: `0x70a08231${treasury.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'] },
+  ]);
+  if (eth == null || usdg == null) throw new Error('balance call failed');
+  const e = BigInt(eth);
+  const u = BigInt(usdg === '0x' ? 0 : usdg);
+  return { ETH: { raw: e.toString(), amount: formatUnits(e, 18) }, USDG: { raw: u.toString(), amount: formatUnits(u, 6) }, at: new Date().toISOString() };
 }
 
-/** The whole /transparency body. `rpcUrl` defaults to the chain's public RPC (see treasuryBalances). */
-export async function transparency(sql: Sql, rpcUrl: string = ROBINHOOD_CHAIN.publicRpc) {
+async function treasuryBalances(sql: Sql, sources: string[], treasury: string): Promise<Balances | null> {
+  if (balanceMemo && Date.now() - balanceMemo.at < TRANSPARENCY_CACHE_S * 1000) return balanceMemo.value;
+  for (const url of sources) {
+    try {
+      const value = await readBalances(url, treasury);
+      balanceMemo = { at: Date.now(), value };
+      await sql`insert into indexer_state (key, value) values ('treasury_balances', ${sql.json(value as never)})
+        on conflict (key) do update set value = excluded.value, updated_at = now()`.catch(() => undefined);
+      return value;
+    } catch (err) {
+      console.error('treasury balance failed', new URL(url).host, String(err).slice(0, 200));
+    }
+  }
+  const [last] = await sql<{ value: Balances }[]>`select value from indexer_state where key = 'treasury_balances'`.catch(() => []);
+  return last?.value ?? balanceMemo?.value ?? null;
+}
+
+/** The whole /transparency body. `rpcUrls`: where to read treasury balances, in order (see treasuryBalances). */
+export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAIN.publicRpc]) {
   const treasury = DEFAULT_TRADE_CONFIG.feeRecipient;
   const [[eth], [season], balances] = await Promise.all([
     sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`,
     sql<{ id: string; name: string; starts_at: Date; ends_at: Date }[]>`
       select id, name, starts_at, ends_at from seasons where now() >= starts_at and now() < ends_at order by starts_at desc limit 1`,
-    treasuryBalances(rpcUrl, treasury),
+    treasuryBalances(sql, rpcUrls, treasury),
   ]);
   const ethNow = eth?.value.usd ?? null;
   const [allTime, seasonTotals] = await Promise.all([
