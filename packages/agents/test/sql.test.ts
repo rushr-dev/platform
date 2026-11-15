@@ -23,7 +23,7 @@ describe.skipIf(!pg)('leaderboardInputs (local Postgres)', () => {
       values (${o.tx ?? `0xtx${n}`}, ${n}, ${o.tok}, ${o.pool ?? 'pool_' + o.tok}, ${o.block ?? 1000 + n}, ${at(o.min)}, ${o.trader}, ${o.side},
         ${(BigInt(o.tokens) * E18).toString()}, '0x0', '0', ${o.usd})`;
   };
-  /** 20 outside traders so the token passes the distinct-traders rule. */
+  /** 20 outside traders per token (realistic volume; no rule depends on it any more). */
   const crowd = async (tok: string) => {
     for (let i = 0; i < 20; i++) await swap({ tok, trader: `0xcrowd${i}`, side: 'buy', tokens: 1, usd: 10, min: 1 });
   };
@@ -39,13 +39,13 @@ describe.skipIf(!pg)('leaderboardInputs (local Postgres)', () => {
     }
     await token('tok_dev', '0xdev', 2);
     await crowd('tok_dev');
-    await token('tok_thin', '0xsomeone', 2); // only 1 trader: excluded
+    await token('tok_thin', '0xsomeone', 2); // only 1 trader: counted (no distinct-trader rule)
 
     // alice: +$100 realized on tok_a, a held position on tok_b.
     await swap({ tok: 'tok_a', trader: '0xalice', side: 'buy', tokens: 100, usd: 100, min: 10 });
     await swap({ tok: 'tok_a', trader: '0xalice', side: 'sell', tokens: 100, usd: 200, min: 20 });
     await swap({ tok: 'tok_b', trader: '0xalice', side: 'buy', tokens: 50, usd: 50, min: 10 });
-    // counted: a $2 trade (no size floor). excluded: atomic round trip, thin token.
+    // counted: a $2 trade (no size floor), a thin token. excluded: atomic round trip.
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'buy', tokens: 1, usd: 2, min: 10 });
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'buy', tokens: 10, usd: 10, min: 11, tx: '0xrt' });
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'sell', tokens: 10, usd: 30, min: 11, tx: '0xrt' });
@@ -66,7 +66,7 @@ describe.skipIf(!pg)('leaderboardInputs (local Postgres)', () => {
     expect(members.map((m) => m.id).sort()).toEqual(['alice', 'bot', 'dev']);
     expect(members.find((m) => m.id === 'bot')!.firstFunder).toBe('0xalice');
     const key = (a: { memberId: string; token: string }) => `${a.memberId}:${a.token}`;
-    expect(aggs.map(key).sort()).toEqual(['alice:tok_a', 'alice:tok_b', 'alice:tok_c', 'bot:tok_b', 'dev:tok_dev']);
+    expect(aggs.map(key).sort()).toEqual(['alice:tok_a', 'alice:tok_b', 'alice:tok_c', 'alice:tok_thin', 'bot:tok_b', 'dev:tok_dev']);
     expect(aggs.find((x) => key(x) === 'alice:tok_c')).toMatchObject({ trades: 1, boughtUsd: 2 });
     const a = aggs.find((x) => key(x) === 'alice:tok_a')!;
     expect(a).toMatchObject({ boughtTokens: 100, boughtUsd: 100, soldTokens: 100, soldUsd: 200, trades: 2 });
@@ -79,9 +79,10 @@ describe.skipIf(!pg)('leaderboardInputs (local Postgres)', () => {
     const { members, aggs } = await leaderboardInputs(sql, { from: T0, to: at(120) });
     const lb = rank(members, aggs, 'all', { minTrades: 1, minTokens: 1, teamCap: 3, minLiquidityForGainsUsd: 10_000, maxGainShareOfLiquidity: 0.25 });
     const alice = lb.rows.find((r) => r.member.id === 'alice')!;
-    // tok_a +100 realized, tok_b 50 tokens at $2 = +50 unrealized; bot linked: 10 tokens bought for $10, worth $20 = +10.
-    expect(alice.pnl).toBeCloseTo(150);
-    expect(alice.score).toBeCloseTo(160);
+    // tok_a +100 realized, tok_b 50 tokens at $2 = +50, tok_thin 10 for $10 worth $20 = +10, tok_c $2 dust = 0;
+    // bot linked: 10 tokens bought for $10, worth $20 = +10.
+    expect(alice.pnl).toBeCloseTo(160);
+    expect(alice.score).toBeCloseTo(170);
     expect(alice.inclAgents).toBe(true);
   });
 });

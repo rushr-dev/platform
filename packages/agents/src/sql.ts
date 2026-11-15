@@ -9,13 +9,11 @@ export interface LeaderboardInputs {
 }
 
 export interface SwapRules {
-  /** A token counts only if this many distinct wallets traded it in the window. */
-  minTokenTraders: number;
   /** A funder that funded more wallets than this (exchange, bridge, faucet) doesn't link anyone. */
   maxFunderFanout: number;
 }
 
-export const DEFAULT_SWAP_RULES: SwapRules = { minTokenTraders: 20, maxFunderFanout: 50 };
+export const DEFAULT_SWAP_RULES: SwapRules = { maxFunderFanout: 50 };
 
 export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date }, rules: SwapRules = DEFAULT_SWAP_RULES): Promise<LeaderboardInputs> {
   const { from, to } = window;
@@ -49,11 +47,6 @@ export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date
       select s.*, m.id as member_id, m.team, m.funder, m.owner_id, m.owner_changed_at
       from swaps s join m on m.wallet = s.trader
       where s.time >= ${from} and s.time < ${to} and s.usd is not null
-    ),
-    busy as (
-      select token from swaps
-      where token in (select distinct token from ms) and time >= ${from} and time < ${to}
-      group by token having count(distinct trader) >= ${rules.minTokenTraders}
     )
     select ms.member_id, ms.token,
       count(*)::int as trades,
@@ -70,7 +63,7 @@ export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date
       bool_or(ms.owner_id is not null) as owned
     from ms
     join tokens t on t.address = ms.token
-    where ms.token in (select token from busy)
+    where true
       -- Atomic round trips (buy and sell of the same token by one wallet in one tx).
       and not exists (
         select 1 from swaps r where r.tx = ms.tx and r.trader = ms.trader and r.token = ms.token and r.side <> ms.side)
