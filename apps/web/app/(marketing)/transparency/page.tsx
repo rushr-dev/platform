@@ -27,6 +27,9 @@ export const metadata: Metadata = {
 };
 
 const SOURCE = 'https://github.com/rushr-dev/platform';
+/** The $RUSHR contract on Robinhood Chain (PONS fair launch). */
+const RUSHR_TOKEN = '0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed';
+
 const SOURCE_LABEL: Record<string, string> = { platform_fees: 'Platform fees', creator_tax: '$RUSHR creator tax' };
 
 const amount = (n: number | null, digits: number, min = digits) =>
@@ -256,11 +259,29 @@ export default async function TransparencyPage() {
             <Section id="addresses" title="Token addresses">
               <table className="w-full border-collapse text-left text-[15px]">
                 <tbody>
-                  {['$RUSHR token', 'Dev burn transaction', 'Team wallet', 'Buyback wallet'].map((k) => (
+                  {(
+                    [
+                      ['$RUSHR token', RUSHR_TOKEN],
+                      ['Dev burn transaction', null],
+                      ['Team wallet', null],
+                      ['Buyback wallet', null],
+                    ] as const
+                  ).map(([k, addr]) => (
                     <tr key={k} className="border-b border-line first:border-t first:border-t-ink/15">
                       <td className="w-1/2 py-3 pr-4 text-muted">{k}</td>
                       <td className="py-3">
-                        <Pending />
+                        {addr ? (
+                          <a
+                            href={`https://robinhoodchain.blockscout.com/token/${addr}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="break-all font-mono text-[13px] text-ink underline decoration-ink/25 underline-offset-2 hover:decoration-ink"
+                          >
+                            {addr}
+                          </a>
+                        ) : (
+                          <Pending />
+                        )}
                       </td>
                     </tr>
                   ))}

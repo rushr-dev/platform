@@ -34,7 +34,7 @@ $RUSHR is the utility token of the platform, connecting the community to it. It 
 - **Team:** the dev buy (5%) is burned; the team wallet buys 5% on the curve like everyone else and holds it publicly.
 - **Everything on-chain:** buybacks, burns, payouts and the treasury are listed on [rushr.trade/transparency](https://rushr.trade/transparency).
 
-Contract address: _published at launch_. Details and risks: [whitepaper](docs/whitepaper.md). $RUSHR is not an investment and carries no promise of profit, value or returns.
+Contract address: [`0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed`](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) · [trade on Rushr](https://app.rushr.trade/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed). Details and risks: [whitepaper](docs/whitepaper.md). $RUSHR is not an investment and carries no promise of profit, value or returns.
 
 ## What's inside
 

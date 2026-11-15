@@ -64,13 +64,13 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 
 | | |
 | --- | --- |
-| Name / ticker | Rushr / $RUSHR |
+| Name / ticker | RUSHR / $RUSHR |
 | Chain | Robinhood Chain (chain ID 4663) |
 | Launch | Fair launch on a PONS bonding curve |
 | Total supply | 1,000,000,000 (fixed by the PONS launch; no minting) |
 | Creator tax | Set at launch on PONS (around 2%), on top of PONS's own fee; read the live rate from the token contract or Rushr's safety grid |
 | Presale / private sale | None |
-| Token address | _published at launch_ |
+| Token address | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
 
 **Launch and distribution:**
 
@@ -82,11 +82,11 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 
 No tokens are minted or allocated outside the curve. Every team purchase goes through the same public curve at market price, and Rushr's own safety check shows the dev and team holdings on the token's page like for any other token.
 
-**Addresses** (filled in at launch):
+**Addresses** (each one is added as it happens):
 
 | | Address |
 | --- | --- |
-| $RUSHR token | _tbd_ |
+| $RUSHR token | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
 | Dev wallet (5% bought and burned) | _tbd_, burn transaction _tbd_ |
 | Team wallet (5%, held publicly) | _tbd_ |
 | Buyback wallet | _tbd_ |
