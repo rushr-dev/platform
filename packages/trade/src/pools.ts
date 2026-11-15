@@ -15,6 +15,9 @@ import type { PoolKey } from './universal-router';
 import { hintsFromApiPools, type ApiPoolRow } from './api-pools';
 import { ABIS, launchpadForHook } from '@rushr/core/chain/robinhood';
 
+/** PONS v2 migration hook (packages/core registry, launchpad "pons"). */
+const PONS_V4_HOOK: Address = '0xe5e702641ea86f4ae6cc3cdaed2b886f976be044';
+
 export interface DiscoverOptions {
   quoteAsset: QuoteAsset;
   /** Pool keys known from the indexer (best source for hooked pools such as Doppler and lift.fun). */
@@ -196,6 +199,13 @@ async function discoverV4(client: PublicClient, token: Address, quotes: Address[
   for (const q of quotes) {
     const [c0, c1] = sortCurrencies(q, token);
     for (const s of V4_STANDARD_POOLS) add({ currency0: c0, currency1: c1, fee: s.fee, tickSpacing: s.tickSpacing, hooks: zeroAddress });
+  }
+  // A graduated PONS token always lands in the same v4 pool shape: native ETH / token, fee 0, tick spacing 200,
+  // the PONS v2 hook. Checked on-chain for every token, so a sell or buy right after migration finds the pool
+  // even when the API's pool list is missing, slow or rate-limited. Not initialized -> dropped by getSlot0 below.
+  if (quotes.map(lc).includes(zeroAddress)) {
+    const [c0, c1] = sortCurrencies(zeroAddress, token);
+    add({ currency0: c0, currency1: c1, fee: 0, tickSpacing: 200, hooks: PONS_V4_HOOK });
   }
 
   const quoteSet = new Set(quotes.map(lc));

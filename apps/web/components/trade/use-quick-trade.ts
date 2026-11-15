@@ -313,8 +313,9 @@ export function useQuickTrade(tokenArg: TradeToken) {
         simulate: trader !== GUEST,
       };
       let t = side === 'buy' ? await quickBuy(client, { token: token.address, ethWei: amount, trader }, opts) : await quickSell(client, { token: token.address, trader, amount }, opts);
-      // The bonding curve completed since the pools were read: re-discover once (now a Uniswap pool).
-      if (t.blockers.some((b) => b.code === 'CURVE_GRADUATED') && !rerouted) {
+      // The bonding curve completed since the pools were read, or the token migrated after this page cached an
+      // empty pool list (a graduated curve with no Uniswap pool yet): re-discover once, the new pool is there now.
+      if (t.blockers.some((b) => b.code === 'CURVE_GRADUATED' || b.code === 'NO_ROUTE') && !rerouted) {
         dropPools(token.address);
         return build(side, amount, silent, probe, true);
       }
