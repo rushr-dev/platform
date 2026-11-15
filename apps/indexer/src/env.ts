@@ -8,6 +8,8 @@ export interface Env {
   CHAIN_ID: string;
   BLOCKSCOUT_API: string;
   RPC_URL: string;
+  /** Override for the chain's public RPC (treasury balances on /transparency; tests point it nowhere). */
+  PUBLIC_RPC_URL?: string;
   /** Bearer token for /admin/* in production (wrangler secret). */
   ADMIN_TOKEN?: string;
   DATABASE_URL?: string;

@@ -50,8 +50,6 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
     db = await freshDb('transparency');
     const sql = db.sql;
     await sql`insert into indexer_state (key, value) values ('eth_usd', ${sql.json({ usd: 2000 })})`;
-    // The paused flag keeps the test off the network (no treasury balance read).
-    await sql`insert into indexer_state (key, value) values ('paused', ${sql.json({ paused: true, pausedAt: new Date().toISOString() })})`;
     await sql`insert into seasons (id, name, starts_at, ends_at) values ('s0', 'Season 0', now() - interval '1 day', now() + interval '29 days')`;
     await sql`insert into trades_ledger ${sql([
       row('1', { venue: 'pons-curve', ts: new Date() }),
@@ -67,7 +65,7 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
 
   it('totals confirmed fees all-time and for the current season, without trader addresses', async () => {
     resetPauseCache();
-    const res = await api.request('/transparency', {}, { DATABASE_URL: db.url, RPC_URL: 'http://rpc.invalid' }, ctx);
+    const res = await api.request('/transparency', {}, { DATABASE_URL: db.url, RPC_URL: 'http://rpc.invalid', PUBLIC_RPC_URL: 'http://127.0.0.1:9' }, ctx);
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toContain('s-maxage=60');
     const body = (await res.json()) as Awaited<ReturnType<typeof transparency>>;
@@ -78,6 +76,7 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
     expect(body.fees.allTime.byRoute.curve.trades).toBe(1);
     expect(body.fees.allTime.byRoute.uniswap.trades).toBe(2);
     expect(body.fees.season).toMatchObject({ id: 's0', trades: 2, traders: 1, usd: 4.5 });
+    expect(body.treasury.balances).toBeNull(); // RPC unreachable: null, not an error
     expect(body.buybacks).toEqual([]);
     expect(JSON.stringify(body)).not.toContain('1'.repeat(40));
   });

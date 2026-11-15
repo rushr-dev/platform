@@ -120,10 +120,13 @@ async function ledgerTotals(sql: Sql, ethNow: number | null, range?: { from: Dat
   return feeTotals(rows, c ?? { trades: 0, traders: 0 });
 }
 
-/** Treasury balances, one batched RPC call, memoized per isolate for the cache window. */
+/**
+ * Treasury balances, one batched call, memoized per isolate for the cache window. Read from the chain's
+ * public RPC, not Alchemy: two calls a minute that cost nothing, and still answer while the indexer is
+ * paused or Alchemy is out of capacity.
+ */
 let balanceMemo: { at: number; value: Record<'ETH' | 'USDG', { raw: string; amount: string }> | null } | null = null;
-async function treasuryBalances(rpcUrl: string | null, treasury: string) {
-  if (!rpcUrl) return balanceMemo?.value ?? null; // indexer paused: last known, else null
+async function treasuryBalances(rpcUrl: string, treasury: string) {
   if (balanceMemo && Date.now() - balanceMemo.at < TRANSPARENCY_CACHE_S * 1000) return balanceMemo.value;
   try {
     const [eth, usdg] = await new Rpc(rpcUrl).batch<string>([
@@ -141,8 +144,8 @@ async function treasuryBalances(rpcUrl: string | null, treasury: string) {
   return balanceMemo!.value;
 }
 
-/** The whole /transparency body. `rpcUrl` null (indexer paused) skips the live balance read. */
-export async function transparency(sql: Sql, rpcUrl: string | null) {
+/** The whole /transparency body. `rpcUrl` defaults to the chain's public RPC (see treasuryBalances). */
+export async function transparency(sql: Sql, rpcUrl: string = ROBINHOOD_CHAIN.publicRpc) {
   const treasury = DEFAULT_TRADE_CONFIG.feeRecipient;
   const [[eth], [season], balances] = await Promise.all([
     sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`,

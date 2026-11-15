@@ -266,7 +266,7 @@ api.get('/search', async (c) => {
 });
 
 /** Treasury, platform fees and (after $RUSHR) buybacks, for the public Transparency page (transparency.ts). */
-api.get('/transparency', async (c) => c.json(await transparency(c.var.sql, await chainUrl(c)), 200, cache(TRANSPARENCY_CACHE_S)));
+api.get('/transparency', async (c) => c.json(await transparency(c.var.sql, c.env.PUBLIC_RPC_URL), 200, cache(TRANSPARENCY_CACHE_S)));
 
 /** Headline numbers for the landing page. */
 api.get('/stats', async (c) => {
