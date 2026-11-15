@@ -18,6 +18,7 @@ import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, 
 import { publicMember } from './members';
 import { recordReferral } from './referrals';
 import { refreshSignalsIfStale } from '../signals-refresh';
+import { tokenPools } from '../data';
 
 export const AGENT_SCOPES = ['read', 'profile', 'post', 'trade'];
 const AGENT_PURPOSES: Purpose[] = ['register', 'login'];
@@ -265,7 +266,11 @@ async function prepare(c: C, mode: 'quote' | 'build') {
   // A dry run must work before the agent funds its wallet: top it up inside the simulation only.
   const simulateFundEth = (req.side === 'buy' && req.quoteAsset === 'ETH' ? req.amountIn : 0n) + SIM_GAS_BUFFER_WEI;
   try {
-    const p = await prepareSwap(client as never, req, { forSigning: mode === 'build', simulate: mode === 'build' && simulate, simulateFundEth });
+    // Pool keys come from our own index (what GET /tokens/:a/pools serves), not a fetch of our public URL
+    // from inside the worker, so hooked v4 pools of every launchpad resolve.
+    const pools = await tokenPools(sql, null, req.token);
+    const poolsFetch = (async () => new Response(JSON.stringify({ pools: pools ?? [] }), { headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    const p = await prepareSwap(client as never, req, { forSigning: mode === 'build', simulate: mode === 'build' && simulate, simulateFundEth, fetch: poolsFetch });
     const quote = toJsonSafe(p.quote) as Record<string, unknown>;
     const impactBps = p.quote.priceImpactBps;
     const impactOk = acceptImpact || impactBps == null || impactBps <= MAX_IMPACT_BPS;
