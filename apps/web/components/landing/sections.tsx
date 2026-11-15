@@ -461,10 +461,17 @@ const LINKS = [
   [245, 130, 290, 108, true],
 ] as const;
 
-function Card({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
+function Card({ eyebrow, title, badge, children }: { eyebrow: string; title: string; badge?: string; children: React.ReactNode }) {
   return (
     <div className="relative flex h-full flex-col overflow-hidden rounded-3xl border border-line bg-surface p-6 shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)] md:p-7">
-      <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">{eyebrow}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">{eyebrow}</p>
+        {badge ? (
+          <span className="shrink-0 rounded-full border border-dashed border-ink/25 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+            {badge}
+          </span>
+        ) : null}
+      </div>
       <h3 className="mt-3 max-w-[22ch] text-2xl font-semibold leading-[1.1] tracking-[-0.03em]">{title}</h3>
       <div className="relative mt-auto pt-6">{children}</div>
     </div>
@@ -506,7 +513,7 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
       </Reveal>
 
       <Reveal delay={0.06}>
-        <Card eyebrow="Bubble map" title="see who's really holding.">
+        <Card eyebrow="Bubble map" title="see who's really holding." badge="Coming soon">
           <svg
             viewBox="0 0 340 190"
             className="mx-auto w-full max-w-[360px]"
@@ -529,7 +536,7 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
             ))}
           </svg>
           <p className="mt-3 text-sm text-muted">
-            <span className="text-risk-high">Red</span> is a cluster: wallets funded from one source, often the dev or a bundle.
+            Holder clusters, mapped. <span className="text-risk-high">Red</span> is wallets funded from one source, often the dev or a bundle.
           </p>
         </Card>
       </Reveal>
