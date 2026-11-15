@@ -21,7 +21,10 @@ export const tokens = pgTable(
     name: text('name').notNull(),
     symbol: text('symbol').notNull(),
     decimals: integer('decimals').notNull(),
+    /** On-chain totalSupply() as of supplyBlock; later mints and burns (Transfers from/to 0x0) adjust it. */
     totalSupply: amount('total_supply').notNull(),
+    /** Block total_supply was read at; null = unknown (pre-0011 rows, not adjusted until re-read). */
+    supplyBlock: bigint('supply_block', { mode: 'bigint' }),
     deployer: text('deployer').notNull(),
     launchpad: text('launchpad'),
     createdBlock: bigint('created_block', { mode: 'bigint' }).notNull(),

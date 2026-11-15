@@ -2,6 +2,7 @@ import type { Sql } from 'postgres';
 import { V4_PLATFORMS } from '@rushr/core';
 import { Rpc } from './rpc';
 import { WALLET_SQL, walletPositions } from './wallets';
+import { DEAD_WALLETS } from './supply';
 
 const PLATFORM_HOOKS = Object.keys(V4_PLATFORMS);
 const PLATFORM_IDS = PLATFORM_HOOKS.map((h) => V4_PLATFORMS[h as keyof typeof V4_PLATFORMS]!.id);
@@ -346,12 +347,15 @@ export async function minuteCandles(sql: Sql, token: string, interval: string, h
     group by b order by b`;
 }
 
-/** Token page header (GET /tokens/:a): summary + supply/decimals + full signals + dev record + 24h trade count. */
+/** Token page header (GET /tokens/:a): summary + supply (total_supply on-chain, circulating_supply for market cap)/decimals + full signals + dev record + 24h trade count. */
 export async function tokenDetail(sql: Sql, token: string) {
   const [summary] = await tokenSummaries(sql, { addresses: [token] });
   if (!summary) return null;
   const [extra] = await sql`
     select t.deployer, t.total_supply::text as total_supply, t.decimals, t.main_pool, t.created_block::text as created_block,
+      -- What market_cap_usd uses: total_supply minus burn addresses' balances (raw units, like total_supply).
+      greatest(t.total_supply - coalesce((select sum(b.amount) from balances b where b.token = t.address and b.wallet = any(${DEAD_WALLETS})), 0), 0)::text
+        as circulating_supply,
       t.launch_indexed, t.description, s.data as signals, s.updated_at as signals_updated_at
     from tokens t left join signals s on s.token = t.address where t.address = ${token}`;
   const [dev] = await sql`select * from deployer_stats where deployer = ${extra!.deployer}`;

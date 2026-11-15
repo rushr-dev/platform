@@ -7,6 +7,16 @@ interface RpcResponse<T> {
   error?: { code: number; message: string };
 }
 
+export interface TokenMetadata {
+  token: Address;
+  name: string;
+  symbol: string;
+  decimals: number;
+  totalSupply: bigint;
+  /** Block totalSupply was read at; null = unknown (call failed, or read at 'latest'). */
+  supplyBlock: bigint | null;
+}
+
 export class Rpc {
   private id = 0;
   constructor(private url: string) {}
@@ -39,13 +49,29 @@ export class Rpc {
     ]);
   }
 
-  /** name/symbol/decimals/totalSupply for many tokens in one batch. Missing values come back null. */
-  async tokenMetadata(tokens: Address[]) {
+  /**
+   * name/symbol/decimals/totalSupply for many tokens in one batch. Missing values come back empty.
+   * Read at one explicit block, returned as `supplyBlock`: mints and burns after it change the supply
+   * (see tokens.supply_block). Costs one eth_blockNumber per call.
+   */
+  async tokenMetadata(tokens: Address[]): Promise<TokenMetadata[]> {
+    if (!tokens.length) return [];
+    const head = await this.blockNumber();
+    const pinned = await this.metadataAt(tokens, `0x${head.toString(16)}`, head);
+    // A node a block behind the one that answered eth_blockNumber has no state at `head` (or no contract
+    // yet): read those at 'latest' instead, with the supply block unknown (never adjusted, re-read later).
+    const missed = tokens.filter((_, i) => pinned[i]!.supplyBlock == null);
+    if (!missed.length) return pinned;
+    const latest = new Map((await this.metadataAt(missed, 'latest', null)).map((m) => [m.token, m]));
+    return pinned.map((m) => (m.supplyBlock == null ? latest.get(m.token) ?? m : m));
+  }
+
+  private async metadataAt(tokens: Address[], tag: string, block: bigint | null): Promise<TokenMetadata[]> {
     const fns = ['name', 'symbol', 'decimals', 'totalSupply'] as const;
     const calls = tokens.flatMap((t) =>
       fns.map((fn) => ({
         method: 'eth_call',
-        params: [{ to: t, data: encodeFunctionData({ abi: ABIS.erc20, functionName: fn }) }, 'latest'],
+        params: [{ to: t, data: encodeFunctionData({ abi: ABIS.erc20, functionName: fn }) }, tag],
       })),
     );
     const results: (Hex | null)[] = [];
@@ -60,14 +86,34 @@ export class Rpc {
           return null;
         }
       };
+      const supply = get('totalSupply', 3) as bigint | null;
       return {
         token,
         name: (get('name', 0) as string | null) ?? '',
         symbol: (get('symbol', 1) as string | null) ?? '',
         decimals: Number(get('decimals', 2) ?? 18),
-        totalSupply: (get('totalSupply', 3) as bigint | null) ?? 0n,
+        totalSupply: supply ?? 0n,
+        supplyBlock: supply == null ? null : block,
       };
     });
+  }
+
+  /** totalSupply() for many tokens at the current head, with that block (null: the call failed). */
+  async totalSupplies(tokens: Address[]): Promise<{ token: Address; totalSupply: bigint | null; supplyBlock: bigint }[]> {
+    if (!tokens.length) return [];
+    const head = await this.blockNumber();
+    const tag = `0x${head.toString(16)}`;
+    const data = encodeFunctionData({ abi: ABIS.erc20, functionName: 'totalSupply' });
+    const out: { token: Address; totalSupply: bigint | null; supplyBlock: bigint }[] = [];
+    for (let i = 0; i < tokens.length; i += 100) {
+      const chunk = tokens.slice(i, i + 100);
+      const res = await this.batch<Hex>(chunk.map((t) => ({ method: 'eth_call', params: [{ to: t, data }, tag] })));
+      chunk.forEach((token, k) => {
+        const raw = res[k];
+        out.push({ token, totalSupply: raw && raw !== '0x' && raw.length <= 66 ? BigInt(raw) : null, supplyBlock: head });
+      });
+    }
+    return out;
   }
 
   /** Who launched it: the smart-account sender for ERC-4337 txs, else tx.from. */

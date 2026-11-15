@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import postgres, { type Sql } from 'postgres';
-import { ROBINHOOD_CHAIN, tagHolders } from '@rushr/core';
+import { ROBINHOOD_CHAIN, circulatingSupply, tagHolders } from '@rushr/core';
 import { dbUrl, type Env } from './env';
 import { hydrator } from './hydrator';
 import {
@@ -133,7 +133,9 @@ api.get('/tokens/:address/holders', async (c) => {
   if (!loaded) return c.json({ error: 'not found' }, 404);
   const { snapshot, excluded } = loaded;
   const tags = tagHolders(snapshot);
-  const supply = Number(snapshot.totalSupply);
+  // Shares of circulating supply (as signals and GMGN/DexScreener); burn addresses as % of totalSupply.
+  const supply = Number(circulatingSupply(snapshot));
+  const onChain = Number(snapshot.totalSupply);
   const holders = [
     ...snapshot.holders.map((h) => ({
       wallet: h.wallet,
@@ -145,7 +147,10 @@ api.get('/tokens/:address/holders', async (c) => {
     ...excluded.map((h) => ({ wallet: h.wallet, amount: h.amount, tags: [h.kind] as string[], excluded: true, funder: null })),
   ]
     .sort((a, b) => (b.amount > a.amount ? 1 : b.amount < a.amount ? -1 : 0))
-    .map((h) => ({ ...h, amount: h.amount.toString(), pct: supply ? (Number(h.amount) / supply) * 100 : 0 }));
+    .map((h) => {
+      const of = h.tags[0] === 'burn' ? onChain : supply;
+      return { ...h, amount: h.amount.toString(), pct: of ? (Number(h.amount) / of) * 100 : 0 };
+    });
   return c.json({ holders, total: snapshot.holderCount }, 200, cache(5));
 });
 
@@ -175,7 +180,7 @@ api.get('/tokens/:address/bubblemap', async (c) => {
   if (!loaded) return c.json({ error: 'not found' }, 404);
   const { snapshot } = loaded;
   const tags = tagHolders(snapshot);
-  const supply = Number(snapshot.totalSupply);
+  const supply = Number(circulatingSupply(snapshot));
   const nodes = snapshot.holders.slice(0, 60).map((h) => ({
     wallet: h.wallet,
     pct: supply ? (Number(h.amount) / supply) * 100 : 0,

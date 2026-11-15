@@ -22,6 +22,7 @@ import {
   launchPrice,
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
+import { applySupply, circulatingSql } from './supply';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
 const ZERO = NATIVE_ETH;
@@ -301,6 +302,7 @@ export class Pipeline {
           symbol: meta[i]!.symbol.slice(0, 64),
           decimals: meta[i]!.decimals,
           total_supply: meta[i]!.totalSupply.toString(),
+          supply_block: meta[i]!.supplyBlock?.toString() ?? null,
           deployer: l.creator ?? launchers.get(origins.get(l.token)?.tx ?? l.tx) ?? ZERO,
           launchpad: l.launchpad,
           created_block: (origins.get(l.token)?.block ?? l.block).toString(),
@@ -452,7 +454,9 @@ export class Pipeline {
         insert into transfers ${tx(rows.slice(i, i + 1000))} on conflict do nothing returning tx, log_index`;
       for (const row of res) inserted.add(`${row.tx}:${row.log_index}`);
     }
-    await this.applyBalances(tx, transfers.filter((t) => inserted.has(`${t.tx}:${t.logIndex}`)));
+    const fresh = transfers.filter((t) => inserted.has(`${t.tx}:${t.logIndex}`));
+    await this.applyBalances(tx, fresh);
+    await applySupply(tx, fresh);
     return inserted;
   }
 
@@ -630,7 +634,8 @@ export class Pipeline {
       if (newTokens.length) {
         const rows = newTokens.map((n, i) => ({
           address: n.token, name: meta[i]!.name.slice(0, 200), symbol: meta[i]!.symbol.slice(0, 64), decimals: meta[i]!.decimals,
-          total_supply: meta[i]!.totalSupply.toString(), deployer: creators.get(n.origin.tx) ?? ZERO, launchpad: n.pad,
+          total_supply: meta[i]!.totalSupply.toString(), supply_block: meta[i]!.supplyBlock?.toString() ?? null,
+          deployer: creators.get(n.origin.tx) ?? ZERO, launchpad: n.pad,
           created_block: n.origin.block.toString(), created_at: new Date(n.origin.time * 1000), quote: newPools.find((p) => p.token === n.token)!.quote,
           main_pool: n.pool, status: n.migrated ? 'migrated' : 'new',
         }));
@@ -917,17 +922,17 @@ export class Pipeline {
     const last = new Map<string, { price: string; time: number }>();
     for (const { s, priceUsd } of priced) if (priceUsd) last.set(s.token, { price: priceUsd, time: s.time });
     for (const [token, { price, time }] of [...last].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-      const meta = this.tokens.get(token);
-      if (!meta) continue;
-      const mcap = String(Number(price) * (Number(meta.totalSupply) / 10 ** meta.decimals));
+      if (!this.tokens.has(token)) continue;
       const at = new Date(time * 1000);
-      // ATH always counts; current price only moves forward in time (backfill can't overwrite live).
-      await tx`update tokens set
-                 price_usd = case when price_at is null or price_at <= ${at} then ${price}::numeric else price_usd end,
-                 market_cap_usd = case when price_at is null or price_at <= ${at} then ${mcap}::numeric else market_cap_usd end,
-                 price_at = greatest(coalesce(price_at, ${at}), ${at}),
-                 ath_market_cap_usd = greatest(coalesce(ath_market_cap_usd, 0), ${mcap}::numeric), updated_at = now()
-               where address = ${token}`;
+      // Market cap on circulating supply (see circulatingSql). ATH always counts; current price only moves
+      // forward in time (backfill can't overwrite live).
+      await tx`update tokens t set
+                 price_usd = case when t.price_at is null or t.price_at <= ${at} then ${price}::numeric else t.price_usd end,
+                 market_cap_usd = case when t.price_at is null or t.price_at <= ${at} then ${price}::numeric * c.supply else t.market_cap_usd end,
+                 price_at = greatest(coalesce(t.price_at, ${at}), ${at}),
+                 ath_market_cap_usd = greatest(coalesce(t.ath_market_cap_usd, 0), ${price}::numeric * c.supply), updated_at = now()
+               from (${circulatingSql(tx, token)}) c
+               where t.address = ${token}`;
     }
     // PONS curve progress is read from the curves' reserves by the poller every ~15s (curves.ts).
     await tx`update tokens t set

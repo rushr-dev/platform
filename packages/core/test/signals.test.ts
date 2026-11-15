@@ -157,8 +157,11 @@ describe('holder concentration counts people only', () => {
     const pcts = [3.96, 3.89, 3.72, 3.05, 3.04, 2.95, 2.36, 2.34, 2.24, 2.15, 2.04];
     const holders = pcts.map((p, i) => ({ wallet: `p${i}`, amount: (SUPPLY * BigInt(Math.round(p * 100))) / 10_000n }));
     const s = computeSignals(base({ holders, holderCount: 266, burnt: SUPPLY / 20n }));
-    expect(s.top10Pct).toBe(29.7);
+    // 29.7% of totalSupply = 31.3% of the 95% in circulation (holder shares use circulating supply, as
+    // GMGN and DexScreener); burntPct stays a share of totalSupply.
+    expect(s.top10Pct).toBe(31.3);
     expect(s.burntPct).toBe(5);
+    expect(computeSignals(base({ holders, holderCount: 266 })).top10Pct).toBe(29.7);
   });
 });
 
