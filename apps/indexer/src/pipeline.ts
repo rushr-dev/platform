@@ -19,6 +19,7 @@ import {
   type DecodedTransfer,
   type RawLog,
   type PoolInfo,
+  launchPrice,
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
 
@@ -331,10 +332,10 @@ export class Pipeline {
         if (!l.initialPrice) continue;
         const q = this.quoteUsd(l.quote);
         if (!q) continue;
-        const perToken = (Number(l.initialPrice.quoteRaw) / Number(l.initialPrice.tokenRaw)) * 10 ** (meta[i]!.decimals - q.decimals) * q.usd;
-        if (!(perToken > 0) || !Number.isFinite(perToken)) continue;
-        const mcap = perToken * (Number(meta[i]!.totalSupply) / 10 ** meta[i]!.decimals);
-        await tx`update tokens set price_usd = ${perToken}, market_cap_usd = ${mcap}, price_at = ${new Date(l.time * 1000)}
+        // Implausible starting caps (see MAX_LAUNCH_MCAP_USD) are left blank until the first trade.
+        const lp = launchPrice(l.initialPrice, meta[i]!, q);
+        if (!lp) continue;
+        await tx`update tokens set price_usd = ${lp.priceUsd}, market_cap_usd = ${lp.marketCapUsd}, price_at = ${new Date(l.time * 1000)}
                  where address = ${l.token} and price_usd is null`;
       }
       for (const p of r.pools) this.pools.set(p.id, p);
