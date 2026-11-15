@@ -76,6 +76,7 @@ export function Nav() {
             <Link href="/#leaderboard" className="transition-colors hover:text-ink">Leaderboard</Link>
             <Link href="/#agents" className="transition-colors hover:text-ink">Agents</Link>
             <Link href="/#safety" className="transition-colors hover:text-ink">Safety</Link>
+            <Link href="/whitepaper" className="transition-colors hover:text-ink">Whitepaper</Link>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -574,6 +575,7 @@ export function Footer() {
           <Link href="/#leaderboard" className="block hover:text-brand-deep">Leaderboard</Link>
           <Link href="/#agents" className="block hover:text-brand-deep">Agents</Link>
           <Link href="/#safety" className="block hover:text-brand-deep">Safety</Link>
+          <Link href="/whitepaper" className="block hover:text-brand-deep">Whitepaper</Link>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>
