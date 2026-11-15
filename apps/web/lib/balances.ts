@@ -1,19 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createPublicClient, erc20Abi, http, type Address } from 'viem';
+import { createPublicClient, erc20Abi, type Address } from 'viem';
 import { robinhoodChain } from '@rushr/trade';
+import { rpcTransport } from './rpc';
 
 /**
- * Wallet balances over Robinhood Chain's public RPC (CORS-open, no key, no Alchemy cost: the same
- * endpoint the trade package quotes against).
+ * Wallet balances, read through our Alchemy proxy with Robinhood Chain's public RPC as the fallback (lib/rpc.ts).
+ * The same client serves quotes, simulations and sends in the trade code.
  */
 
 export const USDG: Address = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
 const REFRESH_MS = 15_000;
 
 let client: ReturnType<typeof createPublicClient> | null = null;
-export const publicClient = () => (client ??= createPublicClient({ chain: robinhoodChain, transport: http(), batch: { multicall: true } }));
+export const publicClient = () => (client ??= createPublicClient({ chain: robinhoodChain, transport: rpcTransport(), batch: { multicall: true } }));
 
 export interface Balances {
   eth: bigint;

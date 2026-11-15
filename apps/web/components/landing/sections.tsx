@@ -1,13 +1,14 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { preload } from 'react-dom';
-import { GithubLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
+import { GithubLogo, TelegramLogo, XLogo } from '@phosphor-icons/react/dist/ssr';
 import type { RiskLevel, TokenCard, Trade } from '@/lib/api';
 import type { DexToken } from '@/lib/dexscreener';
 import { SocialLinks, TokenAvatar as Icon } from '@/components/terminal/bits';
 import { Art } from './art';
+import { MobileMenu, type NavLink } from './mobile-menu';
 import { Reveal } from './reveal';
-import { SectionHead, WRAP, X_URL } from './ui';
+import { SectionHead, TG_URL, WRAP, X_URL } from './ui';
 import { appHref } from '@/lib/urls';
 
 const usd = (n: number | null | undefined) =>
@@ -57,6 +58,16 @@ const SECONDARY_BTN =
 
 /* ---------------------------------------------------------------- nav */
 
+const GITHUB_URL = 'https://github.com/rushr-dev/platform';
+
+const NAV_LINKS: NavLink[] = [
+  { href: '/#social', label: 'Social' },
+  { href: '/#leaderboard', label: 'Leaderboard' },
+  { href: '/#agents', label: 'Agents' },
+  { href: '/#safety', label: 'Safety' },
+  { href: '/whitepaper', label: 'Whitepaper' },
+];
+
 export function Nav() {
   return (
     <header className="sticky top-0 z-30 border-b border-line/70 bg-bg/80 backdrop-blur-md">
@@ -72,13 +83,23 @@ export function Nav() {
             </span>
           </div>
           <div className="hidden items-center gap-7 text-sm text-muted md:flex">
-            <Link href="/#social" className="transition-colors hover:text-ink">Social</Link>
-            <Link href="/#leaderboard" className="transition-colors hover:text-ink">Leaderboard</Link>
-            <Link href="/#agents" className="transition-colors hover:text-ink">Agents</Link>
-            <Link href="/#safety" className="transition-colors hover:text-ink">Safety</Link>
+            {NAV_LINKS.map((l) => (
+              <Link key={l.href} href={l.href} className="transition-colors hover:text-ink">
+                {l.label}
+              </Link>
+            ))}
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Rushr on GitHub"
+            className="hidden size-9 place-items-center rounded-lg border border-line text-muted transition hover:text-ink sm:grid"
+          >
+            <GithubLogo size={16} weight="bold" />
+          </a>
           <a
             href={X_URL}
             target="_blank"
@@ -89,11 +110,21 @@ export function Nav() {
             <XLogo size={16} weight="bold" />
           </a>
           <a
+            href={TG_URL}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Rushr on Telegram"
+            className="hidden size-9 place-items-center rounded-lg border border-line text-muted transition hover:text-ink sm:grid"
+          >
+            <TelegramLogo size={16} weight="bold" />
+          </a>
+          <a
             href={appHref('/trenches')}
             className="rounded-lg bg-ink px-4 py-2 text-sm font-semibold text-bg transition hover:bg-ink/85 active:scale-[0.98]"
           >
             Open app
           </a>
+          <MobileMenu links={NAV_LINKS} xUrl={X_URL} githubUrl={GITHUB_URL} tgUrl={TG_URL} />
         </div>
       </nav>
     </header>
@@ -439,10 +470,17 @@ const LINKS = [
   [245, 130, 290, 108, true],
 ] as const;
 
-function Card({ eyebrow, title, children }: { eyebrow: string; title: string; children: React.ReactNode }) {
+function Card({ eyebrow, title, badge, children }: { eyebrow: string; title: string; badge?: string; children: React.ReactNode }) {
   return (
     <div className="relative flex h-full flex-col overflow-hidden rounded-3xl border border-line bg-surface p-6 shadow-[0_1px_2px_rgba(24,32,26,0.04),0_20px_40px_-30px_rgba(24,32,26,0.25)] md:p-7">
-      <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">{eyebrow}</p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-mono text-xs font-medium uppercase tracking-[0.16em] text-brand-deep">{eyebrow}</p>
+        {badge ? (
+          <span className="shrink-0 rounded-full border border-dashed border-ink/25 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+            {badge}
+          </span>
+        ) : null}
+      </div>
       <h3 className="mt-3 max-w-[22ch] text-2xl font-semibold leading-[1.1] tracking-[-0.03em]">{title}</h3>
       <div className="relative mt-auto pt-6">{children}</div>
     </div>
@@ -484,7 +522,7 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
       </Reveal>
 
       <Reveal delay={0.06}>
-        <Card eyebrow="Bubble map" title="see who's really holding.">
+        <Card eyebrow="Bubble map" title="see who's really holding." badge="Coming soon">
           <svg
             viewBox="0 0 340 190"
             className="mx-auto w-full max-w-[360px]"
@@ -507,7 +545,7 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
             ))}
           </svg>
           <p className="mt-3 text-sm text-muted">
-            <span className="text-risk-high">Red</span> is a cluster: wallets funded from one source, often the dev or a bundle.
+            Holder clusters, mapped. <span className="text-risk-high">Red</span> is wallets funded from one source, often the dev or a bundle.
           </p>
         </Card>
       </Reveal>
@@ -518,7 +556,6 @@ function SafetyCards({ original, clone, cloneCount }: { original: DexToken; clon
 /* ---------------------------------------------------------------- closing call to action */
 
 /** Rushr's source code. */
-const GITHUB_URL = 'https://github.com/rushr-dev/platform';
 
 export function Closing() {
   return (
@@ -542,6 +579,9 @@ export function Closing() {
             </a>
             <a href={X_URL} target="_blank" rel="noreferrer" className={SECONDARY_BTN}>
               <XLogo size={16} weight="bold" /> Follow on X
+            </a>
+            <a href={TG_URL} target="_blank" rel="noreferrer" className={SECONDARY_BTN}>
+              <TelegramLogo size={18} weight="bold" /> Join Telegram
             </a>
           </div>
         </Reveal>
@@ -574,10 +614,14 @@ export function Footer() {
           <Link href="/#leaderboard" className="block hover:text-brand-deep">Leaderboard</Link>
           <Link href="/#agents" className="block hover:text-brand-deep">Agents</Link>
           <Link href="/#safety" className="block hover:text-brand-deep">Safety</Link>
+          <Link href="/whitepaper" className="block hover:text-brand-deep">Whitepaper</Link>
+          <Link href="/transparency" className="block hover:text-brand-deep">Transparency</Link>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Community</div>
           <a href={X_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">X (@rushrtrade)</a>
+          <a href={TG_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">Telegram</a>
+          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="block hover:text-brand-deep">GitHub</a>
         </div>
         <div className="space-y-2.5 text-sm">
           <div className="mb-3 font-mono text-xs uppercase tracking-[0.16em] text-muted">Legal</div>

@@ -1,7 +1,9 @@
 import { Reveal } from './reveal';
 
-/** Rushr's own X account (no Telegram yet). */
+/** Rushr's own X account. */
 export const X_URL = 'https://x.com/rushrtrade';
+/** The Rushr community on Telegram. */
+export const TG_URL = 'https://t.me/rushrtrade';
 
 /** The one content width every landing section uses. */
 export const WRAP = 'mx-auto w-full max-w-7xl px-4 md:px-8';

@@ -28,6 +28,7 @@ import { useEthUsd } from '@/lib/profile';
 
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
 const SimpleTrade = dynamic(() => import('./simple-trade').then((m) => m.SimpleTrade), {
@@ -782,7 +783,7 @@ function Safety({ t, grid = true }: { t: TokenDetail; grid?: boolean }) {
         <RiskTag risk={t.risk} />
       </div>
       {grid && <SafetyGrid t={t} className="mt-3" />}
-      {t.verdict && <p className={`mt-3 text-sm leading-relaxed ${riskText(t.risk)}`}>{t.verdict}</p>}
+      {SHOW_RISK && t.verdict && <p className={`mt-3 text-sm leading-relaxed ${riskText(t.risk)}`}>{t.verdict}</p>}
       {!t.launch_indexed && <p className="mt-2 text-xs text-muted">Found after launch. Launch-time checks fill in once its first blocks are indexed.</p>}
       {(t.airdropped ?? 0) > 0 && (
         <div className="mt-3 flex justify-between text-[13px]">

@@ -5,6 +5,7 @@ import { CircleNotch, Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phosp
 import type { RiskLevel, TokenCard } from '@/lib/api';
 import { LAUNCHPAD_LABEL } from '@/lib/format';
 import { GeneratedAvatar } from './avatar';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /** Icons go through our cached proxy (IPFS gateways are slow and flaky). */
 export const iconSrc = (url: string) => `/api/img?u=${encodeURIComponent(url)}`;
@@ -149,6 +150,7 @@ const RISK_BG: Record<RiskLevel, string> = {
 export const riskText = (r: RiskLevel | null) => RISK_TEXT[r ?? 'unknown'];
 
 export function RiskDot({ risk }: { risk: RiskLevel | null }) {
+  if (!SHOW_RISK) return null;
   const r = risk ?? 'unknown';
   const bg =
     r === 'high'
@@ -162,6 +164,7 @@ export function RiskDot({ risk }: { risk: RiskLevel | null }) {
 }
 
 export function RiskTag({ risk, className = '' }: { risk: RiskLevel | null; className?: string }) {
+  if (!SHOW_RISK) return null;
   const r = risk ?? 'unknown';
   // Safety checks still running: a quiet spinner, not a word competing with real verdicts.
   if (r === 'unknown')

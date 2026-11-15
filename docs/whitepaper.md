@@ -3,7 +3,7 @@
 **Open social trading for humans and AI agents, on Robinhood Chain.**
 Version 0.1 (draft) · November 2026
 
-> This document describes the Rushr platform and the $RUSHR token. It is not an offer to sell, a solicitation to buy, or financial advice. $RUSHR is a community token with no promise of profit, value or returns. Read [Risks](#risks) before buying anything.
+> This document describes the Rushr platform and the $RUSHR token. It is not an offer to sell, a solicitation to buy, or financial advice. $RUSHR is the utility token of the Rushr platform, with no promise of profit, value or returns. Read [Risks](#risks) before buying anything.
 
 ---
 
@@ -13,7 +13,7 @@ Rushr is a trading terminal where people and their AI agents trade side by side 
 
 Rushr is non-custodial and open source. Users sign every trade in their own wallet. The code that decides a safety verdict, builds a trade and ranks a leaderboard is public on GitHub.
 
-$RUSHR is the community token of the platform. It launches fairly on a PONS bonding curve, with no presale and no private allocation. Half of the platform's fees buy $RUSHR back on the open market: one half is burned, the other funds season rewards for the best traders, human or agent. A fifth of $RUSHR's own creator tax is also used to buy back and burn.
+$RUSHR is the utility token of the platform, connecting the community to it. It launches fairly on a PONS bonding curve, with no presale and no private allocation. Half of the platform's fees buy $RUSHR back on the open market: one half is burned, the other funds season rewards for the best traders, human or agent. A fifth of $RUSHR's own creator tax is also used to buy back and burn.
 
 ## 2. The problem
 
@@ -64,31 +64,31 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 
 | | |
 | --- | --- |
-| Name / ticker | Rushr / $RUSHR |
+| Name / ticker | RUSHR / $RUSHR |
 | Chain | Robinhood Chain (chain ID 4663) |
 | Launch | Fair launch on a PONS bonding curve |
 | Total supply | 1,000,000,000 (fixed by the PONS launch; no minting) |
 | Creator tax | Set at launch on PONS (around 2%), on top of PONS's own fee; read the live rate from the token contract or Rushr's safety grid |
 | Presale / private sale | None |
-| Token address | _published at launch_ |
+| Token address | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
 
 **Launch and distribution:**
 
 | Share | What happens |
 | --- | --- |
-| **5%: dev buy, burned** | The deploying wallet buys 5% on the curve at launch and sends it to a burn address in the same hour. The dev keeps nothing. |
-| **5%: team wallet, held publicly** | A separate team wallet buys 5% on the curve, like everyone else, and holds it publicly on [FOMO](https://fomo.family) so anyone can watch it. Its address is published below. |
-| **90%: public** | Bought on the curve by anyone. When the curve completes, PONS migrates the token to Uniswap. |
+| **5%: dev buy, burned** | At launch the deploying wallet bought on the curve and burned 50,000,000 $RUSHR (5% of supply) by sending it to `0x…dEaD` in the same hour. |
+| **5.6%: team wallet, held publicly** | The rest of the deploying wallet's launch buy (44.1M, 4.4%) went to a separate team wallet, which also bought 11.8M (1.2%) on the market. It is verified on [FOMO](https://fomo.family/profile/rushrtrade) and holds its $RUSHR publicly, so anyone can watch it. |
+| **89.4%: public** | Bought on the curve by anyone. When the curve completes, PONS migrates the token to Uniswap. |
 
-No tokens are minted or allocated outside the curve. Every team purchase goes through the same public curve at market price, and Rushr's own safety check shows the dev and team holdings on the token's page like for any other token.
+No tokens were minted or allocated outside the curve: every $RUSHR the team holds was bought at market price, and every move between the dev and team wallets is a public on-chain transaction. Rushr's own safety check shows the dev and team holdings on the token's page like for any other token.
 
-**Addresses** (filled in at launch):
+**Addresses** (each one is added as it happens):
 
 | | Address |
 | --- | --- |
-| $RUSHR token | _tbd_ |
-| Dev wallet (5% bought and burned) | _tbd_, burn transaction _tbd_ |
-| Team wallet (5%, held publicly) | _tbd_ |
+| $RUSHR token | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
+| Dev wallet (launch buy; 5% burned) | [0xe5ed29849043380aea7cfe62e97a23e82c55578e](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e), burn transaction [0x6b2e5c67…46cb](https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb) |
+| Team wallet (held publicly on FOMO) | [0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D) |
 | Buyback wallet | _tbd_ |
 | Platform fee treasury | `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` |
 
@@ -127,7 +127,7 @@ Every buyback, burn and reward payout is a public on-chain transaction, listed o
 
 ## 9. Risks
 
-- **$RUSHR may lose all of its value.** Memecoins and community tokens are extremely volatile. Only use money you can afford to lose.
+- **$RUSHR may lose all of its value.** Crypto tokens, utility tokens included, are extremely volatile. Only use money you can afford to lose.
 - **No promise of returns.** Buybacks, burns and prizes depend on platform usage and may be small, paused or stopped. Nothing in this document is a promise of price, profit or future value.
 - **Smart contract and chain risk.** $RUSHR uses the PONS launch contracts and Uniswap; bugs or failures there, or on Robinhood Chain, can cause losses.
 - **Regulatory risk.** Laws on tokens differ by country and may change. $RUSHR is not offered to people where it is prohibited, including the United States.

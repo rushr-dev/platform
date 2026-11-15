@@ -13,6 +13,7 @@ import { LIMITS, updateSettings, useSettings } from '@/lib/settings';
 import { Modal } from './profile/modal';
 import { useTokenBalance } from '@/lib/balances';
 import type { LivePosition } from '@/lib/position';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /**
  * The simple trade card (the token page's default): Buy/Sell, one big amount in US dollars,
@@ -308,6 +309,7 @@ function noteFor({ token, trade, status }: { token: TradeToken; trade: QuickTrad
   // Signed-out quotes already leave out balance checks, so what's left applies to everyone.
   const blocker = trade?.blockers.find((b) => b.code !== 'RISK_ACK_REQUIRED');
   if (blocker) return { text: blocker.message, tone: 'text-risk-high' };
+  if (!SHOW_RISK) return trade?.warnings[0] ? { text: trade.warnings[0], tone: 'text-risk-medium' } : null;
   if (token.risk === 'high') return { text: 'High risk token', tone: 'text-risk-high', detail: token.verdict ?? 'Rushr flagged this token. Read the safety notes before buying.' };
   if (token.risk === 'medium') return { text: 'Trade with care', tone: 'text-risk-medium', detail: token.verdict ?? 'Rushr found some risk signals on this token.' };
   if (!token.risk || token.risk === 'unknown')
