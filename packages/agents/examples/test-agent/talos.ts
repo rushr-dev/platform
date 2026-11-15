@@ -16,7 +16,7 @@
 import { chmodSync, existsSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicClient, createWalletClient, defineChain, erc20Abi, formatEther, formatUnits, http, parseEther, type Address, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, defineChain, erc20Abi, formatEther, http, parseEther, type Address, type Hex } from 'viem';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -287,11 +287,13 @@ function trader(dryRun: boolean) {
   };
 
   /** quote → build (simulate: true) → vet → approvals → tx. Throws before signing if anything looks off. */
-  const trade = async (side: 'buy' | 'sell', token: Token, amountIn: bigint, mode: 'round_trip' | 'hold' = 'round_trip') => {
+  const trade = async (side: 'buy' | 'sell', token: Token, amountIn: bigint, opts: { mode?: 'round_trip' | 'hold'; maxImpactBps?: number; journalExtra?: Record<string, unknown> } = {}) => {
+    const mode = opts.mode ?? 'round_trip';
+    const maxImpact = opts.maxImpactBps ?? LIMITS.maxImpactBps;
     const body = { token: token.address, side, amountIn: amountIn.toString(), quoteAsset: 'ETH', slippageBps: LIMITS.slippageBps, from: account.address };
     const q = await api<{ quote: Built['quote']; wouldBuild: boolean; warnings: string[] }>('POST', '/v1/trade/quote', { key, body });
     if (side === 'buy' && !q.wouldBuild) throw new Error(`quote says wouldBuild=false (${q.warnings.join('; ')})`);
-    if (side === 'buy' && (q.quote.priceImpactBps ?? 10_000) > LIMITS.maxImpactBps) throw new Error(`price impact ${q.quote.priceImpactBps} bps (max ${LIMITS.maxImpactBps})`);
+    if (side === 'buy' && (q.quote.priceImpactBps ?? 10_000) > maxImpact) throw new Error(`price impact ${q.quote.priceImpactBps} bps (max ${maxImpact})`);
     // Build right before signing: the tx expires 300 s after the build.
     const b = await api<Built>('POST', '/v1/trade/build', { key, body: { ...body, simulate: true } });
     vet(b, side, token.address, amountIn);
@@ -303,7 +305,7 @@ function trader(dryRun: boolean) {
       if (h) hashes.push(h);
     }
     const hash = await send(`${side} tx`, b.tx);
-    if (!dryRun) journal({ kind: 'trade', status: 'success', mode, side, token: token.address, symbol: token.symbol, amountIn: amountIn.toString(), expectedOut: b.quote.amountOut, fee: b.quote.fee.feeAmount, hash, approvalHashes: hashes });
+    if (!dryRun) journal({ kind: 'trade', status: 'success', mode, ...opts.journalExtra, side, token: token.address, symbol: token.symbol, amountIn: amountIn.toString(), expectedOut: b.quote.amountOut, fee: b.quote.fee.feeAmount, hash, approvalHashes: hashes });
     return { hash, built: b };
   };
 
@@ -328,25 +330,34 @@ function trader(dryRun: boolean) {
   return { w, key, account, pub, send, trade, callout, spendable };
 }
 
+const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
+const USDG = '0x5fc5360d0400a0fd4f2af552add042d716f1d168';
+let ethUsdCache: { at: number; usd: number } | null = null;
+
 /**
- * USD per ETH, from two quotes of the same token: tokens per ETH (ETH probe) times the token's USD price.
- * When the token also has a USDG pool, ETH/USD comes from tokens per ETH ÷ tokens per USDG instead,
- * which doesn't depend on Rushr's stored price. Refuses results outside a sane range.
+ * USD per ETH from two independent sources, or a refusal. Primary: Rushr's `GET /transparency`
+ * (`treasury.ethUsd`). Cross-check: DexScreener's deepest WETH/USDG pair on Robinhood Chain. They must
+ * agree within 10% and sit in a sane band ($500-20,000). Cached for 5 minutes.
+ * (An earlier version divided an ETH quote by a USDG quote of the same token; a thin USDG route made
+ * that about 2x too high, which would have undersized every buy.)
  */
-async function ethUsdVia(key: string, token: Token): Promise<number> {
-  const probeEth = parseEther('0.001');
-  const viaEth = await api<{ quote: Built['quote'] }>('POST', '/v1/trade/quote', { key, body: { token: token.address, side: 'buy', amountIn: probeEth.toString() } });
-  const tokensPerEth = Number(BigInt(viaEth.quote.amountOut)) / 0.001;
-  let ethUsd: number | null = null;
-  const viaUsdg = await api<{ quote: Built['quote'] }>('POST', '/v1/trade/quote', { key, body: { token: token.address, side: 'buy', amountIn: '1000000', quoteAsset: 'USDG' } }).catch(() => null);
-  if (viaUsdg && BigInt(viaUsdg.quote.amountOut) > 0n) ethUsd = tokensPerEth / Number(BigInt(viaUsdg.quote.amountOut));
-  if (ethUsd === null) {
-    const detail = await api<{ decimals?: number; price_usd?: number | null }>('GET', `/tokens/${token.address}`);
-    const price = detail.price_usd ?? token.price_usd ?? 0;
-    ethUsd = Number(formatUnits(BigInt(viaEth.quote.amountOut), detail.decimals ?? 18)) * price / 0.001;
-  }
-  if (!(ethUsd > 500 && ethUsd < 20_000)) throw new Error(`ETH/USD estimate ${ethUsd} looks wrong; refusing to size a trade with it`);
-  return ethUsd;
+async function ethUsdPrice(): Promise<number> {
+  if (ethUsdCache && Date.now() - ethUsdCache.at < 5 * 60_000) return ethUsdCache.usd;
+  const rushr = await api<{ treasury?: { ethUsd?: number } }>('GET', '/transparency').then((j) => j.treasury?.ethUsd ?? null).catch(() => null);
+  const dex = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${WETH}`)
+    .then((r) => r.json() as Promise<{ pairs?: { chainId: string; baseToken: { address: string }; quoteToken: { address: string }; priceUsd?: string; liquidity?: { usd?: number } }[] }>)
+    .then((j) => {
+      const pairs = (j.pairs ?? []).filter((p) => p.chainId === 'robinhood' && p.baseToken.address.toLowerCase() === WETH && p.quoteToken.address.toLowerCase() === USDG && Number(p.priceUsd) > 0);
+      pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0));
+      return pairs[0] ? Number(pairs[0].priceUsd) : null;
+    })
+    .catch(() => null);
+  if (rushr === null || dex === null) throw new Error(`can't price ETH: /transparency ${rushr ?? 'unavailable'}, DexScreener ${dex ?? 'unavailable'}; refusing to size a trade`);
+  if (Math.abs(rushr - dex) / dex > 0.1) throw new Error(`ETH/USD sources disagree: Rushr $${rushr.toFixed(2)} vs DexScreener $${dex.toFixed(2)} (over 10%); refusing to size a trade`);
+  if (!(rushr > 500 && rushr < 20_000)) throw new Error(`ETH/USD ${rushr} is outside $500-20,000; refusing to size a trade`);
+  ethUsdCache = { at: Date.now(), usd: rushr };
+  log(`ETH/USD $${rushr.toFixed(2)} (Rushr), DexScreener $${dex.toFixed(2)}`);
+  return rushr;
 }
 
 const usdToWei = (usd: number, ethUsd: number) => parseEther((usd / ethUsd).toFixed(18));
@@ -385,7 +396,7 @@ async function run(dryRun: boolean) {
     try {
       // Size: about LIMITS.buyUsd, never above the per-trade cap, the total cap, or what the wallet can
       // spend after the gas reserve (read fresh every time, so a hold elsewhere is accounted for).
-      const ethUsd = await ethUsdVia(t.key, token);
+      const ethUsd = await ethUsdPrice();
       let buyIn = usdToWei(LIMITS.buyUsd, ethUsd);
       if (buyIn > LIMITS.maxEthPerTrade) buyIn = LIMITS.maxEthPerTrade;
       if (spent + buyIn > LIMITS.maxEthTotal) {
@@ -464,18 +475,31 @@ function disclosureCallout(symbol: string): string {
   return `Bullish $${symbol}. Disclosure: I'm Talos, the Rushr team's own agent, and I'm holding this bag. Not advice.`;
 }
 
+/** Flag value after `name`, or undefined. */
+const flagValue = (args: string[], name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+/** Holds may raise the 3% impact cap explicitly, never past this. */
+const HOLD_MAX_IMPACT_BPS = 500;
+const MAX_CHUNKS = 10;
+/** Seconds between chunks (at least 60). */
+const CHUNK_GAP_SECONDS = Math.max(60, num('TALOS_CHUNK_GAP_SECONDS', 60));
+
 async function buyHold(args: string[], dryRun: boolean) {
+  const usage = 'usage: talos.ts buy-hold <token address> --usd <n> [--chunks <n>] [--max-impact <bps>] [--dry-run] [--again]';
   const address = (args.find((a) => /^0x[0-9a-fA-F]{40}$/.test(a)) ?? '').toLowerCase() as Address;
-  const usdArg = args[args.indexOf('--usd') + 1];
-  const usdTarget = args.includes('--usd') ? Number(usdArg) : NaN;
-  if (!address) throw new Error('usage: talos.ts buy-hold <token address> --usd <n> [--dry-run] [--again]');
+  if (!address) throw new Error(usage);
+  const usdTarget = Number(flagValue(args, '--usd'));
   if (!(usdTarget > 0)) throw new Error('--usd must be a positive number');
   if (usdTarget > HOLD_MAX_USD) throw new Error(`refusing: --usd ${usdTarget} is above the $${HOLD_MAX_USD} cap for holds`);
-  if (usdTarget < 5) log(`warning: $${usdTarget} is under $5, so this trade won't count for the leaderboard`);
+  const chunks = args.includes('--chunks') ? Number(flagValue(args, '--chunks')) : 1;
+  if (!Number.isInteger(chunks) || chunks < 1 || chunks > MAX_CHUNKS) throw new Error(`--chunks must be a whole number from 1 to ${MAX_CHUNKS}`);
+  const maxImpactBps = args.includes('--max-impact') ? Number(flagValue(args, '--max-impact')) : LIMITS.maxImpactBps;
+  if (!Number.isInteger(maxImpactBps) || maxImpactBps < 1 || maxImpactBps > HOLD_MAX_IMPACT_BPS) throw new Error(`--max-impact must be a whole number of bps from 1 to ${HOLD_MAX_IMPACT_BPS}`);
+  const chunkUsd = usdTarget / chunks;
+  if (chunkUsd < 5) log(`warning: each chunk is $${chunkUsd.toFixed(2)}, under $5, so these trades won't count for the leaderboard`);
 
   const t = trader(dryRun);
   const previous = journalEntries().filter((e) => e.kind === 'trade' && e.status === 'success' && e.mode === 'hold' && String(e.token).toLowerCase() === address);
-  if (previous.length && !args.includes('--again')) throw new Error(`already holding from an earlier buy-hold (${previous.at(-1)!.hash}); pass --again to buy more`);
+  if (previous.length && !args.includes('--again')) throw new Error(`already holding from an earlier buy-hold (${previous.length} buys, last ${previous.at(-1)!.hash}); pass --again to buy more`);
 
   // Same token checks as run, except the EXCLUDE list (this command is the explicit override for it).
   const detail = await api<Token & { decimals?: number; status?: string }>('GET', `/tokens/${address}`);
@@ -484,20 +508,53 @@ async function buyHold(args: string[], dryRun: boolean) {
   const s = await safeToBuy(address);
   if (!s.ok) throw new Error(`refusing: ${token.symbol} fails the safety check (${s.why})`);
 
-  const ethUsd = await ethUsdVia(t.key, token);
-  let buyIn = usdToWei(usdTarget, ethUsd);
-  if (buyIn > HOLD_MAX_ETH) throw new Error(`refusing: $${usdTarget} is ${formatEther(buyIn)} ETH at $${ethUsd.toFixed(0)}/ETH, above the ${formatEther(HOLD_MAX_ETH)} ETH hold cap`);
-  const { bal, free } = await t.spendable();
-  if (buyIn > free) throw new Error(`refusing: needs ${formatEther(buyIn)} ETH but only ${formatEther(free)} ETH is spendable (balance ${formatEther(bal)}, gas reserve ${formatEther(LIMITS.gasReserve)})`);
-  const usd = Number(formatEther(buyIn)) * ethUsd;
-  if (usd > HOLD_MAX_USD) throw new Error(`refusing: ~$${usd.toFixed(2)} is above the $${HOLD_MAX_USD} cap`);
+  // Caps on the WHOLE hold (all chunks together), checked before the first buy.
+  const ethUsd = await ethUsdPrice();
+  const chunkWei = usdToWei(chunkUsd, ethUsd);
+  const totalWei = chunkWei * BigInt(chunks);
+  const totalUsd = Number(formatEther(totalWei)) * ethUsd;
+  if (totalWei > HOLD_MAX_ETH) throw new Error(`refusing: $${usdTarget} is ${formatEther(totalWei)} ETH at $${ethUsd.toFixed(0)}/ETH, above the ${formatEther(HOLD_MAX_ETH)} ETH hold cap`);
+  if (totalUsd > HOLD_MAX_USD) throw new Error(`refusing: ~$${totalUsd.toFixed(2)} is above the $${HOLD_MAX_USD} cap`);
+  const start = await t.spendable();
+  if (totalWei > start.free) throw new Error(`refusing: needs ${formatEther(totalWei)} ETH but only ${formatEther(start.free)} ETH is spendable (balance ${formatEther(start.bal)}, gas reserve ${formatEther(LIMITS.gasReserve)})`);
 
-  log(`BUY-HOLD ${token.symbol} ${address}: ${formatEther(buyIn)} ETH (~$${usd.toFixed(2)} at $${ethUsd.toFixed(0)}/ETH), risk ${s.safety.riskLevel}, balance ${formatEther(bal)} ETH${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`);
-  await t.trade('buy', token, buyIn, 'hold');
-  await t.callout(address, disclosureCallout(token.symbol));
+  log(
+    `BUY-HOLD ${token.symbol} ${address}: ~$${totalUsd.toFixed(2)} = ${formatEther(totalWei)} ETH at $${ethUsd.toFixed(2)}/ETH, in ${chunks} chunk${chunks > 1 ? 's' : ''} of ${formatEther(chunkWei)} ETH (~$${chunkUsd.toFixed(2)})` +
+      `${chunks > 1 ? ` ${CHUNK_GAP_SECONDS}s apart` : ''}, max impact ${maxImpactBps} bps each, risk ${s.safety.riskLevel}, balance ${formatEther(start.bal)} ETH${dryRun ? '  [DRY RUN: nothing is sent]' : ''}`,
+  );
+
+  let filled = 0;
+  for (let i = 0; i < chunks; i++) {
+    if (i > 0) {
+      if (dryRun) {
+        log(`  dry run: chunks ${i + 1}-${chunks} would each be re-quoted, re-checked (impact <= ${maxImpactBps} bps, balance) and simulated ${CHUNK_GAP_SECONDS}s apart; only the first is simulated now`);
+        break;
+      }
+      log(`  waiting ${CHUNK_GAP_SECONDS}s before chunk ${i + 1}/${chunks}`);
+      await sleep(CHUNK_GAP_SECONDS * 1000);
+      const { free } = await t.spendable();
+      if (chunkWei > free) {
+        log(`stopping: chunk ${i + 1} needs ${formatEther(chunkWei)} ETH, only ${formatEther(free)} spendable after the gas reserve`);
+        break;
+      }
+    }
+    log(`  chunk ${i + 1}/${chunks}`);
+    try {
+      await t.trade('buy', token, chunkWei, { mode: 'hold', maxImpactBps, journalExtra: { chunk: i + 1, chunks } });
+    } catch (e) {
+      // Each chunk is checked on its own (the price moves after every fill). Stop, keep what filled.
+      if (i === 0) throw e;
+      log(`stopping after ${filled} of ${chunks} chunks: ${e instanceof Error ? e.message : e}`);
+      journal({ kind: 'error', token: address, message: `buy-hold chunk ${i + 1}: ${e instanceof Error ? e.message : String(e)}` });
+      break;
+    }
+    filled++;
+    // ONE disclosed callout, right after the first chunk fills (it becomes the callout's entry).
+    if (i === 0) await t.callout(address, disclosureCallout(token.symbol));
+  }
   if (!dryRun) {
     const after = await t.spendable();
-    log(`done. Holding ${token.symbol}; ${formatEther(after.free)} ETH left for run after the gas reserve.`);
+    log(`done: ${filled} of ${chunks} chunks filled (${formatEther(chunkWei * BigInt(filled))} ETH). Holding ${token.symbol}; ${formatEther(after.free)} ETH left for run after the gas reserve.`);
   }
 }
 
@@ -548,8 +605,9 @@ const main =
   : cmd === 'scan' ? scan()
   : cmd === 'run' ? run(dry)
   : cmd === 'buy-hold' ? buyHold(flags, dry)
+  : cmd === 'price' ? ethUsdPrice().then((p) => console.log(`ETH/USD $${p.toFixed(2)}; $${LIMITS.buyUsd} = ${formatEther(usdToWei(LIMITS.buyUsd, p))} ETH, $30 = ${formatEther(usdToWei(30, p))} ETH`))
   : cmd === 'status' ? status()
-  : Promise.reject(new Error('usage: talos.ts init | scan | run [--dry-run] | buy-hold <token> --usd <n> [--dry-run] [--again] | status'));
+  : Promise.reject(new Error('usage: talos.ts init | scan | run [--dry-run] | buy-hold <token> --usd <n> [--chunks <n>] [--max-impact <bps>] [--dry-run] [--again] | price | status'));
 main.catch((e) => {
   // Never echo request bodies or the wallet file: only the error message.
   console.error(`talos: ${e instanceof Error ? e.message : e}`);

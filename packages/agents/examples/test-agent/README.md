@@ -46,10 +46,12 @@ cd packages/agents/examples/test-agent
    - Each round trip costs roughly 1-2% of the buy (Rushr's 0.25% fee each way, pool fees, slippage), so the whole run should cost about $0.50 plus gas.
    - **Send from a wallet that is not a Rushr member's wallet** and hasn't funded other members' wallets: an exchange withdrawal, or a fresh wallet used only for this. The leaderboard links wallets by their first funder. If Talos is funded straight from your own Rushr account, the two of you form a funding cluster and only one of you is ranked.
 
-3. **Check what it would trade** (read-only, no key needed):
+3. **Check what it would trade, and the ETH price it sizes with** (both read-only, no key needed):
    ```bash
    node --experimental-strip-types talos.ts scan
+   node --experimental-strip-types talos.ts price
    ```
+   ETH/USD comes from Rushr's `/transparency` (`treasury.ethUsd`), cross-checked against DexScreener's deepest WETH/USDG pair on Robinhood Chain. Talos refuses to trade if the two differ by more than 10%, or if the price is outside $500-20,000.
 
 4. **Dry run.** It quotes, builds and simulates the first buy, prints the callout it would post, and sends nothing:
    ```bash
@@ -60,9 +62,12 @@ cd packages/agents/examples/test-agent
    - It runs the same pre-sign checks as `run`: router, approvals, a fee of at most 25 bps, a successful simulation, no `acceptRisk`, and price impact of at most 3%. The token must also be graduated and pass the safety check.
    - It refuses anything above **$35**, or above 0.02 ETH (`TALOS_HOLD_MAX_ETH`), and never dips into the gas reserve.
    - Running it a second time on the same token needs `--again`.
+   - `--chunks <n>` (1-10) splits the amount into n buys at least 60 s apart (`TALOS_CHUNK_GAP_SECONDS`). Each chunk is re-quoted, checked against the impact cap and the balance, and simulated before it's signed. If a later chunk fails its checks, Talos stops and keeps what filled. Only ONE disclosed callout is posted, right after the first chunk fills.
+   - `--max-impact <bps>` raises the 3% cap explicitly, never past 500.
+   - The dry run simulates the first chunk only and prints the plan for the rest.
    ```bash
-   node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30 --dry-run
-   node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30
+   node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30 --chunks 3 --dry-run
+   node --experimental-strip-types talos.ts buy-hold 0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed --usd 30 --chunks 3
    ```
    Holds don't count toward `run`'s trade target or spend cap. `run` sizes every buy from the balance that's left, after the gas reserve.
 
