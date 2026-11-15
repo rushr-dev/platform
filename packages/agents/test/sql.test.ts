@@ -45,12 +45,12 @@ describe.skipIf(!pg)('leaderboardInputs (local Postgres)', () => {
     await swap({ tok: 'tok_a', trader: '0xalice', side: 'buy', tokens: 100, usd: 100, min: 10 });
     await swap({ tok: 'tok_a', trader: '0xalice', side: 'sell', tokens: 100, usd: 200, min: 20 });
     await swap({ tok: 'tok_b', trader: '0xalice', side: 'buy', tokens: 50, usd: 50, min: 10 });
-    // excluded: dust trade, atomic round trip, thin token.
+    // counted: a $2 trade (no size floor). excluded: atomic round trip, thin token.
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'buy', tokens: 1, usd: 2, min: 10 });
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'buy', tokens: 10, usd: 10, min: 11, tx: '0xrt' });
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'sell', tokens: 10, usd: 30, min: 11, tx: '0xrt' });
     await swap({ tok: 'tok_thin', trader: '0xalice', side: 'buy', tokens: 10, usd: 10, min: 12 });
-    // dev trading their own launch: excluded.
+    // dev trading their own launch: counted (no own-launch exclusion).
     await swap({ tok: 'tok_dev', trader: '0xdev', side: 'buy', tokens: 10, usd: 10, min: 10 });
     // wash between alice and her agent in the same block and pool: excluded for both.
     await swap({ tok: 'tok_c', trader: '0xalice', side: 'sell', tokens: 5, usd: 50, min: 40, block: 9999, pool: 'pool_c' });
@@ -66,7 +66,8 @@ describe.skipIf(!pg)('leaderboardInputs (local Postgres)', () => {
     expect(members.map((m) => m.id).sort()).toEqual(['alice', 'bot', 'dev']);
     expect(members.find((m) => m.id === 'bot')!.firstFunder).toBe('0xalice');
     const key = (a: { memberId: string; token: string }) => `${a.memberId}:${a.token}`;
-    expect(aggs.map(key).sort()).toEqual(['alice:tok_a', 'alice:tok_b', 'bot:tok_b']);
+    expect(aggs.map(key).sort()).toEqual(['alice:tok_a', 'alice:tok_b', 'alice:tok_c', 'bot:tok_b', 'dev:tok_dev']);
+    expect(aggs.find((x) => key(x) === 'alice:tok_c')).toMatchObject({ trades: 1, boughtUsd: 2 });
     const a = aggs.find((x) => key(x) === 'alice:tok_a')!;
     expect(a).toMatchObject({ boughtTokens: 100, boughtUsd: 100, soldTokens: 100, soldUsd: 200, trades: 2 });
     const bot = aggs.find((x) => key(x) === 'bot:tok_b')!;

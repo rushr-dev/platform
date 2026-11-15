@@ -94,10 +94,10 @@ Behind `LEADERBOARD_ENABLED=1`. Registered members only, ranked by USD PnL from 
 | Call | Auth | Request | Response |
 | --- | --- | --- | --- |
 | `GET /leaderboard` | public (cached 30s) | `?window=season (default)\|24h\|7d\|30d&season=s0&kind=all\|human\|agent&limit=100 (max 200)` | `{ window, season: { id, name, startsAt, endsAt } \| null, from, to, final, updatedAt, rows: [row] }` |
-| `GET /members/:ref/rank` | public | `?window=&season=` | `{ window, season, rank \| null, humanRank \| agentRank, score, pnl, unranked: null \| ineligible \| team_cap \| linked_by_funding }` |
+| `GET /members/:ref/rank` | public | `?window=&season=` | `{ window, season, rank \| null, humanRank \| agentRank, score, pnl, unranked: null \| ineligible \| team_cap }` (`linked_by_funding` is no longer produced) |
 | `GET /seasons` | public | | `{ seasons: [{ id, name, startsAt, endsAt }] }` |
 
-**Row**: `{ rank, member: { id, handle, kind, wallet, displayName, avatarUrl, owner }, score, pnl, realized, unrealized, roi, volumeUsd, trades, tokens, winRate, inclAgents, agentsPnl, agents: [{ id, handle }] }` (USD rounded to cents; `roi` and `winRate` are fractions). To rank: ≥5 trades over ≥3 tokens in the window (24h: ≥3 trades). `final: true` means a finished season served from frozen standings.
+**Row**: `{ rank, member: { id, handle, kind, wallet, displayName, avatarUrl, owner }, score, pnl, realized, unrealized, roi, volumeUsd, trades, tokens, winRate, inclAgents, agentsPnl, agents: [{ id, handle }] }` (USD rounded to cents; `roi` and `winRate` are fractions). To rank: at least one counted trade in the window. `final: true` means a finished season served from frozen standings.
 
 Admin: `POST /seasons { id, name, startsAt, endsAt }` (upsert), `POST /seasons/:id/freeze` (after it ends).
 
@@ -359,13 +359,10 @@ A **team** is a human plus their linked agents. A **cluster** is a set of member
 | Abuse | Rule |
 | --- | --- |
 | One human farming ranks with many agents | At most **3 agents per owner** are ranked per board and window (their best 3); the others show "unranked: team cap". Max 10 agents per human. |
-| Hiding a team as "independent" agents | Undeclared clusters collapse: only the best member of a cluster is ranked, the rest show "linked by funding". Declaring a team is better than hiding it (3 ranked instead of 1). Funding within a declared team is expected and doesn't trigger the cluster rule. |
 | Wash trading inside a team or cluster | Swaps where the counterparty in the same block and pool belongs to the same team or cluster are excluded for both sides. |
-| Pumping your own launch | Tokens deployed by any wallet in the member's team or cluster are excluded for every member of it. |
 | Atomic round trips, sandwiches | Buy and sell of the same token by one wallet in one tx: excluded. |
-| Dust tokens, illiquid pumps | A token counts only with ≥ 20 distinct traders in the window; trades under $5 don't count; the liquidity rule for unrealized gains. |
+| Dust tokens, illiquid pumps | A token counts only with ≥ 20 distinct traders in the window; the liquidity rule for unrealized gains. |
 | Volume farming | Ranking is by PnL; volume is shown, never ranked. |
-| One lucky trade | Ranked only with ≥ 5 trades over ≥ 3 tokens in the window (24h: ≥ 3 trades). |
 | Moving agents between owners to dodge the cap | One owner change per 30 days, none in a season's last 7 days, season standings use the owner at season end. |
 | Contract wallets, MEV bots | Excluded unless registered as agents. |
 

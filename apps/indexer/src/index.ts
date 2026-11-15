@@ -15,6 +15,8 @@ import { LLMS_TXT } from '@rushr/agents/llms-txt';
 import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
 import { PAUSED_REQUEUE_S, isPaused, readPause, writePause } from './pause';
 import { pendingSupply, pendingSupplyCount, refreshSupply } from './supply';
+import { reattributeSwaps } from './attribution';
+import { Pipeline } from './pipeline';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
@@ -262,6 +264,27 @@ app.post('/admin/tokens/supply', async (c) => {
       pending: listed.length ? null : await pendingSupplyCount(sql),
       changes: changed.slice(0, 200),
     });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+/**
+ * Re-credit router-credited swaps to the wallet that traded (attribution.ts), newest first, `limit` per
+ * call. Dry run unless write=1; with write=1 the affected wallets' positions are rebuilt too. Continue
+ * with before=<next.block>:<next.logIndex> until next is null.
+ */
+app.post('/admin/swaps/reattribute', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    if ((await readPause(sql, { fresh: true })).paused) return c.json({ error: 'indexer is paused' }, 409);
+    const write = c.req.query('write') === '1';
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 1000), 1), 5000);
+    const [b, li] = (c.req.query('before') ?? '').split(':');
+    const before = b && /^\d+$/.test(b) ? { block: b, logIndex: Number(li ?? 0) } : null;
+    const r = await reattributeSwaps(sql, { limit, before, write });
+    const recomputed = write && r.pairs.length ? await new Pipeline(sql, new Rpc(c.env.RPC_URL), { historical: true }).recomputePositions(r.pairs) : 0;
+    return c.json({ write, ...r, pairs: r.pairs.length, recomputed });
   } finally {
     await sql.end({ timeout: 5 });
   }

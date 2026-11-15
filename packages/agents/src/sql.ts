@@ -9,15 +9,13 @@ export interface LeaderboardInputs {
 }
 
 export interface SwapRules {
-  /** Trades smaller than this don't count. */
-  minTradeUsd: number;
   /** A token counts only if this many distinct wallets traded it in the window. */
   minTokenTraders: number;
   /** A funder that funded more wallets than this (exchange, bridge, faucet) doesn't link anyone. */
   maxFunderFanout: number;
 }
 
-export const DEFAULT_SWAP_RULES: SwapRules = { minTradeUsd: 5, minTokenTraders: 20, maxFunderFanout: 50 };
+export const DEFAULT_SWAP_RULES: SwapRules = { minTokenTraders: 20, maxFunderFanout: 50 };
 
 export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date }, rules: SwapRules = DEFAULT_SWAP_RULES): Promise<LeaderboardInputs> {
   const { from, to } = window;
@@ -50,14 +48,13 @@ export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date
     ms as (
       select s.*, m.id as member_id, m.team, m.funder, m.owner_id, m.owner_changed_at
       from swaps s join m on m.wallet = s.trader
-      where s.time >= ${from} and s.time < ${to} and s.usd is not null and s.usd >= ${rules.minTradeUsd}
+      where s.time >= ${from} and s.time < ${to} and s.usd is not null
     ),
     busy as (
       select token from swaps
       where token in (select distinct token from ms) and time >= ${from} and time < ${to}
       group by token having count(distinct trader) >= ${rules.minTokenTraders}
-    ),
-    team_wallets as (select team, wallet from m)
+    )
     select ms.member_id, ms.token,
       count(*)::int as trades,
       coalesce(sum(ms.token_amount / power(10::numeric, t.decimals)) filter (where ms.side = 'buy'), 0)::float8 as bought_tokens,
@@ -77,11 +74,6 @@ export async function leaderboardInputs(sql: Sql, window: { from: Date; to: Date
       -- Atomic round trips (buy and sell of the same token by one wallet in one tx).
       and not exists (
         select 1 from swaps r where r.tx = ms.tx and r.trader = ms.trader and r.token = ms.token and r.side <> ms.side)
-      -- Launches by the member's team, or by a wallet in its funding cluster.
-      and t.deployer not in (select wallet from team_wallets tw where tw.team = ms.team)
-      and (ms.funder is null or (t.deployer <> ms.funder and not exists (
-        select 1 from wallets wd where wd.address = t.deployer and wd.first_funder = ms.funder)))
-      and not exists (select 1 from wallets wd where wd.address = t.deployer and wd.first_funder = ms.trader)
       -- Wash: the other side in the same block and pool is the same team or the same funding cluster.
       and not exists (
         select 1 from swaps c

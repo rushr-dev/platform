@@ -22,6 +22,7 @@ import {
   launchPrice,
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
+import { repairTraders, type Pair } from './attribution';
 import { applySupply, circulatingSql } from './supply';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
@@ -294,6 +295,7 @@ export class Pipeline {
     const newTransfers = new Set<string>();
     // Each swap is priced once (the outlier guard is stateful).
     const pricedBy = new Map<string, { priceUsd: string | null; usd: string | null }>();
+    let repaired: Pair[] = [];
     await this.sql.begin(async (tx) => {
       if (fresh.length) {
         const rows = fresh.map((l, i) => ({
@@ -346,6 +348,9 @@ export class Pipeline {
       const priced = r.swaps.map((s) => ({ s, ...this.price(s) }));
       for (const p of priced) pricedBy.set(`${p.s.tx}:${p.s.logIndex}`, { priceUsd: p.priceUsd, usd: p.usd });
       for (const k of await this.insertSwaps(tx, priced)) newSwaps.add(k);
+      // Swaps written first by the live path (no Transfers there) are credited to the router: this
+      // batch may know the real wallet (attribution.ts).
+      repaired = await repairTraders(tx, r.swaps.filter((s) => !newSwaps.has(`${s.tx}:${s.logIndex}`)));
       lap('tx:swaps');
       if (r.transfers.length && !this.opts.skipTransfers) {
         for (const k of await this.insertTransfers(tx, r.transfers)) newTransfers.add(k);
@@ -369,6 +374,11 @@ export class Pipeline {
       }
     });
     lap('commit');
+    if (repaired.length) {
+      // Their positions were built without these swaps (and the router's with them): rebuild the wallets'.
+      await this.recomputePositions(repaired).catch((err) => console.error('position recompute after re-credit failed', String(err).slice(0, 200)));
+      lap(`repair(${repaired.length})`);
+    }
     if (Date.now() - started > 10_000) console.warn(`slow batch: ${logs.length} logs in ${Date.now() - started}ms`, JSON.stringify(T));
 
     return {
