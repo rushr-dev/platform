@@ -12,7 +12,7 @@ function siteHref(href: string): string {
 /** Placeholder values in the doc ("_tbd_", "_published at launch_") until the launch fills them in. */
 const PENDING = /^(tbd|published at launch)$/i;
 
-function Pending() {
+export function Pending() {
   return (
     <span className="inline-flex items-center whitespace-nowrap rounded-full border border-line bg-surface-2 px-2 py-0.5 font-mono text-[11px] uppercase tracking-wider text-muted">
       Published at launch
@@ -174,6 +174,24 @@ function distribution(rows: Inline[][][]): Slice[] | null {
   return out.length ? out : null;
 }
 
+/** Under the Transparency section: the live page with the treasury, fees and buybacks. */
+function LiveLink() {
+  return (
+    <Link
+      href="/transparency"
+      className="!no-underline flex items-center justify-between gap-4 rounded-xl border border-line bg-surface px-5 py-4 transition hover:border-ink/20"
+    >
+      <span>
+        <span className="block font-semibold text-ink">Live numbers</span>
+        <span className="block text-sm text-muted">Treasury balance, fees collected and every buyback, on the transparency page.</span>
+      </span>
+      <span className="shrink-0 font-mono text-sm text-ink" aria-hidden>
+        →
+      </span>
+    </Link>
+  );
+}
+
 /** A paragraph that is only a bold label ("**Where platform fees go:**") reads as a small subheading. */
 function isLabel(c: Inline[]): boolean {
   return c.length === 1 && c[0]?.t === 'strong' && /:$/.test(plain(c));
@@ -186,10 +204,13 @@ export function WhitepaperBody({ blocks }: { blocks: Block[] }) {
         switch (b.t) {
           case 'h':
             return b.level <= 2 ? (
-              <h2 key={i} id={b.id} className="scroll-mt-24 border-t border-line pt-10 text-[28px] font-semibold leading-tight tracking-[-0.035em] text-ink first:border-0 first:pt-0 md:text-[32px]">
-                <span className="mr-3 font-mono text-base font-medium tracking-normal text-muted">{b.text.match(/^(\d+)\./)?.[1]?.padStart(2, '0')}</span>
-                {headingLabel(b.text)}
-              </h2>
+              <Fragment key={i}>
+                <h2 id={b.id} className="scroll-mt-24 border-t border-line pt-10 text-[28px] font-semibold leading-tight tracking-[-0.035em] text-ink first:border-0 first:pt-0 md:text-[32px]">
+                  <span className="mr-3 font-mono text-base font-medium tracking-normal text-muted">{b.text.match(/^(\d+)\./)?.[1]?.padStart(2, '0')}</span>
+                  {headingLabel(b.text)}
+                </h2>
+                {b.id === 'transparency' && <LiveLink />}
+              </Fragment>
             ) : (
               <h3 key={i} id={b.id} className="scroll-mt-24 text-xl font-semibold tracking-[-0.02em] text-ink">
                 {b.text}
