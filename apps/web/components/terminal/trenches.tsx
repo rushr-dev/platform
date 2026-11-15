@@ -29,6 +29,7 @@ import { tradingAvailable } from '@/components/trade/flag';
 import { migrateQuickBuyToUsd, QUICK_USD_PRESETS, updateSettings, useSettings } from '@/lib/settings';
 import { useEthUsd } from '@/lib/profile';
 import { RingedAvatar, ringOf, SocialLinks } from './bits';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /** Loaded only when trading is on (one chunk shared by every row). */
 const QuickBuyButton = dynamic(() => import('@/components/trade/quick-buy-button').then((m) => m.QuickBuyButton), {
@@ -109,7 +110,7 @@ function passes(t: TokenCard, f: Filters, now: number) {
   // Unknown (not yet checked) passes the max filters; only measured values are held against a token.
   if (f.maxTop10 && (t.top10_pct ?? 0) > f.maxTop10) return false;
   if (f.maxDev && (t.dev_pct ?? 0) > f.maxDev) return false;
-  if (f.hideHighRisk && t.risk === 'high') return false;
+  if (SHOW_RISK && f.hideHighRisk && t.risk === 'high') return false;
   if (f.hideCopycat && t.copycat) return false;
   if (f.hasSocial && !t.website && !t.twitter && !t.telegram) return false;
   if (f.launchpad && t.launchpad !== f.launchpad) return false;
@@ -550,7 +551,7 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
         </select>
       </label>
       <div className="col-span-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 lg:col-span-4">
-        {toggle('hideHighRisk', 'Hide high risk')}
+        {SHOW_RISK && toggle('hideHighRisk', 'Hide high risk')}
         {toggle('hideCopycat', 'Hide copycats')}
         {toggle('hasSocial', 'Has socials')}
       </div>
@@ -661,7 +662,7 @@ const Row = memo(function Row({
   const handle = t.creator_x ?? t.twitter_handle ?? null;
   const tradeToken = { address: t.address as `0x${string}`, symbol: t.symbol, decimals: 18, risk: t.risk, verdict: t.verdict, createdAt: t.created_at };
   const flags = [
-    t.risk === 'high' && 'High risk',
+    SHOW_RISK && t.risk === 'high' && 'High risk',
     t.copycat && 'Copycat',
     t.serial_launcher && 'Serial dev',
     !!t.airdropped && t.airdropped > 10 && `${t.airdropped} fake holders`,
@@ -699,7 +700,7 @@ const Row = memo(function Row({
                 <Dot />
               </>
             )}
-            {!flags.length && t.risk === 'medium' && (
+            {SHOW_RISK && !flags.length && t.risk === 'medium' && (
               <>
                 <span className="shrink-0 font-medium text-risk-medium">Medium risk</span>
                 <Dot />

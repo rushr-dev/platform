@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { feeLine } from '@rushr/trade';
 import { tradingAvailable } from './flag';
 import { chainClient, useKeepWarm, useQuickTrade, type TradeStatus, type TradeToken } from './use-quick-trade';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /**
  * Trade box for the token page. Beta v0: quick buy / sell from the user's Privy
@@ -158,7 +159,7 @@ function TradeBoxInner({ token }: { token: TradeToken }) {
             {b.message}
           </p>
         ))}
-      {(needsAck || (q.ack && token.risk === 'high')) && (
+      {SHOW_RISK && (needsAck || (q.ack && token.risk === 'high')) && (
         <label className="mt-2 flex items-start gap-2 rounded-lg bg-risk-high/10 px-2 py-1.5 text-xs text-risk-high">
           <input type="checkbox" checked={q.ack} onChange={(e) => q.setAck(e.target.checked)} className="mt-0.5" />
           <span>I understand this token is high risk{token.verdict ? ` (${token.verdict})` : ''} and I may lose what I put in.</span>

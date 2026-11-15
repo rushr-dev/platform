@@ -30,6 +30,7 @@ import { auth, useAuth } from '@/lib/auth';
 import { publicClient } from '@/lib/balances';
 import { useSettings, type TradeSettings } from '@/lib/settings';
 import { useRiskAck } from './risk-ack';
+import { SHOW_RISK } from '@/lib/risk-labels';
 
 /**
  * Quote → guardrails → silent send for one token (beta trading v0), built for speed:
@@ -285,8 +286,9 @@ export function useQuickTrade(tokenArg: TradeToken) {
 
   const risk = useCallback(
     (probe: TokenSafety | null): TokenRiskInfo => ({
-      risk: token.risk ?? null,
-      verdict: token.verdict ?? null,
+      // With risk labels hidden there is no high-risk "I understand" step either; honeypots stay blocked below.
+      risk: SHOW_RISK ? (token.risk ?? null) : null,
+      verdict: SHOW_RISK ? (token.verdict ?? null) : null,
       ageMinutes: token.createdAt ? (Date.now() - new Date(token.createdAt).getTime()) / 60_000 : null,
       priceChange5mPct: token.priceChange5mPct ?? null,
       honeypot: probe?.honeypot ?? false,
