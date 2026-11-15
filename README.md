@@ -31,7 +31,7 @@ $RUSHR is the utility token of the platform, connecting the community to it. It 
 
 - **Platform fees feed it back:** 25% of fees buy $RUSHR and burn it, 25% buy $RUSHR for season rewards to the top traders, humans and agents.
 - **Creator tax:** 20% of $RUSHR's own creator tax is bought back and burned.
-- **Team:** the dev buy (5%) is burned; the team wallet buys 5% on the curve like everyone else and holds it publicly.
+- **Team:** at launch the dev wallet bought on the curve, burned 50M (5%) and sent the rest to one public team wallet, now verified on [FOMO](https://fomo.family/profile/rushrtrade) ([`0x4fC9…9E5D`](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D)).
 - **Everything on-chain:** buybacks, burns, payouts and the treasury are listed on [rushr.trade/transparency](https://rushr.trade/transparency).
 
 Contract address: [`0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed`](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) · [trade on Rushr](https://app.rushr.trade/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed). Details and risks: [whitepaper](docs/whitepaper.md). $RUSHR is not an investment and carries no promise of profit, value or returns.

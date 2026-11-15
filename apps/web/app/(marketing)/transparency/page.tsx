@@ -261,18 +261,18 @@ export default async function TransparencyPage() {
                 <tbody>
                   {(
                     [
-                      ['$RUSHR token', RUSHR_TOKEN],
-                      ['Dev burn transaction', null],
-                      ['Team wallet', null],
-                      ['Buyback wallet', null],
+                      ['$RUSHR token', RUSHR_TOKEN, `https://robinhoodchain.blockscout.com/token/${RUSHR_TOKEN}`],
+                      ['Dev burn transaction (50M $RUSHR)', '0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb', 'https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb'],
+                      ['Team wallet (verified on FOMO)', '0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D', 'https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D'],
+                      ['Buyback wallet', null, null],
                     ] as const
-                  ).map(([k, addr]) => (
+                  ).map(([k, addr, href]) => (
                     <tr key={k} className="border-b border-line first:border-t first:border-t-ink/15">
                       <td className="w-1/2 py-3 pr-4 text-muted">{k}</td>
                       <td className="py-3">
-                        {addr ? (
+                        {addr && href ? (
                           <a
-                            href={`https://robinhoodchain.blockscout.com/token/${addr}`}
+                            href={href}
                             target="_blank"
                             rel="noreferrer"
                             className="break-all font-mono text-[13px] text-ink underline decoration-ink/25 underline-offset-2 hover:decoration-ink"

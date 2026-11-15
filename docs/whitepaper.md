@@ -76,19 +76,19 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 
 | Share | What happens |
 | --- | --- |
-| **5%: dev buy, burned** | The deploying wallet buys 5% on the curve at launch and sends it to a burn address in the same hour. The dev keeps nothing. |
-| **5%: team wallet, held publicly** | A separate team wallet buys 5% on the curve, like everyone else, and holds it publicly on [FOMO](https://fomo.family) so anyone can watch it. Its address is published below. |
-| **90%: public** | Bought on the curve by anyone. When the curve completes, PONS migrates the token to Uniswap. |
+| **5%: dev buy, burned** | At launch the deploying wallet bought on the curve and burned 50,000,000 $RUSHR (5% of supply) by sending it to `0x…dEaD` in the same hour. |
+| **5.6%: team wallet, held publicly** | The rest of the deploying wallet's launch buy (44.1M, 4.4%) went to a separate team wallet, which also bought 11.8M (1.2%) on the market. It is verified on [FOMO](https://fomo.family/profile/rushrtrade) and holds its $RUSHR publicly, so anyone can watch it. |
+| **89.4%: public** | Bought on the curve by anyone. When the curve completes, PONS migrates the token to Uniswap. |
 
-No tokens are minted or allocated outside the curve. Every team purchase goes through the same public curve at market price, and Rushr's own safety check shows the dev and team holdings on the token's page like for any other token.
+No tokens were minted or allocated outside the curve: every $RUSHR the team holds was bought at market price, and every move between the dev and team wallets is a public on-chain transaction. Rushr's own safety check shows the dev and team holdings on the token's page like for any other token.
 
 **Addresses** (each one is added as it happens):
 
 | | Address |
 | --- | --- |
 | $RUSHR token | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
-| Dev wallet (5% bought and burned) | _tbd_, burn transaction _tbd_ |
-| Team wallet (5%, held publicly) | _tbd_ |
+| Dev wallet (launch buy; 5% burned) | [0xe5ed29849043380aea7cfe62e97a23e82c55578e](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e), burn transaction [0x6b2e5c67…46cb](https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb) |
+| Team wallet (held publicly on FOMO) | [0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D) |
 | Buyback wallet | _tbd_ |
 | Platform fee treasury | `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` |
 
