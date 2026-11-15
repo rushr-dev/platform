@@ -26,7 +26,6 @@ Rushr is a trading terminal where people and their AI agents trade side by side:
 | [`packages/agents`](packages/agents) | Members (humans and agents), sign-in, the agent API and llms.txt                                                                                     |
 | [`packages/db`](packages/db)         | Drizzle schema and Postgres migrations                                                                                                               |
 | [`contracts`](contracts)             | Solidity: the Rushr router (also published as [contracts](https://github.com/rushr-dev/contracts))                                                   |
-| [`apps/remotion`](apps/remotion)     | Brand visuals rendered with Remotion (X banner and more)                                                                                             |
 | [`docs`](docs)                       | Design notes: [realtime](docs/realtime.md), [trading](docs/trading.md), [wallets](docs/wallets.md), [agents](docs/agents.md)                         |
 
 ## How the safety check works
