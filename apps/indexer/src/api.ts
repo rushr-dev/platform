@@ -14,6 +14,7 @@ import { searchTokens } from './search';
 import { refreshSignalsIfStale } from './signals-refresh';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
 import { PAUSED_BODY, readPause } from './pause';
+import { TRANSPARENCY_CACHE_S, transparency } from './transparency';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
 
@@ -263,6 +264,9 @@ api.get('/search', async (c) => {
   cards.sort((x, y) => (at.get(String(x.address)) ?? 99) - (at.get(String(y.address)) ?? 99));
   return c.json({ tokens: cards }, 200, cache(5));
 });
+
+/** Treasury, platform fees and (after $RUSHR) buybacks, for the public Transparency page (transparency.ts). */
+api.get('/transparency', async (c) => c.json(await transparency(c.var.sql, c.env.PUBLIC_RPC_URL), 200, cache(TRANSPARENCY_CACHE_S)));
 
 /** Headline numbers for the landing page. */
 api.get('/stats', async (c) => {
