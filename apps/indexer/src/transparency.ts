@@ -4,6 +4,7 @@ import type { Sql } from 'postgres';
 import { NATIVE_ETH, QUOTES, ROBINHOOD_CHAIN } from '@rushr/core';
 import { BETA_FEE_BPS, DEFAULT_TRADE_CONFIG, STANDARD_FEE_BPS } from '@rushr/trade';
 import { Rpc } from './rpc';
+import { creatorTax } from './creator-tax';
 
 export const TRANSPARENCY_CACHE_S = 60;
 const CHAIN_ID = 4663;
@@ -157,7 +158,7 @@ async function treasuryBalances(sql: Sql, sources: string[], treasury: string): 
   return last?.value ?? balanceMemo?.value ?? null;
 }
 
-/** The whole /transparency body. `rpcUrls`: where to read treasury balances, in order (see treasuryBalances). */
+/** The whole /transparency body. `rpcUrls`: where to read chain state, in order (see treasuryBalances). */
 export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAIN.publicRpc]) {
   const treasury = DEFAULT_TRADE_CONFIG.feeRecipient;
   const [[eth], [season], balances] = await Promise.all([
@@ -167,9 +168,10 @@ export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAI
     treasuryBalances(sql, rpcUrls, treasury),
   ]);
   const ethNow = eth?.value.usd ?? null;
-  const [allTime, seasonTotals] = await Promise.all([
+  const [allTime, seasonTotals, tax] = await Promise.all([
     ledgerTotals(sql, ethNow),
     season ? ledgerTotals(sql, ethNow, { from: season.starts_at, to: season.ends_at }) : null,
+    creatorTax(sql, rpcUrls, ethNow),
   ]);
   return {
     treasury: {
@@ -192,6 +194,8 @@ export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAI
         ? { id: season.id, name: season.name, startsAt: season.starts_at.toISOString(), endsAt: season.ends_at.toISOString(), ...seasonTotals }
         : null,
     },
+    /** $RUSHR creator tax: earned, claimed and unclaimed by the creator wallet (creator-tax.ts). */
+    creatorTax: tax,
     buybacks: [] as Buyback[],
     updatedAt: new Date().toISOString(),
   };
