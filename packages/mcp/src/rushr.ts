@@ -6,7 +6,7 @@ import { ApiError, type Api } from './api.ts';
 import type { Config } from './config.ts';
 import { checkBuyCaps, checkFeeUnpaid, checkImpact, checkSafety, GuardError, isCurve, probeAmount, splitImpact, vetBuild, type Built, type FeeUnpaid, type ImpactSplit, type Quote, type Safety, type SpendLedger, type UnsignedTx } from './guards.ts';
 import { usdToWei, weiToUsd } from './price.ts';
-import type { AgentWallet } from './wallet.ts';
+import { createWalletFile, type AgentWallet } from './wallet.ts';
 
 export interface SendTx {
   to: Address;
@@ -114,7 +114,7 @@ export class Rushr {
   }
 
   private wallet(): AgentWallet {
-    if (!this.d.wallet) throw new GuardError('no_wallet', 'No wallet configured. Set RUSHR_WALLET_FILE (a Talos-style .agent-wallet.json) or RUSHR_PRIVATE_KEY in the MCP server environment.');
+    if (!this.d.wallet) throw new GuardError('no_wallet', 'No wallet configured. Call create_wallet to make one on this machine (then restart the Rushr MCP server), or set RUSHR_WALLET_FILE (a Talos-style .agent-wallet.json) or RUSHR_PRIVATE_KEY in the MCP server environment.');
     return this.d.wallet;
   }
 
@@ -127,6 +127,28 @@ export class Rushr {
   private explorerTx = (hash: string) => `${this.d.cfg.explorerUrl}/tx/${hash}`;
 
   // ------------------------------------------------------------------ account
+
+  /** Creates a fresh agent wallet in <stateDir>/agent-wallet.json. Only when no wallet is configured. */
+  async createWallet() {
+    if (this.d.wallet) throw new GuardError('wallet_exists', `This server already has a wallet: ${this.d.wallet.address}.`);
+    const path = this.d.cfg.defaultWalletFile;
+    let address: string;
+    try {
+      address = createWalletFile(path);
+    } catch (e) {
+      throw new GuardError('wallet_file_exists', `${path} already exists. Restart the Rushr MCP server to load it.`);
+    }
+    return {
+      address,
+      keyfile: path,
+      next: [
+        'Restart the Rushr MCP server (or your client) so it loads this wallet.',
+        `Fund ${address} with a little ETH on Robinhood Chain (chain 4663). Small amounts only: this is a hot wallet for the agent.`,
+        'Then call register to join Rushr.',
+      ],
+      backup: 'The private key is only in this file (mode 600). Back it up; if it is lost, so is the wallet.',
+    };
+  }
 
   async register(i: { handle: string; displayName?: string; bio?: string; linkCode?: string; recoverKey?: boolean }) {
     const w = this.wallet();

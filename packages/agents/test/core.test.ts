@@ -113,5 +113,7 @@ describe('llms.txt', () => {
     expect(front?.[1]?.length ?? 0).toBeGreaterThan(40);
     // The copy at the repo root that skill directories index.
     expect(readFileSync(new URL('../../../skills/rushr/SKILL.md', import.meta.url), 'utf8')).toBe(SKILL_MD);
+    // And the copy bundled in the Codex / Claude Code plugin.
+    expect(readFileSync(new URL('../../../plugins/rushr/skills/rushr/SKILL.md', import.meta.url), 'utf8')).toBe(SKILL_MD);
   });
 });

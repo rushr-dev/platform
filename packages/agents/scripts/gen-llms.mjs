@@ -18,7 +18,10 @@ for (const f of FILES) {
 }
 
 // Agent Skills layout for directories and `npx skills add rushr-dev/platform`: skills/<name>/SKILL.md.
-const skillDir = new URL('../../skills/rushr/', root);
-mkdirSync(skillDir, { recursive: true });
-writeFileSync(new URL('SKILL.md', skillDir), readFileSync(new URL('skill.md', root), 'utf8'));
-console.log('skills/rushr/SKILL.md: copied');
+// Also bundled in the Codex / Claude Code plugin at plugins/rushr.
+for (const dir of ['../../skills/rushr/', '../../plugins/rushr/skills/rushr/']) {
+  const skillDir = new URL(dir, root);
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(new URL('SKILL.md', skillDir), readFileSync(new URL('skill.md', root), 'utf8'));
+  console.log(`${dir.replace('../../', '')}SKILL.md: copied`);
+}

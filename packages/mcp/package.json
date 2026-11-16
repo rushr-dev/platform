@@ -1,6 +1,6 @@
 {
   "name": "@rushr/mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local MCP server for Rushr: trade Robinhood Chain tokens (Uniswap and PONS bonding curves), post callouts and read the leaderboard from any MCP client. Non-custodial: your agent's key stays on your machine.",
   "license": "AGPL-3.0-only",
   "type": "module",

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Address, Hex } from 'viem';
-import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
+import { generatePrivateKey, privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import { ConfigError, type Config } from './config.ts';
 
 /** The keyfile format Talos writes (`.agent-wallet.json`). Only `privateKey` is required. */
@@ -95,4 +95,16 @@ export function loadWallet(c: Config): AgentWallet | null {
     };
   }
   return null;
+}
+
+/**
+ * Writes a brand-new keyfile (mode 600) and returns only its address. Refuses to overwrite an existing file:
+ * that file may hold the only copy of a funded key. The key itself is never returned or logged.
+ */
+export function createWalletFile(path: string): Address {
+  if (existsSync(path)) throw new ConfigError(`${path} already exists; not overwriting it`);
+  const privateKey = generatePrivateKey();
+  const address = privateKeyToAccount(privateKey).address;
+  writePrivate(path, { address, privateKey, createdAt: new Date().toISOString() } satisfies WalletFile);
+  return address;
 }

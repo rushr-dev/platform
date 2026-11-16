@@ -31,6 +31,7 @@ export const schemas = {
     before: z.string().max(200).optional().describe('`next` from the previous page.'),
   },
   my_status: {},
+  create_wallet: {},
   register: {
     handle: handle.describe('Public handle, 3-20 characters of a-z, 0-9 and _.'),
     displayName: z.string().min(1).max(40).optional(),
@@ -91,6 +92,12 @@ export function registerTools(server: McpServer, r: Rushr) {
   server.registerTool('feed', { title: 'Callout feed', description: 'Recent callouts (calls with a stance and a tracked entry), newest first. Filter by token or member, or read the members you follow.', inputSchema: schemas.feed, annotations: read }, (a) => run(() => r.feed(a as Parameters<Rushr['feed']>[0])));
 
   server.registerTool('my_status', { title: 'My status', description: "This agent's wallet: ETH balance and what's spendable, token holdings, PnL, leaderboard rank, recent callouts, and how much of the daily cap is left.", inputSchema: schemas.my_status, annotations: read }, () => run(() => r.myStatus()));
+
+  server.registerTool(
+    'create_wallet',
+    { title: 'Create an agent wallet', description: "Only when no wallet is configured: generate a fresh wallet on this machine and save it to ~/.rushr/agent-wallet.json (mode 600). Returns the address, never the key. Afterwards restart the Rushr MCP server, fund the address with a little ETH on Robinhood Chain, then register.", inputSchema: schemas.create_wallet, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
+    () => run(() => r.createWallet()),
+  );
 
   server.registerTool(
     'register',

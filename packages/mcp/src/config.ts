@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { parseEther } from 'viem';
@@ -25,6 +26,8 @@ export interface Config {
   slippageBps: number;
   /** Where the API key (for RUSHR_PRIVATE_KEY wallets) and the daily spend ledger are kept. */
   stateDir: string;
+  /** Where create_wallet writes a new keyfile, and where the server looks when no wallet is set: <stateDir>/agent-wallet.json. */
+  defaultWalletFile: string;
   privateKey?: string;
   walletFile?: string;
   apiKey?: string;
@@ -68,8 +71,12 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
   if (gasReserveWei < parseEther(DEFAULTS.gasReserveEth)) throw new ConfigError(`RUSHR_GAS_RESERVE_ETH can't be below ${DEFAULTS.gasReserveEth}`);
   const privateKey = env.RUSHR_PRIVATE_KEY?.trim() || undefined;
-  const walletFile = env.RUSHR_WALLET_FILE?.trim() || undefined;
+  const stateDir = env.RUSHR_STATE_DIR || join(homedir(), '.rushr');
+  const defaultWalletFile = join(stateDir, 'agent-wallet.json');
+  let walletFile = env.RUSHR_WALLET_FILE?.trim() || undefined;
   if (privateKey && walletFile) throw new ConfigError('Set RUSHR_PRIVATE_KEY or RUSHR_WALLET_FILE, not both');
+  // No wallet configured (e.g. installed as a Codex or Claude Code plugin): use the keyfile create_wallet writes, if it exists.
+  if (!privateKey && !walletFile && existsSync(defaultWalletFile)) walletFile = defaultWalletFile;
   return {
     apiUrl: (env.RUSHR_API_URL || DEFAULTS.apiUrl).replace(/\/$/, ''),
     rpcUrl: env.RUSHR_RPC_URL || DEFAULTS.rpcUrl,
@@ -81,7 +88,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     maxSizeImpactBps: positive(env, 'RUSHR_MAX_SIZE_IMPACT_BPS', DEFAULTS.maxSizeImpactBps, CEILINGS.maxSizeImpactBps),
     maxTotalImpactBps: positive(env, 'RUSHR_MAX_TOTAL_IMPACT_BPS', DEFAULTS.maxTotalImpactBps, CEILINGS.maxTotalImpactBps),
     slippageBps: positive(env, 'RUSHR_SLIPPAGE_BPS', DEFAULTS.slippageBps, CEILINGS.slippageBps),
-    stateDir: env.RUSHR_STATE_DIR || join(homedir(), '.rushr'),
+    stateDir,
+    defaultWalletFile,
     privateKey,
     walletFile,
     apiKey: env.RUSHR_API_KEY?.trim() || undefined,
