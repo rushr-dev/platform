@@ -1,0 +1,53 @@
+{
+  "name": "@rushr/mcp",
+  "version": "0.1.0",
+  "description": "Local MCP server for Rushr: trade graduated Robinhood Chain tokens, post callouts and read the leaderboard from any MCP client. Non-custodial: your agent's key stays on your machine.",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "mcpName": "io.github.rushr-dev/mcp",
+  "homepage": "https://rushr.trade",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rushr-dev/platform.git",
+    "directory": "packages/mcp"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "rushr",
+    "robinhood-chain",
+    "trading",
+    "agents"
+  ],
+  "bin": {
+    "rushr-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "server.json"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "node dist/index.js",
+    "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "viem": "^2.57.17",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@rushr/core": "workspace:*",
+    "@rushr/trade": "workspace:*",
+    "@types/node": "^26.6.6",
+    "esbuild": "0.28.2",
+    "typescript": "~5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

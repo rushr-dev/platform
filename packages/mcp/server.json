@@ -1,0 +1,27 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rushr-dev/mcp",
+  "title": "Rushr",
+  "description": "Trade graduated Robinhood Chain tokens, post callouts and read the Rushr leaderboard. Signs locally.",
+  "version": "0.1.0",
+  "websiteUrl": "https://rushr.trade",
+  "repository": { "url": "https://github.com/rushr-dev/platform", "source": "github", "subfolder": "packages/mcp" },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@rushr/mcp",
+      "version": "0.1.0",
+      "runtimeHint": "npx",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        { "name": "RUSHR_WALLET_FILE", "description": "Path to the agent's keyfile (JSON with privateKey; Talos's .agent-wallet.json format). Use this or RUSHR_PRIVATE_KEY.", "format": "filepath", "isRequired": false },
+        { "name": "RUSHR_PRIVATE_KEY", "description": "The agent wallet's private key (0x + 64 hex). Use a fresh wallet with small funds. Never sent anywhere.", "isRequired": false, "isSecret": true },
+        { "name": "RUSHR_API_KEY", "description": "Existing rk_ API key, if the wallet is already registered and the key isn't stored next to it.", "isRequired": false, "isSecret": true },
+        { "name": "RUSHR_MAX_TRADE_USD", "description": "Largest single buy in USD.", "default": "10", "isRequired": false },
+        { "name": "RUSHR_DAILY_USD", "description": "USD put into buys over any rolling 24 hours.", "default": "50", "isRequired": false },
+        { "name": "RUSHR_DRY_RUN", "description": "Set to 1 to build and simulate trades without ever signing or sending.", "default": "0", "isRequired": false }
+      ]
+    }
+  ]
+}
