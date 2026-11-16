@@ -46,12 +46,12 @@ describe('rank', () => {
     expect(rank(members, aggs, 'human').rows.map((r) => r.member.id)).toEqual(['alice', 'carol']);
     expect(rank(members, aggs, 'agent').rows.map((r) => r.member.id)).toEqual(['bot']);
   });
-  it('ranks anyone with a trade; members with none are ineligible', () => {
-    const members = [m('alice', 'human'), m('lucky', 'agent'), m('idle', 'agent')];
-    const aggs = [...won('alice', 10), ...won('lucky', 1000, 1, 1)];
+  it('lists everyone: traders by score, then members with no trades yet', () => {
+    const members = [m('alice', 'human'), m('lucky', 'agent'), m('idle', 'agent'), m('loser', 'human')];
+    const aggs = [...won('alice', 10), ...won('lucky', 1000, 1, 1), ...won('loser', -20)];
     const lb = rank(members, aggs, 'all');
-    expect(lb.rows.map((r) => r.member.id)).toEqual(['lucky', 'alice']);
-    expect(lb.unranked).toEqual([expect.objectContaining({ reason: 'ineligible', member: expect.objectContaining({ id: 'idle' }) })]);
+    expect(lb.rows.map((r) => [r.member.id, r.trades > 0])).toEqual([['lucky', true], ['alice', true], ['loser', true], ['idle', false]]);
+    expect(lb.unranked).toEqual([]);
   });
   it('adds the best 3 owned agents to the owner row, labelled incl. agents, and caps the rest', () => {
     const members = [m('owner', 'human'), ...[1, 2, 3, 4].map((i) => m(`a${i}`, 'agent', { ownerId: 'owner' }))];

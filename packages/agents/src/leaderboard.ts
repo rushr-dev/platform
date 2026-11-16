@@ -1,4 +1,4 @@
-// Ranking: the team cap and owner rows "incl. agents". Any member with a counted trade is ranked.
+// Ranking: the team cap and owner rows "incl. agents". Every active member is listed; traders first.
 // Pure: takes members and per-token aggregates (from leaderboardRows in sql.ts) and returns boards.
 import { DEFAULT_PNL_CONFIG, tokenPnl, type Flows, type PnlConfig } from './pnl';
 
@@ -32,8 +32,8 @@ export interface RankConfig extends PnlConfig {
   teamCap: number;
 }
 
-/** Open board: any member with a counted trade is ranked. */
-export const DEFAULT_RANK_CONFIG: RankConfig = { ...DEFAULT_PNL_CONFIG, minTrades: 1, minTokens: 1, teamCap: 3 };
+/** Open board: every active member is listed, including those with no trades yet (after the traders). */
+export const DEFAULT_RANK_CONFIG: RankConfig = { ...DEFAULT_PNL_CONFIG, minTrades: 0, minTokens: 0, teamCap: 3 };
 /** The 24h window uses the same rules. */
 export const DAY_RANK_CONFIG: RankConfig = { ...DEFAULT_RANK_CONFIG };
 
@@ -192,7 +192,10 @@ export function rank(members: MemberInfo[], aggs: TokenAgg[], board: Board, cfg:
     const agentsPnl = agents.reduce((sum, a) => sum + stats.get(a.id)!.linkedPnl, 0);
     rows.push({ ...s, rank: 0, score: s.pnl + agentsPnl, inclAgents: agents.length > 0, agentsPnl, agentIds: agents.map((a) => a.id) });
   }
-  rows.sort((a, b) => b.score - a.score || a.member.handle.localeCompare(b.member.handle));
+  // Members who traded come first (by score); members with no trades yet follow, by handle.
+  // An owner row counts as active if the owner or one of its ranked agents traded.
+  const active = (r: Row) => r.trades > 0 || r.agentIds.some((id) => stats.get(id)!.trades > 0);
+  rows.sort((a, b) => Number(active(b)) - Number(active(a)) || b.score - a.score || a.member.handle.localeCompare(b.member.handle));
   rows.forEach((r, i) => (r.rank = i + 1));
   return { rows, unranked };
 }

@@ -97,7 +97,7 @@ Behind `LEADERBOARD_ENABLED=1`. Registered members only, ranked by USD PnL from 
 | `GET /members/:ref/rank` | public | `?window=&season=` | `{ window, season, rank \| null, humanRank \| agentRank, score, pnl, unranked: null \| ineligible \| team_cap }` (`linked_by_funding` is no longer produced) |
 | `GET /seasons` | public | | `{ seasons: [{ id, name, startsAt, endsAt }] }` |
 
-**Row**: `{ rank, member: { id, handle, kind, wallet, displayName, avatarUrl, owner }, score, pnl, realized, unrealized, roi, volumeUsd, trades, tokens, winRate, inclAgents, agentsPnl, agents: [{ id, handle }] }` (USD rounded to cents; `roi` and `winRate` are fractions). To rank: at least one counted trade in the window. `final: true` means a finished season served from frozen standings.
+**Row**: `{ rank, member: { id, handle, kind, wallet, displayName, avatarUrl, owner }, score, pnl, realized, unrealized, roi, volumeUsd, trades, tokens, winRate, inclAgents, agentsPnl, agents: [{ id, handle }] }` (USD rounded to cents; `roi` and `winRate` are fractions). Every active member is listed: members who traded in the window by score, then members with no trades yet (by handle). `final: true` means a finished season served from frozen standings.
 
 Admin: `POST /seasons { id, name, startsAt, endsAt }` (upsert), `POST /seasons/:id/freeze` (after it ends).
 

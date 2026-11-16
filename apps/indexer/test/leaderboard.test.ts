@@ -31,7 +31,7 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
     const alice = await t.signup('alice', w(1));
     await t.signup('bob', w(2));
     await t.signup('carol', w(3));
-    await t.signup('dave', w(4)); // no trades: unranked
+    await t.signup('dave', w(4)); // no trades: listed last
     await t.sql`insert into members (id, kind, origin, handle, wallet, owner_id, owner_changed_at) values
       ('m_bot', 'agent', 'external', 'alicebot', ${w(9)}, ${alice.member.id}, now() - interval '30 days'),
       ('m_free', 'agent', 'self', 'freebot', ${w(8)}, null, null)`;
@@ -49,7 +49,7 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ window: 'season', season: { id: 's0', name: 'Season 0' }, final: false });
     expect(r.json.rows.map((x) => [x.rank, x.member.handle, x.score])).toEqual([
-      [1, 'bob', 150], [2, 'alice', 90], [3, 'alicebot', 60], [4, 'carol', 0], [5, 'freebot', -30],
+      [1, 'bob', 150], [2, 'alice', 90], [3, 'alicebot', 60], [4, 'carol', 0], [5, 'freebot', -30], [6, 'dave', 0],
     ]);
     const alice = r.json.rows.find((x) => x.member.handle === 'alice');
     expect(alice).toMatchObject({ pnl: 30, inclAgents: true, agentsPnl: 60, agents: [{ id: 'm_bot', handle: 'alicebot' }], trades: 6, tokens: 3 });
@@ -58,9 +58,9 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
   });
 
   it('has Humans and Agents tabs and rolling windows', async () => {
-    expect((await t.call('GET', '/leaderboard?kind=human')).json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'carol']);
+    expect((await t.call('GET', '/leaderboard?kind=human')).json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'carol', 'dave']);
     expect((await t.call('GET', '/leaderboard?kind=agent')).json.rows.map((x) => x.member.handle)).toEqual(['alicebot', 'freebot']);
-    expect((await t.call('GET', '/leaderboard?window=24h')).json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot', 'carol']);
+    expect((await t.call('GET', '/leaderboard?window=24h')).json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot', 'carol', 'dave', 'freebot']); // no trades in the window: last, by handle
     expect((await t.call('GET', '/leaderboard?window=1y')).json.error.code).toBe('invalid_field');
   });
 
@@ -68,7 +68,7 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
     expect((await t.call('GET', '/members/alice/rank')).json).toMatchObject({ rank: 2, humanRank: 2, score: 90, pnl: 30, unranked: null });
     expect((await t.call('GET', '/members/freebot/rank')).json).toMatchObject({ rank: 5, agentRank: 2 });
     expect((await t.call('GET', '/members/carol/rank')).json).toMatchObject({ rank: 4, humanRank: 3, unranked: null });
-    expect((await t.call('GET', '/members/dave/rank')).json).toMatchObject({ rank: null, unranked: 'ineligible' });
+    expect((await t.call('GET', '/members/dave/rank')).json).toMatchObject({ rank: 6, humanRank: 4, unranked: null });
   });
 
   it('lists seasons and freezes a finished one', async () => {
@@ -76,12 +76,12 @@ describe.skipIf(!pg)('leaderboard (Season 0)', () => {
     expect((await t.admin('POST', '/seasons/s0/freeze')).json.error.code).toBe('season_running');
     await t.admin('POST', '/seasons', { id: 's0', name: 'Season 0', startsAt: new Date(Date.now() - 7 * 86_400_000).toISOString(), endsAt: new Date(Date.now() - 1000).toISOString() });
     const frozen = await t.admin('POST', '/seasons/s0/freeze');
-    expect(frozen.json.rows).toBe(5 + 3 + 2);
+    expect(frozen.json.rows).toBe(6 + 4 + 2);
     // New trades after the end don't change the final board.
     await trade3(w(3), 100, 1000, 0);
     const r = await t.call('GET', '/leaderboard?season=s0');
     expect(r.json.final).toBe(true);
-    expect(r.json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot', 'carol', 'freebot']);
+    expect(r.json.rows.map((x) => x.member.handle)).toEqual(['bob', 'alice', 'alicebot', 'carol', 'freebot', 'dave']);
   });
 
   it('is off without its flag', async () => {
