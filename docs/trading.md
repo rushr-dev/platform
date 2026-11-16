@@ -1,6 +1,6 @@
 # Trading and the platform fee
 
-Status 2026-11-12: research done, decisions recorded (below), scaffold in `packages/trade`, `contracts/` and `/swap`. Nothing here has been deployed. The treasury is currently a single EOA, moving to a Safe (see the known risk below).
+Status 2026-11-12: research done, decisions recorded (below), scaffold in `packages/trade`, `contracts/` and `/swap`. Nothing here has been deployed. The treasury has been a Safe since 2026-11-16 (see Treasury below).
 
 ## Beta trading v0 (2026-11-12)
 
@@ -235,7 +235,7 @@ Implementation, about 3 days:
   - `auth.signAuthorization` through `useSign7702Authorization`, in `lib/auth.ts`, plus the first-trade or enable flow and its copy.
   - A fallback for external wallets: the second transaction, or fee-free.
 - **Ledger (0.5 day):**
-  - A plain ETH transfer emits no event. The indexer must read the fee from the call trace, or from `SafeReceived` once the treasury is a Safe (the treasury is currently a single EOA, moving to a Safe), or from the client's trade record.
+  - A plain ETH transfer emits no event. The indexer must read the fee from the call trace, or from `SafeReceived` once the treasury is a Safe (the treasury has been a Safe since 2026-11-16), or from the client's trade record.
   - Curve rows then carry `feeBps: 50` and drop the `no_fee` flag.
 - **Signed-in test on a dev wallet (0.5 day):** a few small real trades.
 
@@ -395,7 +395,7 @@ pnpm --filter @rushr/trade exec tsx scripts/fee-audit.ts --env apps/indexer/.dev
 | **Which side** | Always the **quote side** (ETH, WETH or USDG): taken from the input on buys, from the output on sells. The treasury only receives ETH or USDG, and a token's own tax can't shrink or block the fee. |
 | **Collection, Uniswap v2/v3/v4** (including Doppler, lift.fun and other hooked v4 pools) | **Primary path.** Uniswap's audited **Universal Router**, no custom contract. Buys: `TRANSFER(ETH, treasury, fee)` from `msg.value`, then swap the rest. Sells: swap into the router, `PAY_PORTION(ETH, treasury, bps)`, `SWEEP(ETH, user, minOut)` (the pattern Uniswap's interface fee used). |
 | **Collection, PONS bonding curves** | `contracts/src/RushrPonsRouter.sol`, fully tested, **undeployed until an independent review** (checklist below). Until then, curve tokens trade **directly on the curve** (decided 2026-11-13), and the fee follows as a **separate transfer** to the treasury after the trade confirms (decided 2026-11-14; EIP-7702 batching is the later, atomic path). |
-| **Treasury** | The treasury (currently a single **EOA**, moving to a Safe): `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` (decided 2026-11-12; EIP-55 checksum valid; no code and nonce 0 on 4663). It's `RUSHR_TREASURY`, the default `feeRecipient` in `packages/trade`. The routers can move it to a Safe later **only through the guardian's timelock** (queue, wait `delay`, activate, events; no owner, no instant change). **Known risk:** see below. |
+| **Treasury** | The treasury is a **Safe** (v1.5.0): `0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3` (since 2026-11-16). Until then it was a single EOA, `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` (2026-11-12 to 2026-11-16), which is kept in `LEGACY_TREASURIES` so late fees still reconcile. It's `RUSHR_TREASURY`, the default `feeRecipient` in `packages/trade`. The routers can move it to a Safe later **only through the guardian's timelock** (queue, wait `delay`, activate, events; no owner, no instant change). **Known risk:** see below. |
 | **Referral** | **Off-chain accounting.** A referred trader pays **10% less fee**, rounded in their favour (0.5% → **0.45%**; beta 0.25% → **0.22%**, since 25 − ⌈2.5⌉ = 22; charged on-chain as a lower rate). The referrer accrues **20% of the fee actually collected** in our ledger. Payouts aren't built yet. |
 | **Other v3 forks** (Ramses, Aero CL, up, Topaz, Nami, giga, robinswap) | Not routable through the Universal Router, which knows only Uniswap's factories (verified in its bytecode). Phase 2. |
 | **Agents** | Agents trade through the same code: `packages/trade` is pure functions that return unsigned transactions (`prepareSwap`), usable from a server or agent runtime, not only from `/swap`. |

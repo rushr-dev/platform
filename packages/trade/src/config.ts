@@ -7,13 +7,19 @@ import { TradeError } from './errors';
  *
  * Treasury (decided 2026-11-12): currently a single EOA (no code on 4663), moving to a Safe. Known
  * risk (docs/trading.md): a single key. Mitigations: hardware-wallet key, regular sweeps, move to a Safe
- * before volume grows. The on-chain routers can switch to a Safe later through their guardian timelock
- * (TreasuryTimelock); this default must then be updated to match.
+ * before volume grows. Since 2026-11-16 the treasury is a Safe (`RUSHR_TREASURY`); the on-chain routers, once
+ * deployed, can only move it through their guardian timelock (TreasuryTimelock), and this default must match.
  *
  * A real treasury no longer gates signing by itself: one-click (server-signed) trading is gated by
  * `assertOneClickAllowed` (RushrRouter deployed AND audited), the web UI by NEXT_PUBLIC_SWAP_ENABLED.
  */
-export const RUSHR_TREASURY: Address = '0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40';
+export const RUSHR_TREASURY: Address = '0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3';
+
+/**
+ * Earlier fee treasuries, oldest first. Fees from trades built before a switch can still land here, so
+ * fee audits and the transparency totals accept them too. The first one was a single EOA (2026-11-12 to 2026-11-16).
+ */
+export const LEGACY_TREASURIES: readonly Address[] = ['0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40'];
 
 /** Kept for tests and forks: a config using it is refused by `assertSignable`. */
 export const PLACEHOLDER_FEE_RECIPIENT: Address = '0x000000000000000000000000000000000000fee1';
