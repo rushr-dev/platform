@@ -13,7 +13,23 @@ const THIN = '0x00000000000000000000000000000000000000ee';
 const POOR = '0x00000000000000000000000000000000000000dd';
 const CURVE = '0x00000000000000000000000000000000000000c1';
 const CURVE_LATE = '0x00000000000000000000000000000000000000c2';
+const HONEY = '0x00000000000000000000000000000000000000a1';
+const RPC_DOWN = '0x00000000000000000000000000000000000000a2';
+const NO_BUY = '0x00000000000000000000000000000000000000a3';
 const calls: PrepareCall[] = [];
+/** Tokens the (mocked) buy→sell probe ran for, in order. */
+const probes: string[] = [];
+vi.mock('@rushr/trade/simulate', () => ({
+  probeTokenSafety: async (_client: unknown, q: { pool: { token: string }; request: { trader: string } }) => {
+    const token = q.pool.token;
+    probes.push(token);
+    if (token === RPC_DOWN) throw new Error('eth_simulateV1: upstream timeout');
+    const base = { buyOk: true, sellOk: true, buyTaxBps: 0, sellTaxBps: 0, roundTripBps: 9900, honeypot: false };
+    if (token === HONEY) return { ...base, sellOk: false, sellTaxBps: null, roundTripBps: null, honeypot: true, error: 'execution reverted' };
+    if (token === NO_BUY) return { ...base, buyOk: false, sellOk: false, honeypot: false, error: 'execution reverted' };
+    return base;
+  },
+}));
 vi.mock('@rushr/trade/agent', async () => {
   const { TradeError } = await import('@rushr/trade/errors');
   return {
@@ -23,7 +39,7 @@ vi.mock('@rushr/trade/agent', async () => {
       if (req.token === CURVE_LATE) throw new TradeError('UNSUPPORTED_VENUE', 'PONS curve trading needs RushrPonsRouter, which is not deployed yet');
       const sell = req.side === 'sell';
       return {
-        quote: { amountIn: req.amountIn, amountOut: 123n, minAmountOut: 120n, priceImpactBps: req.token === THIN ? 9999 : 12, warnings: [] },
+        quote: { amountIn: req.amountIn, amountOut: 123n, minAmountOut: 120n, priceImpactBps: req.token === THIN ? 9999 : 12, warnings: [], request: req, pool: { token: req.token, venue: 'uniswap-v4' } },
         alternatives: [],
         tx: { chainId: 4663, to: '0x00000000000000000000000000000000000000ff', data: '0xabcdef', value: sell ? 0n : req.amountIn },
         approvals: sell
@@ -141,6 +157,44 @@ describe.skipIf(!pg)('independent agents', () => {
     // Selling is never blocked.
     expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, token: SPAM, side: 'sell' } })).status).toBe(200);
     expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, amountIn: '1.5' } })).json.error.code).toBe('invalid_field');
+  });
+
+  it('runs the buy→sell honeypot check on every buy, fails closed, caches passes, never checks sells', async () => {
+    const acct = privateKeyToAccount(generatePrivateKey());
+    const key = (await t.call('POST', '/agents/register', { body: { ...(await signIn('register', acct)), handle: 'probebot' } })).json.apiKey.key as string;
+    const buy = (token: string, mode: 'quote' | 'build' = 'quote', extra = {}) => t.call('POST', `/trade/${mode}`, { auth: key, body: { token, side: 'buy', amountIn: '1000', ...extra } });
+
+    // Known-good token: checked once, then served from the 10-minute pass cache.
+    const GOOD = '0x00000000000000000000000000000000000000a4';
+    probes.length = 0;
+    const q = await buy(GOOD);
+    expect(q.status).toBe(200);
+    expect(q.json.honeypotCheck).toEqual({ checked: 'probe', buyTaxBps: 0, sellTaxBps: 0, roundTripBps: 9900 });
+    expect((await buy(GOOD, 'build')).json.honeypotCheck.checked).toBe('cached');
+    expect(probes).toEqual([GOOD]);
+
+    // Buy works, sell reverts: honeypot on quote and build, no override.
+    expect((await buy(HONEY)).json.error).toMatchObject({ code: 'honeypot', check: { checked: 'probe', sellTaxBps: null } });
+    expect((await buy(HONEY, 'build', { acceptRisk: 'high' })).json.error.code).toBe('honeypot');
+
+    // The check can't run, or its buy leg fails: safety_unverified (503, retryable), never cached.
+    const down = await buy(RPC_DOWN);
+    expect(down.status).toBe(503);
+    expect(down.json.error).toMatchObject({ code: 'safety_unverified', retryAfter: 5, reason: expect.stringContaining('upstream timeout') });
+    expect((await buy(RPC_DOWN, 'build')).json.error.code).toBe('safety_unverified');
+    expect((await buy(NO_BUY, 'build')).json.error.code).toBe('safety_unverified');
+    expect(probes.filter((x) => x === RPC_DOWN)).toHaveLength(2);
+
+    // USDG buys are checked with an ETH quote for the same token.
+    const before = calls.length;
+    expect((await buy(HONEY, 'quote', { quoteAsset: 'USDG' })).json.error.code).toBe('honeypot');
+    expect(calls.slice(before).map((c) => (c.req as { quoteAsset?: string }).quoteAsset)).toEqual(['USDG', 'ETH']);
+
+    // Sells are never checked or blocked.
+    probes.length = 0;
+    expect((await t.call('POST', '/trade/build', { auth: key, body: { token: HONEY, side: 'sell', amountIn: '1000' } })).status).toBe(200);
+    expect((await t.call('POST', '/trade/build', { auth: key, body: { token: RPC_DOWN, side: 'sell', amountIn: '1000' } })).status).toBe(200);
+    expect(probes).toEqual([]);
   });
 
   it('refuses PONS curve tokens with curve_not_supported, before using the quota', async () => {

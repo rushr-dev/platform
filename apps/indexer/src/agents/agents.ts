@@ -8,6 +8,7 @@ import { newApiKey, newMemberId, newNonce } from '@rushr/agents/crypto';
 import { IP_LIMITS, MAX_OUTSTANDING_NONCES } from '@rushr/agents/limits';
 import { buildMessage, NONCE_TTL_MS, peekSiwe, verifySiwe, type Purpose } from '@rushr/agents/siwe';
 import { prepareSwap, toJsonSafe } from '@rushr/trade/agent';
+import { probeTokenSafety } from '@rushr/trade/simulate';
 import { robinhoodChain } from '@rushr/trade/chain';
 import { isTradeError } from '@rushr/trade/errors';
 import { resolveConfig } from '@rushr/trade/config';
@@ -19,6 +20,7 @@ import { publicMember } from './members';
 import { recordReferral } from './referrals';
 import { refreshSignalsIfStale } from '../signals-refresh';
 import { tokenPools } from '../data';
+import { checkBuy, type HoneypotCheck } from './honeypot';
 
 export const AGENT_SCOPES = ['read', 'profile', 'post', 'trade'];
 const AGENT_PURPOSES: Purpose[] = ['register', 'login'];
@@ -228,6 +230,10 @@ const SIM_GAS_BUFFER_WEI = 10n ** 16n; // 0.01 ETH
 /** Permit2 allowances from built approvals expire after 30 days (Uniswap's default). */
 const PERMIT2_EXPIRY_S = 30 * 86_400;
 const MAX_UINT160 = (1n << 160n) - 1n;
+/** Throwaway address the honeypot probe trades from (funded inside the simulation only; never signs). */
+const PROBE_TRADER: Address = '0x0000000000000000000000000000000000000001';
+/** ETH amount for the probe when the agent's buy is quoted in USDG. */
+const PROBE_ETH_WEI = 10n ** 16n; // 0.01 ETH
 
 /** PONS tokens still on their bonding curve: agents trade graduated (Uniswap) tokens only for now. */
 async function onCurve(sql: Sql, token: string): Promise<boolean> {
@@ -271,12 +277,25 @@ async function prepare(c: C, mode: 'quote' | 'build') {
     const pools = await tokenPools(sql, null, req.token);
     const poolsFetch = (async () => new Response(JSON.stringify({ pools: pools ?? [] }), { headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
     const p = await prepareSwap(client as never, req, { forSigning: mode === 'build', simulate: mode === 'build' && simulate, simulateFundEth, fetch: poolsFetch });
+    // Every buy: simulated buy→sell round trip first (honeypot.ts). Fails closed; sells are never checked.
+    let honeypotCheck: HoneypotCheck | null = null;
+    if (req.side === 'buy') {
+      honeypotCheck = await checkBuy(req.token, p.quote.pool.venue, async () => {
+        const cfg = resolveConfig();
+        // The probe funds a throwaway address with ETH inside the simulation, so it needs an ETH-quoted buy:
+        // the agent's own quote when it pays in ETH, else a small ETH quote for the same token.
+        const buy = req.quoteAsset === 'ETH'
+          ? p.quote
+          : (await prepareSwap(client as never, { ...req, quoteAsset: 'ETH', amountIn: PROBE_ETH_WEI, trader: PROBE_TRADER }, { fetch: poolsFetch })).quote;
+        return probeTokenSafety(client as never, { ...buy, request: { ...buy.request, trader: PROBE_TRADER } }, cfg);
+      });
+    }
     const quote = toJsonSafe(p.quote) as Record<string, unknown>;
     const impactBps = p.quote.priceImpactBps;
     const impactOk = acceptImpact || impactBps == null || impactBps <= MAX_IMPACT_BPS;
     if (mode === 'quote') {
       return c.json(
-        { quote, alternatives: toJsonSafe(p.alternatives), safety, warnings: p.warnings, deadlineSeconds: resolveConfig().deadlineSeconds, wouldBuild: safetyAllows(req.side, safety, acceptRisk) && impactOk },
+        { quote, alternatives: toJsonSafe(p.alternatives), safety, honeypotCheck, warnings: p.warnings, deadlineSeconds: resolveConfig().deadlineSeconds, wouldBuild: safetyAllows(req.side, safety, acceptRisk) && impactOk },
         200,
         PRIVATE,
       );
@@ -293,6 +312,7 @@ async function prepare(c: C, mode: 'quote' | 'build') {
         quote,
         simulation: p.simulation ? toJsonSafe(p.simulation) : null,
         safety,
+        honeypotCheck,
         warnings: p.warnings,
         note: 'Unsigned. Send each approvals[i].tx first, in order, then tx, from your registered wallet, before the deadline. Simulate before sending. Rushr never signs or sends for you.',
       },
