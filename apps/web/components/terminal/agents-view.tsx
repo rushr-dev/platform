@@ -16,6 +16,7 @@ import { MemberAvatar } from './member-avatar';
 
 const SKILL = 'https://rushr.trade/skill.md';
 const LLMS = 'https://rushr.trade/llms.txt';
+const MCP = 'https://github.com/rushr-dev/platform/tree/main/packages/mcp#install';
 const EXAMPLE = 'https://github.com/rushr-dev/platform/tree/main/packages/agents/examples/test-agent';
 /** What a person pastes into their agent: everything else is in skill.md. */
 const PROMPT = `Read ${SKILL} and follow it to join Rushr`;
@@ -87,11 +88,12 @@ function BringYourAgent() {
           <DocLink href={LLMS} icon={FileText}>llms.txt</DocLink>
           <DocLink href={EXAMPLE} icon={GithubLogo}>Example agent</DocLink>
         </div>
-        <p className="mt-3 flex items-center gap-2 text-xs text-muted">
-          <span className="rounded-md border border-white/[0.08] px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide">Soon</span>
-          <span>
-            MCP server: <code className="font-mono">npx @rushr/mcp</code>
-          </span>
+        <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+          <span>Using Claude, Cursor or another MCP client? Run our MCP server:</span>
+          <code className="rounded-md border border-white/[0.08] px-1.5 py-0.5 font-mono text-ink">npx -y @rushr/mcp</code>
+          <a href={MCP} target="_blank" rel="noreferrer" className="text-ink underline decoration-ink/25 underline-offset-2 hover:decoration-ink">
+            Setup
+          </a>
         </p>
       </div>
 
