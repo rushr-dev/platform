@@ -2,7 +2,7 @@
 // data (traders appear only as a count), served from the edge cache for 60s.
 import type { Sql } from 'postgres';
 import { NATIVE_ETH, QUOTES, ROBINHOOD_CHAIN } from '@rushr/core';
-import { BETA_FEE_BPS, DEFAULT_TRADE_CONFIG, STANDARD_FEE_BPS } from '@rushr/trade';
+import { BETA_FEE_BPS, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, STANDARD_FEE_BPS } from '@rushr/trade';
 import { Rpc } from './rpc';
 import { creatorTax } from './creator-tax';
 
@@ -127,18 +127,39 @@ async function ledgerTotals(sql: Sql, ethNow: number | null, range?: { from: Dat
  * from a Worker. The last good reading is kept in indexer_state ('treasury_balances') and served with its
  * time when every source fails; memoized per isolate for the cache window.
  */
-type Balances = { ETH: { raw: string; amount: string }; USDG: { raw: string; amount: string }; at: string };
+type Amt = { raw: string; amount: string };
+/**
+ * Totals across the current treasury (a Safe) and the legacy ones, plus each account. Legacy accounts stay in
+ * the total until they're emptied (the first one, an EOA, held dust after the switch to the Safe).
+ */
+type Balances = {
+  ETH: Amt;
+  USDG: Amt;
+  at: string;
+  accounts?: { address: string; role: 'current' | 'legacy'; ETH: Amt; USDG: Amt }[];
+};
 let balanceMemo: { at: number; value: Balances } | null = null;
 
-async function readBalances(rpcUrl: string, treasury: string): Promise<Balances> {
-  const [eth, usdg] = await new Rpc(rpcUrl).batch<string>([
-    { method: 'eth_getBalance', params: [treasury, 'latest'] },
-    { method: 'eth_call', params: [{ to: QUOTES.USDG, data: `0x70a08231${treasury.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'] },
-  ]);
-  if (eth == null || usdg == null) throw new Error('balance call failed');
-  const e = BigInt(eth);
-  const u = BigInt(usdg === '0x' ? 0 : usdg);
-  return { ETH: { raw: e.toString(), amount: formatUnits(e, 18) }, USDG: { raw: u.toString(), amount: formatUnits(u, 6) }, at: new Date().toISOString() };
+const amt = (v: bigint, d: number): Amt => ({ raw: v.toString(), amount: formatUnits(v, d) });
+
+export async function readBalances(rpcUrl: string, treasury: string): Promise<Balances> {
+  const addrs = [treasury, ...LEGACY_TREASURIES.filter((a) => a.toLowerCase() !== treasury.toLowerCase())];
+  const res = await new Rpc(rpcUrl).batch<string>(addrs.flatMap((a) => [
+    { method: 'eth_getBalance', params: [a, 'latest'] },
+    { method: 'eth_call', params: [{ to: QUOTES.USDG, data: `0x70a08231${a.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'] },
+  ]));
+  if (res.some((r) => r == null)) throw new Error('balance call failed');
+  const accounts = addrs.map((address, i) => {
+    const e = BigInt(res[2 * i]!);
+    const u = BigInt(res[2 * i + 1] === '0x' ? 0 : res[2 * i + 1]!);
+    return { address, role: (i === 0 ? 'current' : 'legacy') as 'current' | 'legacy', ETH: amt(e, 18), USDG: amt(u, 6), e, u };
+  });
+  return {
+    ETH: amt(accounts.reduce((s, a) => s + a.e, 0n), 18),
+    USDG: amt(accounts.reduce((s, a) => s + a.u, 0n), 6),
+    at: new Date().toISOString(),
+    accounts: accounts.map(({ e: _e, u: _u, ...a }) => a),
+  };
 }
 
 async function treasuryBalances(sql: Sql, sources: string[], treasury: string): Promise<Balances | null> {
@@ -177,6 +198,8 @@ export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAI
     treasury: {
       address: treasury,
       explorer: `${ROBINHOOD_CHAIN.explorer}/address/${treasury}`,
+      /** Earlier treasuries: fees paid to them still count, and their balances are in balances' totals. */
+      legacy: LEGACY_TREASURIES.map((a) => ({ address: a, explorer: `${ROBINHOOD_CHAIN.explorer}/address/${a}` })),
       balances,
       ethUsd: ethNow,
     },

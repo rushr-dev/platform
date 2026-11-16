@@ -82,3 +82,32 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
     expect(JSON.stringify(body)).not.toContain('1'.repeat(40));
   });
 });
+
+describe('readBalances', () => {
+  it('totals the Safe and the legacy treasury, and lists each account', async () => {
+    const { readBalances } = await import('../src/transparency');
+    const { LEGACY_TREASURIES } = await import('@rushr/trade');
+    const legacy = LEGACY_TREASURIES[0]!.toLowerCase();
+    const eth: Record<string, bigint> = { [RUSHR_TREASURY.toLowerCase()]: 10n ** 18n, [legacy]: 650_000_000_000_000n };
+    const usdg: Record<string, bigint> = { [RUSHR_TREASURY.toLowerCase()]: 2_500_000n, [legacy]: 0n };
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+      const calls = JSON.parse(String(init?.body)) as { id: number; method: string; params: [unknown, string] }[];
+      return Response.json(calls.map((c) => {
+        if (c.method === 'eth_getBalance') return { jsonrpc: '2.0', id: c.id, result: '0x' + eth[String(c.params[0]).toLowerCase()]!.toString(16) };
+        const who = '0x' + (c.params[0] as { data: string }).data.slice(-40);
+        return { jsonrpc: '2.0', id: c.id, result: '0x' + usdg[who]!.toString(16).padStart(64, '0') };
+      }));
+    }) as typeof fetch;
+    try {
+      const b = await readBalances('http://rpc.test', RUSHR_TREASURY);
+      expect(b.ETH.amount).toBe('1.00065');
+      expect(b.USDG.amount).toBe('2.5');
+      expect(b.accounts!.map((a) => [a.address.toLowerCase(), a.role, a.ETH.amount])).toEqual([
+        [RUSHR_TREASURY.toLowerCase(), 'current', '1'], [legacy, 'legacy', '0.00065'],
+      ]);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

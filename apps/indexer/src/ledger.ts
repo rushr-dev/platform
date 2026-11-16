@@ -16,7 +16,7 @@
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, type FeeTxInfo } from '@rushr/trade';
+import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, LEGACY_TREASURIES, type FeeTxInfo } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -199,7 +199,10 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     if (!cur || BigInt(cur.value.block) < block) return 'retry';
   }
   const logs = receipt.logs as { address: string; topics: string[]; data: string }[];
-  const treasury = DEFAULT_TRADE_CONFIG.feeRecipient.toLowerCase();
+  // The current treasury (a Safe since 2026-11-16) and earlier ones: a fee paid to any of them is a correct fee
+  // (trades built before a switch can still land on the old one).
+  const treasuries = [DEFAULT_TRADE_CONFIG.feeRecipient, ...LEGACY_TREASURIES].map((a) => a.toLowerCase());
+  const toTreasuries = (f: (t: string) => bigint) => treasuries.reduce((sum, t) => sum + f(t), 0n);
   let s = swaps[0];
   if (!s) {
     // Not indexed (a token we don't track): the token is what moved to or from the trader.
@@ -226,13 +229,13 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
   let trace: CallFrame | null = null;
   if (quoteAsset === 'ETH') {
     trace = await rpc.call<CallFrame>('debug_traceTransaction', [txHash, { tracer: 'callTracer' }]);
-    fee = ethReceived(trace, treasury);
+    fee = toTreasuries((t) => ethReceived(trace!, t));
     if (fee === 0n) {
-      const weth = tokenFlow(logs, QUOTES.WETH, treasury); // fee paid in WETH instead
+      const weth = toTreasuries((t) => tokenFlow(logs, QUOTES.WETH, t)); // fee paid in WETH instead
       if (weth > 0n) { fee = weth; feeToken = QUOTES.WETH; }
     }
   } else {
-    fee = tokenFlow(logs, QUOTES.USDG, treasury);
+    fee = toTreasuries((t) => tokenFlow(logs, QUOTES.USDG, t));
   }
 
   // Amounts from the trader's side of the chain.
@@ -270,7 +273,9 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     }
     const audit = auditCurveFee({
       hash: txHash as `0x${string}`, from: from as `0x${string}`, nonce: Number(BigInt(tx.nonce as string)), value: BigInt((tx.value as string) ?? '0x0'),
-      status: 'success', logs, trace, feeTx, treasury: cfg.feeRecipient, feeBps: cfg.feeBps, referredFeeBps: expectedBps, referred: !!ref,
+      status: 'success', logs, trace, feeTx,
+      // Audit against the treasury the fee went to, when it's the current one or a legacy one.
+      treasury: feeTx?.to && treasuries.includes(feeTx.to.toLowerCase()) ? feeTx.to : cfg.feeRecipient, feeBps: cfg.feeBps, referredFeeBps: expectedBps, referred: !!ref,
     });
     flags.push(...audit.flags);
     // A fee transfer that doesn't check out (wrong nonce, recipient, sender, reverted) counts as missed.

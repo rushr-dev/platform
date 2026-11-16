@@ -1,7 +1,7 @@
 // Trade ledger: POST /v1/trades + confirmation from the chain (receipt, our decoded swap, the treasury's
 // fee from a call trace), referral accrual, and the member read endpoints. Local Postgres, fake RPC.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { CURVE_BUY_TOPIC, CURVE_SELL_TOPIC, DEFAULT_TRADE_CONFIG, effectiveFeeBps } from '@rushr/trade';
+import { CURVE_BUY_TOPIC, CURVE_SELL_TOPIC, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, effectiveFeeBps } from '@rushr/trade';
 import { v1 } from '../src/agents/app';
 import { confirmTrade, ethReceived, sweepStuckTrades, tokenFlow, trades } from '../src/ledger';
 import { pgAvailable, setup } from './harness';
@@ -19,6 +19,12 @@ const POOL = '0x9001000000000000000000000000000000000009';
 const ROUTER = DEFAULT_TRADE_CONFIG.universalRouter.toLowerCase();
 const TREASURY = DEFAULT_TRADE_CONFIG.feeRecipient.toLowerCase();
 const BUY_TX = `0x${'b1'.repeat(32)}`;
+const LEGACY = LEGACY_TREASURIES[0]!.toLowerCase();
+const SAFE_SINGLETON = '0x5afe000000000000000000000000000000005afe';
+const LEGACY_SELL_TX = `0x${'1e'.repeat(32)}`;
+const PROXY_SELL_TX = `0x${'9a'.repeat(32)}`;
+const CLEGACY_TX = `0x${'cc'.repeat(32)}`;
+const CLEGACY_FEE_TX = `0x${'fc'.repeat(32)}`;
 const SELL_TX = `0x${'5e'.repeat(32)}`;
 const E18 = 10n ** 18n;
 // Rates from the trade config (0.25% during the beta, 0.22% referred), never literals.
@@ -105,6 +111,30 @@ const chain: Record<string, { tx: object; receipt: object; trace: object }> = {
     trace: { type: 'CALL', from: CAROL, to: CURVE, value: hex(E18) },
   },
   [CSTUCK_FEE_TX]: feeTx(CAROL, 33, (E18 * BASE_BPS) / 10_000n),
+  // A trade built before the switch to the Safe: the fee went to the legacy EOA.
+  [LEGACY_SELL_TX]: {
+    tx: { from: CAROL, to: ROUTER, value: '0x0' },
+    receipt: { status: '0x1', blockNumber: '0x66', logs: [transfer(TOKEN, CAROL, POOL, 500n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: ROUTER, value: '0x0', calls: [
+      { type: 'CALL', from: ROUTER, to: LEGACY, value: hex(SELL_FEE) },
+      { type: 'CALL', from: ROUTER, to: CAROL, value: hex(SELL_GROSS - SELL_FEE) },
+    ] },
+  },
+  // The Safe receives through its proxy: the proxy DELEGATECALLs its singleton with the same value (not a second payment).
+  [PROXY_SELL_TX]: {
+    tx: { from: CAROL, to: ROUTER, value: '0x0' },
+    receipt: { status: '0x1', blockNumber: '0x67', logs: [transfer(TOKEN, CAROL, POOL, 500n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: ROUTER, value: '0x0', calls: [
+      { type: 'CALL', from: ROUTER, to: TREASURY, value: hex(SELL_FEE), calls: [{ type: 'DELEGATECALL', from: TREASURY, to: SAFE_SINGLETON, value: hex(SELL_FEE) }] },
+      { type: 'CALL', from: ROUTER, to: CAROL, value: hex(SELL_GROSS - SELL_FEE) },
+    ] },
+  },
+  [CLEGACY_TX]: {
+    tx: { from: CAROL, to: CURVE, value: hex(E18), nonce: '0x50' },
+    receipt: { status: '0x1', blockNumber: '0x6f', logs: [transfer(CTOKEN, CURVE, CAROL, 1000n * E18), fill('buy', CAROL, E18, 1000n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: CURVE, value: hex(E18) },
+  },
+  [CLEGACY_FEE_TX]: { ...feeTx(CAROL, 81, (E18 * BASE_BPS) / 10_000n), tx: { from: CAROL, to: LEGACY, value: hex((E18 * BASE_BPS) / 10_000n), input: '0x', nonce: hex(81n) } },
   // Not the next nonce: some other transfer to the treasury, not this trade's fee.
   [CBAD_FEE_TX]: feeTx(CAROL, 40, (E18 * BASE_BPS) / 10_000n),
 };
@@ -150,7 +180,9 @@ describe.skipIf(!pg)('trade ledger', () => {
       values (${POOL}, ${TOKEN}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', true, 'v3', 'ramses', 1, now())`;
     await t.sql`insert into swaps (tx, log_index, token, pool, block, time, trader, side, token_amount, quote, quote_amount, price_usd, usd) values
       (${BUY_TX}, 1, ${TOKEN}, ${POOL}, 100, now(), ${BOB}, 'buy', ${(1000n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${E18.toString()}, 1, 3000),
-      (${SELL_TX}, 1, ${TOKEN}, ${POOL}, 101, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${(2n * E18).toString()}, 1, 6000)`;
+      (${SELL_TX}, 1, ${TOKEN}, ${POOL}, 101, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${(2n * E18).toString()}, 1, 6000),
+      (${LEGACY_SELL_TX}, 1, ${TOKEN}, ${POOL}, 102, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${(2n * E18).toString()}, 1, 6000),
+      (${PROXY_SELL_TX}, 1, ${TOKEN}, ${POOL}, 103, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, '0x0bd7d308f8e1639fab988df18a8011f41eacad73', ${(2n * E18).toString()}, 1, 6000)`;
     await t.sql`insert into pools (id, token, quote, token_is_currency0, dex, venue, created_block, created_at)
       values (${CURVE}, ${CTOKEN}, '0x0000000000000000000000000000000000000000', true, 'pons-curve', null, 1, now())`;
     const eth = '0x0000000000000000000000000000000000000000';
@@ -159,7 +191,8 @@ describe.skipIf(!pg)('trade ledger', () => {
       (${CSELL_TX}, 1, ${CTOKEN}, ${CURVE}, 107, now(), ${CAROL}, 'sell', ${(500n * E18).toString()}, ${eth}, ${SELL_GROSS.toString()}, 1, 6000),
       (${CMISS_TX}, 1, ${CTOKEN}, ${CURVE}, 108, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
       (${CBAD_TX}, 1, ${CTOKEN}, ${CURVE}, 109, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
-      (${CSTUCK_TX}, 1, ${CTOKEN}, ${CURVE}, 110, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000)`;
+      (${CSTUCK_TX}, 1, ${CTOKEN}, ${CURVE}, 110, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
+      (${CLEGACY_TX}, 1, ${CTOKEN}, ${CURVE}, 111, now(), ${CAROL}, 'buy', ${(1000n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000)`;
     // RPC goes to the fake chain (Privy is only needed for sign-up above).
     vi.stubGlobal('fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { id: number; method: string; params: unknown[] } | { id: number; method: string; params: unknown[] }[];
@@ -213,6 +246,16 @@ describe.skipIf(!pg)('trade ledger', () => {
     expect(Number(row!.fee_bps)).toBeCloseTo(Number(BASE_BPS));
   });
 
+  it('counts a fee paid to a legacy treasury as correct, and a fee to the Safe through its proxy once', async () => {
+    for (const h of [LEGACY_SELL_TX, PROXY_SELL_TX]) {
+      await t.call('POST', '/trades', { auth: carol, body: { txHash: h, chainId: 4663, source: { kind: 'web' } } });
+      expect(await confirmTrade(t.sql, t.env as never, h, false)).toBe('done');
+      const [row] = await t.sql`select * from trades_ledger where tx_hash = ${h}`;
+      expect(row).toMatchObject({ status: 'confirmed', fee_amount: SELL_FEE.toString(), flags: [] });
+      expect(Number(row!.fee_bps)).toBeCloseTo(Number(BASE_BPS));
+    }
+  });
+
   it('serves the member their trades and the referrer their accruals', async () => {
     const mine = await t.call('GET', '/me/trades', { auth: bob });
     expect(mine.json.trades).toHaveLength(1);
@@ -262,6 +305,12 @@ describe.skipIf(!pg)('trade ledger', () => {
       const r = await post(carol, CMISS_TX, CBAD_FEE_TX);
       expect(r.json.status).toBe('submitted');
       expect(queued).toEqual([{ kind: 'trade-confirm', tx: CMISS_TX }]);
+    });
+
+    it('a curve fee transfer to a legacy treasury is a correct fee', async () => {
+      await post(carol, CLEGACY_TX, CLEGACY_FEE_TX);
+      expect(await confirmTrade(t.sql, t.env as never, CLEGACY_TX, false)).toBe('done');
+      expect(await rowOf(CLEGACY_TX)).toMatchObject({ status: 'confirmed', fee_amount: ((E18 * BASE_BPS) / 10_000n).toString(), flags: [`fee_tx:${CLEGACY_FEE_TX}`] });
     });
 
     it('a transfer that is not at the next nonce is not this trade\'s fee', async () => {
