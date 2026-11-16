@@ -34,6 +34,7 @@ export interface DevToken {
 export interface TokenSnapshot {
   address: string;
   symbol: string;
+  /** On-chain totalSupply() (already net of tokens destroyed by burn()). */
   totalSupply: bigint;
   deployer: string;
   createdAt: number;
@@ -98,9 +99,13 @@ export interface Reason {
 
 export interface TokenSignals {
   holders: number;
-  /** Top 10 people (pools, burns and contracts excluded), % of total supply. */
+  /**
+   * Top 10 people (pools, burns and contracts excluded), % of circulating supply (totalSupply minus burn
+   * addresses, as GMGN and DexScreener measure). Every holder share below uses the same denominator
+   * except burntPct.
+   */
   top10Pct: number;
-  /** % of total supply held by burn addresses. */
+  /** % of on-chain totalSupply held by burn addresses (tokens destroyed by burn() are already gone from it). */
   burntPct?: number;
   devPct: number;
   /** null = not measured (launch trades not indexed). */
@@ -299,6 +304,12 @@ export function tagHolders(s: TokenSnapshot): Record<string, HolderTag[]> {
   return tags;
 }
 
+/** Circulating supply: totalSupply minus what burn addresses hold (never below 0). */
+export function circulatingSupply(s: Pick<TokenSnapshot, 'totalSupply' | 'burnt'>): bigint {
+  const c = s.totalSupply - (s.burnt ?? 0n);
+  return c > 0n ? c : 0n;
+}
+
 export function computeSignals(s: TokenSnapshot): TokenSignals {
   const balance = new Map(s.holders.map((h) => [h.wallet, h.amount]));
   const sumHeld = (wallets: Iterable<string>) => {
@@ -345,16 +356,17 @@ export function computeSignals(s: TokenSnapshot): TokenSignals {
     !!s.tradeCounts && s.tradeCounts.buys >= THRESHOLDS.noSellsMinBuys && s.tradeCounts.sells === 0 &&
     s.now - s.createdAt >= THRESHOLDS.noSellsMinAgeSeconds;
 
+  const circ = circulatingSupply(s);
   const signals: Omit<TokenSignals, 'risk' | 'verdict' | 'reasons'> = {
     holders: s.holderCount,
-    top10Pct: round1(pct(top10, s.totalSupply)),
+    top10Pct: round1(pct(top10, circ)),
     burntPct: round1(pct(s.burnt ?? 0n, s.totalSupply)),
-    devPct: round1(pct(devHeld, s.totalSupply)),
-    snipersPct: s.launchIndexed ? round1(pct(sniperBought, s.totalSupply)) : null,
+    devPct: round1(pct(devHeld, circ)),
+    snipersPct: s.launchIndexed ? round1(pct(sniperBought, circ)) : null,
     sniperCount: s.launchIndexed ? new Set(snipers.map((b) => b.trader)).size : null,
-    bundledPct: s.launchIndexed ? round1(pct(bundled, s.totalSupply)) : null,
-    bundledStillHeldPct: s.launchIndexed ? round1(pct(sumHeld(bundle.map((b) => b.trader)), s.totalSupply)) : null,
-    insidersPct: round1(pct(sumHeld(insiders), s.totalSupply)),
+    bundledPct: s.launchIndexed ? round1(pct(bundled, circ)) : null,
+    bundledStillHeldPct: s.launchIndexed ? round1(pct(sumHeld(bundle.map((b) => b.trader)), circ)) : null,
+    insidersPct: round1(pct(sumHeld(insiders), circ)),
     freshWalletsPct: s.holders.length ? round1((fresh.length / s.holders.length) * 100) : 0,
     airdroppedHolders: s.airdropped.length,
     dev,

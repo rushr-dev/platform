@@ -2,8 +2,9 @@
 // data (traders appear only as a count), served from the edge cache for 60s.
 import type { Sql } from 'postgres';
 import { NATIVE_ETH, QUOTES, ROBINHOOD_CHAIN } from '@rushr/core';
-import { BETA_FEE_BPS, DEFAULT_TRADE_CONFIG, STANDARD_FEE_BPS } from '@rushr/trade';
+import { BETA_FEE_BPS, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, STANDARD_FEE_BPS } from '@rushr/trade';
 import { Rpc } from './rpc';
+import { creatorTax } from './creator-tax';
 
 export const TRANSPARENCY_CACHE_S = 60;
 const CHAIN_ID = 4663;
@@ -121,47 +122,84 @@ async function ledgerTotals(sql: Sql, ethNow: number | null, range?: { from: Dat
 }
 
 /**
- * Treasury balances, one batched call, memoized per isolate for the cache window. Read from the chain's
- * public RPC, not Alchemy: two calls a minute that cost nothing, and still answer while the indexer is
- * paused or Alchemy is out of capacity.
+ * Treasury balances, one batched call per source: the chain's public RPC first (free), then our Alchemy
+ * URL (skipped while paused). The public RPC rate-limits Cloudflare's shared egress, so it often fails
+ * from a Worker. The last good reading is kept in indexer_state ('treasury_balances') and served with its
+ * time when every source fails; memoized per isolate for the cache window.
  */
-let balanceMemo: { at: number; value: Record<'ETH' | 'USDG', { raw: string; amount: string }> | null } | null = null;
-async function treasuryBalances(rpcUrl: string, treasury: string) {
-  if (balanceMemo && Date.now() - balanceMemo.at < TRANSPARENCY_CACHE_S * 1000) return balanceMemo.value;
-  try {
-    const [eth, usdg] = await new Rpc(rpcUrl).batch<string>([
-      { method: 'eth_getBalance', params: [treasury, 'latest'] },
-      { method: 'eth_call', params: [{ to: QUOTES.USDG, data: `0x70a08231${treasury.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'] },
-    ]);
-    if (eth == null || usdg == null) throw new Error('balance call failed');
-    const e = BigInt(eth);
-    const u = BigInt(usdg === '0x' ? 0 : usdg);
-    balanceMemo = { at: Date.now(), value: { ETH: { raw: e.toString(), amount: formatUnits(e, 18) }, USDG: { raw: u.toString(), amount: formatUnits(u, 6) } } };
-  } catch (err) {
-    console.error('treasury balance failed', err);
-    if (!balanceMemo) return null;
-  }
-  return balanceMemo!.value;
+type Amt = { raw: string; amount: string };
+/**
+ * Totals across the current treasury (a Safe) and the legacy ones, plus each account. Legacy accounts stay in
+ * the total until they're emptied (the first one, an EOA, held dust after the switch to the Safe).
+ */
+type Balances = {
+  ETH: Amt;
+  USDG: Amt;
+  at: string;
+  accounts?: { address: string; role: 'current' | 'legacy'; ETH: Amt; USDG: Amt }[];
+};
+let balanceMemo: { at: number; value: Balances } | null = null;
+
+const amt = (v: bigint, d: number): Amt => ({ raw: v.toString(), amount: formatUnits(v, d) });
+
+export async function readBalances(rpcUrl: string, treasury: string): Promise<Balances> {
+  const addrs = [treasury, ...LEGACY_TREASURIES.filter((a) => a.toLowerCase() !== treasury.toLowerCase())];
+  const res = await new Rpc(rpcUrl).batch<string>(addrs.flatMap((a) => [
+    { method: 'eth_getBalance', params: [a, 'latest'] },
+    { method: 'eth_call', params: [{ to: QUOTES.USDG, data: `0x70a08231${a.slice(2).toLowerCase().padStart(64, '0')}` }, 'latest'] },
+  ]));
+  if (res.some((r) => r == null)) throw new Error('balance call failed');
+  const accounts = addrs.map((address, i) => {
+    const e = BigInt(res[2 * i]!);
+    const u = BigInt(res[2 * i + 1] === '0x' ? 0 : res[2 * i + 1]!);
+    return { address, role: (i === 0 ? 'current' : 'legacy') as 'current' | 'legacy', ETH: amt(e, 18), USDG: amt(u, 6), e, u };
+  });
+  return {
+    ETH: amt(accounts.reduce((s, a) => s + a.e, 0n), 18),
+    USDG: amt(accounts.reduce((s, a) => s + a.u, 0n), 6),
+    at: new Date().toISOString(),
+    accounts: accounts.map(({ e: _e, u: _u, ...a }) => a),
+  };
 }
 
-/** The whole /transparency body. `rpcUrl` defaults to the chain's public RPC (see treasuryBalances). */
-export async function transparency(sql: Sql, rpcUrl: string = ROBINHOOD_CHAIN.publicRpc) {
+async function treasuryBalances(sql: Sql, sources: string[], treasury: string): Promise<Balances | null> {
+  if (balanceMemo && Date.now() - balanceMemo.at < TRANSPARENCY_CACHE_S * 1000) return balanceMemo.value;
+  for (const url of sources) {
+    try {
+      const value = await readBalances(url, treasury);
+      balanceMemo = { at: Date.now(), value };
+      await sql`insert into indexer_state (key, value) values ('treasury_balances', ${sql.json(value as never)})
+        on conflict (key) do update set value = excluded.value, updated_at = now()`.catch(() => undefined);
+      return value;
+    } catch (err) {
+      console.error('treasury balance failed', new URL(url).host, String(err).slice(0, 200));
+    }
+  }
+  const [last] = await sql<{ value: Balances }[]>`select value from indexer_state where key = 'treasury_balances'`.catch(() => []);
+  return last?.value ?? balanceMemo?.value ?? null;
+}
+
+/** The whole /transparency body. `rpcUrls`: where to read chain state, in order (see treasuryBalances). */
+export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAIN.publicRpc]) {
   const treasury = DEFAULT_TRADE_CONFIG.feeRecipient;
   const [[eth], [season], balances] = await Promise.all([
     sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`,
     sql<{ id: string; name: string; starts_at: Date; ends_at: Date }[]>`
       select id, name, starts_at, ends_at from seasons where now() >= starts_at and now() < ends_at order by starts_at desc limit 1`,
-    treasuryBalances(rpcUrl, treasury),
+    treasuryBalances(sql, rpcUrls, treasury),
   ]);
   const ethNow = eth?.value.usd ?? null;
-  const [allTime, seasonTotals] = await Promise.all([
+  const [allTime, seasonTotals, tax] = await Promise.all([
     ledgerTotals(sql, ethNow),
     season ? ledgerTotals(sql, ethNow, { from: season.starts_at, to: season.ends_at }) : null,
+    creatorTax(sql, rpcUrls, ethNow),
   ]);
   return {
     treasury: {
       address: treasury,
       explorer: `${ROBINHOOD_CHAIN.explorer}/address/${treasury}`,
+      /** Earlier treasuries: fees paid to them still count, and their balances are in balances' totals. */
+      legacy: LEGACY_TREASURIES.map((a) => ({ address: a, explorer: `${ROBINHOOD_CHAIN.explorer}/address/${a}` })),
       balances,
       ethUsd: ethNow,
     },
@@ -179,6 +217,8 @@ export async function transparency(sql: Sql, rpcUrl: string = ROBINHOOD_CHAIN.pu
         ? { id: season.id, name: season.name, startsAt: season.starts_at.toISOString(), endsAt: season.ends_at.toISOString(), ...seasonTotals }
         : null,
     },
+    /** $RUSHR creator tax: earned, claimed and unclaimed by the creator wallet (creator-tax.ts). */
+    creatorTax: tax,
     buybacks: [] as Buyback[],
     updatedAt: new Date().toISOString(),
   };

@@ -246,6 +246,7 @@ export const INFRA_ADDRESSES: Address[] = [
   UNISWAP.v4.poolManager,
   UNISWAP.v4.positionManager,
   UNISWAP.v4.universalRouter,
+  '0x204faca1764b154221e35c0d20abb3c525710498', // Universal Router (current; the one Rushr builds swaps for)
   UNISWAP.permit2,
   '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789', // ERC-4337 EntryPoint v0.6
   '0x0000000000000000000000000000000000000000',

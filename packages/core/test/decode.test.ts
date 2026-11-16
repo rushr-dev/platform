@@ -274,3 +274,17 @@ describe('launch starting price', () => {
     expect(pons.launches[0]!.initialPrice).toEqual({ quoteRaw: 2n * 10n ** 16n, tokenRaw: 10n ** 24n });
   });
 });
+
+describe('launchPrice', () => {
+  it('prices a normal launch and refuses an implausible starting cap', async () => {
+    const { launchPrice, priceFromSqrt, MAX_LAUNCH_MCAP_USD } = await import('../src/ingest/decode');
+    const token = { decimals: 18, totalSupply: 10n ** 27n };
+    // Prod AERO (2026-11-15): Doppler multicurve, USDG currency0, Initialize sqrtPriceX96 below (tick 166216).
+    const aero = priceFromSqrt(0xfe1e03f1449c9d3c9c3f6077d10n, false)!;
+    expect(launchPrice(aero, token, { decimals: 6, usd: 1 })).toBeNull();
+    // A 1B-supply token at 0.00002 USDG: $20K cap.
+    const ok = launchPrice({ quoteRaw: 20n, tokenRaw: 10n ** 18n }, token, { decimals: 6, usd: 1 })!;
+    expect(ok.marketCapUsd).toBeCloseTo(20_000, 6);
+    expect(ok.marketCapUsd).toBeLessThan(MAX_LAUNCH_MCAP_USD);
+  });
+});

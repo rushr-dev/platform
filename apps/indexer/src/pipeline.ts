@@ -19,8 +19,11 @@ import {
   type DecodedTransfer,
   type RawLog,
   type PoolInfo,
+  launchPrice,
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
+import { repairTraders, type Pair } from './attribution';
+import { applySupply, circulatingSql } from './supply';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
 const ZERO = NATIVE_ETH;
@@ -292,6 +295,7 @@ export class Pipeline {
     const newTransfers = new Set<string>();
     // Each swap is priced once (the outlier guard is stateful).
     const pricedBy = new Map<string, { priceUsd: string | null; usd: string | null }>();
+    let repaired: Pair[] = [];
     await this.sql.begin(async (tx) => {
       if (fresh.length) {
         const rows = fresh.map((l, i) => ({
@@ -300,6 +304,7 @@ export class Pipeline {
           symbol: meta[i]!.symbol.slice(0, 64),
           decimals: meta[i]!.decimals,
           total_supply: meta[i]!.totalSupply.toString(),
+          supply_block: meta[i]!.supplyBlock?.toString() ?? null,
           deployer: l.creator ?? launchers.get(origins.get(l.token)?.tx ?? l.tx) ?? ZERO,
           launchpad: l.launchpad,
           created_block: (origins.get(l.token)?.block ?? l.block).toString(),
@@ -331,10 +336,10 @@ export class Pipeline {
         if (!l.initialPrice) continue;
         const q = this.quoteUsd(l.quote);
         if (!q) continue;
-        const perToken = (Number(l.initialPrice.quoteRaw) / Number(l.initialPrice.tokenRaw)) * 10 ** (meta[i]!.decimals - q.decimals) * q.usd;
-        if (!(perToken > 0) || !Number.isFinite(perToken)) continue;
-        const mcap = perToken * (Number(meta[i]!.totalSupply) / 10 ** meta[i]!.decimals);
-        await tx`update tokens set price_usd = ${perToken}, market_cap_usd = ${mcap}, price_at = ${new Date(l.time * 1000)}
+        // Implausible starting caps (see MAX_LAUNCH_MCAP_USD) are left blank until the first trade.
+        const lp = launchPrice(l.initialPrice, meta[i]!, q);
+        if (!lp) continue;
+        await tx`update tokens set price_usd = ${lp.priceUsd}, market_cap_usd = ${lp.marketCapUsd}, price_at = ${new Date(l.time * 1000)}
                  where address = ${l.token} and price_usd is null`;
       }
       for (const p of r.pools) this.pools.set(p.id, p);
@@ -343,6 +348,9 @@ export class Pipeline {
       const priced = r.swaps.map((s) => ({ s, ...this.price(s) }));
       for (const p of priced) pricedBy.set(`${p.s.tx}:${p.s.logIndex}`, { priceUsd: p.priceUsd, usd: p.usd });
       for (const k of await this.insertSwaps(tx, priced)) newSwaps.add(k);
+      // Swaps written first by the live path (no Transfers there) are credited to the router: this
+      // batch may know the real wallet (attribution.ts).
+      repaired = await repairTraders(tx, r.swaps.filter((s) => !newSwaps.has(`${s.tx}:${s.logIndex}`)));
       lap('tx:swaps');
       if (r.transfers.length && !this.opts.skipTransfers) {
         for (const k of await this.insertTransfers(tx, r.transfers)) newTransfers.add(k);
@@ -366,6 +374,11 @@ export class Pipeline {
       }
     });
     lap('commit');
+    if (repaired.length) {
+      // Their positions were built without these swaps (and the router's with them): rebuild the wallets'.
+      await this.recomputePositions(repaired).catch((err) => console.error('position recompute after re-credit failed', String(err).slice(0, 200)));
+      lap(`repair(${repaired.length})`);
+    }
     if (Date.now() - started > 10_000) console.warn(`slow batch: ${logs.length} logs in ${Date.now() - started}ms`, JSON.stringify(T));
 
     return {
@@ -451,7 +464,9 @@ export class Pipeline {
         insert into transfers ${tx(rows.slice(i, i + 1000))} on conflict do nothing returning tx, log_index`;
       for (const row of res) inserted.add(`${row.tx}:${row.log_index}`);
     }
-    await this.applyBalances(tx, transfers.filter((t) => inserted.has(`${t.tx}:${t.logIndex}`)));
+    const fresh = transfers.filter((t) => inserted.has(`${t.tx}:${t.logIndex}`));
+    await this.applyBalances(tx, fresh);
+    await applySupply(tx, fresh);
     return inserted;
   }
 
@@ -629,7 +644,8 @@ export class Pipeline {
       if (newTokens.length) {
         const rows = newTokens.map((n, i) => ({
           address: n.token, name: meta[i]!.name.slice(0, 200), symbol: meta[i]!.symbol.slice(0, 64), decimals: meta[i]!.decimals,
-          total_supply: meta[i]!.totalSupply.toString(), deployer: creators.get(n.origin.tx) ?? ZERO, launchpad: n.pad,
+          total_supply: meta[i]!.totalSupply.toString(), supply_block: meta[i]!.supplyBlock?.toString() ?? null,
+          deployer: creators.get(n.origin.tx) ?? ZERO, launchpad: n.pad,
           created_block: n.origin.block.toString(), created_at: new Date(n.origin.time * 1000), quote: newPools.find((p) => p.token === n.token)!.quote,
           main_pool: n.pool, status: n.migrated ? 'migrated' : 'new',
         }));
@@ -916,17 +932,17 @@ export class Pipeline {
     const last = new Map<string, { price: string; time: number }>();
     for (const { s, priceUsd } of priced) if (priceUsd) last.set(s.token, { price: priceUsd, time: s.time });
     for (const [token, { price, time }] of [...last].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-      const meta = this.tokens.get(token);
-      if (!meta) continue;
-      const mcap = String(Number(price) * (Number(meta.totalSupply) / 10 ** meta.decimals));
+      if (!this.tokens.has(token)) continue;
       const at = new Date(time * 1000);
-      // ATH always counts; current price only moves forward in time (backfill can't overwrite live).
-      await tx`update tokens set
-                 price_usd = case when price_at is null or price_at <= ${at} then ${price}::numeric else price_usd end,
-                 market_cap_usd = case when price_at is null or price_at <= ${at} then ${mcap}::numeric else market_cap_usd end,
-                 price_at = greatest(coalesce(price_at, ${at}), ${at}),
-                 ath_market_cap_usd = greatest(coalesce(ath_market_cap_usd, 0), ${mcap}::numeric), updated_at = now()
-               where address = ${token}`;
+      // Market cap on circulating supply (see circulatingSql). ATH always counts; current price only moves
+      // forward in time (backfill can't overwrite live).
+      await tx`update tokens t set
+                 price_usd = case when t.price_at is null or t.price_at <= ${at} then ${price}::numeric else t.price_usd end,
+                 market_cap_usd = case when t.price_at is null or t.price_at <= ${at} then ${price}::numeric * c.supply else t.market_cap_usd end,
+                 price_at = greatest(coalesce(t.price_at, ${at}), ${at}),
+                 ath_market_cap_usd = greatest(coalesce(t.ath_market_cap_usd, 0), ${price}::numeric * c.supply), updated_at = now()
+               from (${circulatingSql(tx, token)}) c
+               where t.address = ${token}`;
     }
     // PONS curve progress is read from the curves' reserves by the poller every ~15s (curves.ts).
     await tx`update tokens t set

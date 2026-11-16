@@ -475,6 +475,30 @@ export function priceFromSqrt(sqrtPriceX96: bigint, tokenIsCurrency0: boolean): 
   return tokenIsCurrency0 ? { quoteRaw: num, tokenRaw: den } : { quoteRaw: den, tokenRaw: num };
 }
 
+/**
+ * Most market cap we accept from a launch's starting price alone, before any trade. A pool's starting
+ * price isn't a market: Doppler multicurve launches quoted in USDG start at tick ~166216 (~60,491 USDG
+ * per token, a $6e13 cap) with nothing tradable there. Real launches start far below this; the first
+ * real trade sets the price either way.
+ */
+export const MAX_LAUNCH_MCAP_USD = 5_000_000;
+
+/**
+ * USD price and market cap implied by a launch's starting price (pure). Null when it can't be priced or the
+ * cap is implausible (above MAX_LAUNCH_MCAP_USD), so the card shows no cap until the first trade.
+ */
+export function launchPrice(
+  initial: { quoteRaw: bigint; tokenRaw: bigint },
+  token: { decimals: number; totalSupply: bigint },
+  quote: { decimals: number; usd: number },
+): { priceUsd: number; marketCapUsd: number } | null {
+  const priceUsd = (Number(initial.quoteRaw) / Number(initial.tokenRaw)) * 10 ** (token.decimals - quote.decimals) * quote.usd;
+  if (!(priceUsd > 0) || !Number.isFinite(priceUsd)) return null;
+  const marketCapUsd = priceUsd * (Number(token.totalSupply) / 10 ** token.decimals);
+  if (!Number.isFinite(marketCapUsd) || marketCapUsd > MAX_LAUNCH_MCAP_USD) return null;
+  return { priceUsd, marketCapUsd };
+}
+
 function signed256(w: Hex): bigint {
   const v = BigInt(w);
   return v >= 1n << 255n ? v - (1n << 256n) : v;

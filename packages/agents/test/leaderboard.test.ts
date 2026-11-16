@@ -46,12 +46,12 @@ describe('rank', () => {
     expect(rank(members, aggs, 'human').rows.map((r) => r.member.id)).toEqual(['alice', 'carol']);
     expect(rank(members, aggs, 'agent').rows.map((r) => r.member.id)).toEqual(['bot']);
   });
-  it('drops members under the activity thresholds', () => {
-    const members = [m('alice', 'human'), m('lucky', 'agent')];
-    const aggs = [...won('alice', 10), ...won('lucky', 1000, 1, 1)];
+  it('lists everyone: traders by score, then members with no trades yet', () => {
+    const members = [m('alice', 'human'), m('lucky', 'agent'), m('idle', 'agent'), m('loser', 'human')];
+    const aggs = [...won('alice', 10), ...won('lucky', 1000, 1, 1), ...won('loser', -20)];
     const lb = rank(members, aggs, 'all');
-    expect(lb.rows.map((r) => r.member.id)).toEqual(['alice']);
-    expect(lb.unranked).toEqual([expect.objectContaining({ reason: 'ineligible' })]);
+    expect(lb.rows.map((r) => [r.member.id, r.trades > 0])).toEqual([['lucky', true], ['alice', true], ['loser', true], ['idle', false]]);
+    expect(lb.unranked).toEqual([]);
   });
   it('adds the best 3 owned agents to the owner row, labelled incl. agents, and caps the rest', () => {
     const members = [m('owner', 'human'), ...[1, 2, 3, 4].map((i) => m(`a${i}`, 'agent', { ownerId: 'owner' }))];
@@ -72,15 +72,14 @@ describe('rank', () => {
     const aggs = [...won('owner', 10), ...won('late', 100).map((a) => ({ ...a, linked: { boughtTokens: 0, boughtUsd: 0, soldTokens: 0, soldUsd: 0, trades: 0 } }))];
     expect(rank(members, aggs, 'human').rows[0]!.score).toBeCloseTo(10);
   });
-  it('collapses undeclared funding clusters to their best team', () => {
-    const members = [m('alice', 'human'), m('sock1', 'agent', { firstFunder: '0xalice' }), m('sock2', 'agent', { firstFunder: '0xalice' }), m('dana', 'human', { firstFunder: '0xbank' }), m('eve', 'human', { firstFunder: '0xbank' })];
+  it('does not unrank members that share a funder (clusters are still computed, but only informative)', () => {
+    const members = [m('alice', 'human'), m('sock1', 'agent', { firstFunder: '0xalice' }), m('dana', 'human', { firstFunder: '0xbank' }), m('eve', 'human', { firstFunder: '0xbank' })];
     const clusters = fundingClusters(members);
     expect(clusters.get('sock1')).toBe(clusters.get('alice'));
     expect(clusters.get('dana')).toBe(clusters.get('eve'));
-    const aggs = [...won('alice', 10), ...won('sock1', 90), ...won('sock2', 50), ...won('dana', 5), ...won('eve', 7)];
-    const lb = rank(members, aggs, 'all');
-    expect(lb.rows.map((r) => r.member.id)).toEqual(['sock1', 'eve']);
-    expect(lb.unranked.map((u) => [u.member.id, u.reason]).sort()).toEqual([['alice', 'linked_by_funding'], ['dana', 'linked_by_funding'], ['sock2', 'linked_by_funding']]);
+    const lb = rank(members, [...won('alice', 10), ...won('sock1', 90), ...won('dana', 5), ...won('eve', 7)], 'all');
+    expect(lb.rows.map((r) => r.member.id)).toEqual(['sock1', 'alice', 'eve', 'dana']);
+    expect(lb.unranked).toEqual([]);
   });
   it('does not treat funding inside a declared team as a cluster', () => {
     const members = [m('owner', 'human'), m('a1', 'agent', { ownerId: 'owner', firstFunder: '0xowner' })];

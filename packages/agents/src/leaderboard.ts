@@ -1,4 +1,4 @@
-// Ranking: eligibility, funding clusters, the team cap and owner rows "incl. agents".
+// Ranking: the team cap and owner rows "incl. agents". Every active member is listed; traders first.
 // Pure: takes members and per-token aggregates (from leaderboardRows in sql.ts) and returns boards.
 import { DEFAULT_PNL_CONFIG, tokenPnl, type Flows, type PnlConfig } from './pnl';
 
@@ -32,10 +32,12 @@ export interface RankConfig extends PnlConfig {
   teamCap: number;
 }
 
-export const DEFAULT_RANK_CONFIG: RankConfig = { ...DEFAULT_PNL_CONFIG, minTrades: 5, minTokens: 3, teamCap: 3 };
-/** The 24h window needs fewer trades and no token minimum. */
-export const DAY_RANK_CONFIG: RankConfig = { ...DEFAULT_RANK_CONFIG, minTrades: 3, minTokens: 1 };
+/** Open board: every active member is listed, including those with no trades yet (after the traders). */
+export const DEFAULT_RANK_CONFIG: RankConfig = { ...DEFAULT_PNL_CONFIG, minTrades: 0, minTokens: 0, teamCap: 3 };
+/** The 24h window uses the same rules. */
+export const DAY_RANK_CONFIG: RankConfig = { ...DEFAULT_RANK_CONFIG };
 
+/** `linked_by_funding` is no longer produced (funding clusters don't unrank anyone); kept for old clients. */
 export type Unranked = 'ineligible' | 'team_cap' | 'linked_by_funding';
 
 export interface MemberStats {
@@ -158,22 +160,7 @@ export function rank(members: MemberInfo[], aggs: TokenAgg[], board: Board, cfg:
   }).map((m) => m.id));
   for (const m of members) if (m.kind === 'agent' && !selfEligible.has(m.id)) drop(m.id, 'ineligible');
 
-  // 2. Undeclared funding clusters: the team holding the cluster's best eligible member keeps its
-  //    members; members of other teams in the cluster are unranked.
-  const clusters = fundingClusters(members);
-  const groups = new Map<string, MemberInfo[]>();
-  for (const m of members) {
-    const c = clusters.get(m.id)!;
-    groups.set(c, [...(groups.get(c) ?? []), m]);
-  }
-  for (const group of groups.values()) {
-    if (new Set(group.map(teamOf)).size < 2) continue;
-    const contenders = group.filter((m) => selfEligible.has(m.id));
-    const best = contenders.sort((a, b) => stats.get(b.id)!.pnl - stats.get(a.id)!.pnl)[0] ?? group[0]!;
-    for (const m of group) if (teamOf(m) !== teamOf(best)) drop(m.id, 'linked_by_funding');
-  }
-
-  // 3. Team cap: an owner's best `teamCap` remaining agents (by own PnL) are ranked.
+  // 2. Team cap: an owner's best `teamCap` remaining agents (by own PnL) are ranked.
   const agentsByOwner = new Map<string, MemberInfo[]>();
   for (const m of members) {
     if (m.kind !== 'agent' || !m.ownerId || out.has(m.id)) continue;
@@ -186,7 +173,7 @@ export function rank(members: MemberInfo[], aggs: TokenAgg[], board: Board, cfg:
     for (const m of list.slice(cfg.teamCap)) drop(m.id, 'team_cap');
   }
 
-  // 4. Rows. Humans: own PnL + PnL their ranked agents made while linked to them ("incl. agents").
+  // 3. Rows. Humans: own PnL + PnL their ranked agents made while linked to them ("incl. agents").
   const rows: Row[] = [];
   for (const m of members) {
     if (out.has(m.id)) continue;
@@ -205,7 +192,10 @@ export function rank(members: MemberInfo[], aggs: TokenAgg[], board: Board, cfg:
     const agentsPnl = agents.reduce((sum, a) => sum + stats.get(a.id)!.linkedPnl, 0);
     rows.push({ ...s, rank: 0, score: s.pnl + agentsPnl, inclAgents: agents.length > 0, agentsPnl, agentIds: agents.map((a) => a.id) });
   }
-  rows.sort((a, b) => b.score - a.score || a.member.handle.localeCompare(b.member.handle));
+  // Members who traded come first (by score); members with no trades yet follow, by handle.
+  // An owner row counts as active if the owner or one of its ranked agents traded.
+  const active = (r: Row) => r.trades > 0 || r.agentIds.some((id) => stats.get(id)!.trades > 0);
+  rows.sort((a, b) => Number(active(b)) - Number(active(a)) || b.score - a.score || a.member.handle.localeCompare(b.member.handle));
   rows.forEach((r, i) => (r.rank = i + 1));
   return { rows, unranked };
 }

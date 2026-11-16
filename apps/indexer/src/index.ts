@@ -14,6 +14,9 @@ import { v1, adminV1 } from './agents/app';
 import { LLMS_TXT } from '@rushr/agents/llms-txt';
 import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
 import { PAUSED_REQUEUE_S, isPaused, readPause, writePause } from './pause';
+import { pendingSupply, pendingSupplyCount, refreshSupply } from './supply';
+import { reattributeSwaps } from './attribution';
+import { Pipeline } from './pipeline';
 
 export { ChainPoller } from './poller';
 export { LiveFeed } from './feed';
@@ -243,6 +246,50 @@ app.post('/admin/liftfun/progress', async (c) => {
   }
 });
 
+// Re-read totalSupply() at a known block (one eth_call per token) and reprice caps on circulating supply.
+// ?tokens=a,b,c for specific tokens, else the next `limit` pending ones (supply_block null and active, see
+// pendingSupply). Dry run unless ?write=1: the reply lists every change either way.
+app.post('/admin/tokens/supply', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    if ((await readPause(sql, { fresh: true })).paused) return c.json({ error: 'indexer is paused' }, 409);
+    const write = c.req.query('write') === '1';
+    const listed = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter((t) => /^0x[0-9a-f]{40}$/.test(t));
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 100), 1), 500);
+    const tokens = listed.length ? listed.slice(0, 500) : await pendingSupply(sql, { limit });
+    const changes = await refreshSupply(sql, new Rpc(c.env.RPC_URL), tokens, { dryRun: !write });
+    const changed = changes.filter((x) => x.before !== x.after);
+    return c.json({
+      write, asked: tokens.length, read: changes.length, changed: changed.length,
+      pending: listed.length ? null : await pendingSupplyCount(sql),
+      changes: changed.slice(0, 200),
+    });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+/**
+ * Re-credit router-credited swaps to the wallet that traded (attribution.ts), newest first, `limit` per
+ * call. Dry run unless write=1; with write=1 the affected wallets' positions are rebuilt too. Continue
+ * with before=<next.block>:<next.logIndex> until next is null.
+ */
+app.post('/admin/swaps/reattribute', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    if ((await readPause(sql, { fresh: true })).paused) return c.json({ error: 'indexer is paused' }, 409);
+    const write = c.req.query('write') === '1';
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 1000), 1), 5000);
+    const [b, li] = (c.req.query('before') ?? '').split(':');
+    const before = b && /^\d+$/.test(b) ? { block: b, logIndex: Number(li ?? 0) } : null;
+    const r = await reattributeSwaps(sql, { limit, before, write });
+    const recomputed = write && r.pairs.length ? await new Pipeline(sql, new Rpc(c.env.RPC_URL), { historical: true }).recomputePositions(r.pairs) : 0;
+    return c.json({ write, ...r, pairs: r.pairs.length, recomputed });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
 app.post('/admin/curves/refresh', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
@@ -419,6 +466,20 @@ export default {
         if (r.graduated.length) console.log(`lift.fun graduated: ${r.graduated.join(', ')}`);
       } catch (err) {
         console.error('lift.fun sync failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 5 minutes: read the supply of up to 100 active tokens that predate supply tracking (supply.ts);
+    // a newly migrated or newly busy old token is picked up here. One eth_call each, and the list drains.
+    if (minute % 5 === 3) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const changes = await refreshSupply(sql, new Rpc(env.RPC_URL), await pendingSupply(sql, { limit: 100, days: 1 }));
+        const moved = changes.filter((x) => x.before !== x.after);
+        if (moved.length) console.log(`supply: ${changes.length} read, ${moved.length} changed (${moved.slice(0, 5).map((x) => x.symbol).join(', ')})`);
+      } catch (err) {
+        console.error('supply refresh failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }

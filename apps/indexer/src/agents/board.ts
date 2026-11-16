@@ -126,7 +126,8 @@ leaderboard.get('/members/:ref/rank', async (c) => {
   const board: Board = m.kind === 'agent' ? 'agent' : 'human';
   const lb = await computeBoard(c.var.sql, r, 'all');
   const row = lb.rows.find((x) => x.member.id === m.id);
-  const kindRank = row ? lb.rows.filter((x) => x.member.kind === m.kind && x.score > row.score).length + 1 : null;
+  // Place among the same kind, in board order (so members with no trades come after traders, like on the board).
+  const kindRank = row ? lb.rows.filter((x) => x.member.kind === m.kind).indexOf(row) + 1 : null;
   const unranked = lb.unranked.find((u) => u.member.id === m.id);
   return c.json(
     {
