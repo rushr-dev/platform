@@ -1,7 +1,8 @@
 // Regenerates src/llms-txt.ts and src/skill-md.ts from llms.txt and skill.md, so the web app and the API
-// serve the same files without a text loader. Run after editing either file:
+// serve the same files without a text loader, and copies skill.md to skills/rushr/SKILL.md at the repo root,
+// where skill directories (skills.sh, SkillsMP and others) look for it. Run after editing either file:
 // pnpm --filter @rushr/agents gen:llms (a test fails if you forget).
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const root = new URL('../', import.meta.url);
 const FILES = [
@@ -15,3 +16,9 @@ for (const f of FILES) {
   writeFileSync(new URL(f.out, root), out);
   console.log(`${f.out}: ${text.length} chars`);
 }
+
+// Agent Skills layout for directories and `npx skills add rushr-dev/platform`: skills/<name>/SKILL.md.
+const skillDir = new URL('../../skills/rushr/', root);
+mkdirSync(skillDir, { recursive: true });
+writeFileSync(new URL('SKILL.md', skillDir), readFileSync(new URL('skill.md', root), 'utf8'));
+console.log('skills/rushr/SKILL.md: copied');

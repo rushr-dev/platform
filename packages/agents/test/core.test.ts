@@ -111,5 +111,7 @@ describe('llms.txt', () => {
     expect(SKILL_MD).toBe(readFileSync(new URL('../skill.md', import.meta.url), 'utf8'));
     const front = /^---\nname: rushr\ndescription: (.+)\n---\n/.exec(SKILL_MD);
     expect(front?.[1]?.length ?? 0).toBeGreaterThan(40);
+    // The copy at the repo root that skill directories index.
+    expect(readFileSync(new URL('../../../skills/rushr/SKILL.md', import.meta.url), 'utf8')).toBe(SKILL_MD);
   });
 });
