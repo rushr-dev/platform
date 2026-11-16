@@ -23,7 +23,7 @@ import { refreshSignalsIfStale } from '../signals-refresh';
 import { tokenPools } from '../data';
 import { checkBuy, type HoneypotCheck } from './honeypot';
 import { referralFor } from './referrals';
-import { assertFeesPaid, curveSimulation, feeStatus, feeView, liveCurve, prepareCurve, recordCurveBuild, reportFeePayment, unsigned } from './curve';
+import { assertFeesPaid, curveSimulation, settledFeeStatus, feeView, liveCurve, prepareCurve, recordCurveBuild, reportFeePayment, unsigned } from './curve';
 
 export const AGENT_SCOPES = ['read', 'profile', 'post', 'trade'];
 const AGENT_PURPOSES: Purpose[] = ['register', 'login'];
@@ -266,7 +266,7 @@ async function prepare(c: C, mode: 'quote' | 'build') {
   const sql = c.var.sql;
   await limit(c, mode);
   // An overdue fee on an earlier curve trade blocks builds (quotes stay open), before any other work.
-  if (mode === 'build') await assertFeesPaid(sql, m);
+  if (mode === 'build') await assertFeesPaid(sql, c.env.RPC_URL, m);
   const safety = await safetyOf(sql, req.token);
   refreshSignalsIfStale(c, req.token, safety.updatedAt);
   if (mode === 'build') riskGate(req.side, safety, acceptRisk);
@@ -433,7 +433,7 @@ agents.post('/trade/build', (c) => prepare(c, 'build'));
 /** Curve-trade fees: what's owed, paid and overdue, with a ready-to-send transfer for the rest. */
 agents.get('/agents/me/fees', async (c) => {
   const m = requireMember(c, { kind: 'agent' });
-  return c.json({ fees: feeView(await feeStatus(c.var.sql, m)) }, 200, PRIVATE);
+  return c.json({ fees: feeView(await settledFeeStatus(c.var.sql, c.env.RPC_URL, m)) }, 200, PRIVATE);
 });
 
 /** `{ txHash }` of a fee transfer to the treasury: checked on-chain, then counted toward what's owed. */
@@ -443,6 +443,7 @@ agents.post('/agents/me/fees', async (c) => {
   const txHash = typeof b.txHash === 'string' ? b.txHash.toLowerCase() : '';
   if (!/^0x[0-9a-f]{64}$/.test(txHash)) throw fail(422, 'invalid_field', 'txHash must be a 32-byte hex hash.', { field: 'txHash' });
   await limit(c, 'write');
-  const value = await reportFeePayment(c.var.sql, c.env.RPC_URL, m, txHash);
-  return c.json({ recorded: value.toString(), fees: feeView(await feeStatus(c.var.sql, m)) }, 201, PRIVATE);
+  const r = await reportFeePayment(c.var.sql, c.env.RPC_URL, m, txHash);
+  // Already counted for you (an earlier report, or the treasury's SafeReceived log): nothing new to record.
+  return c.json({ recorded: r.alreadyCounted ? '0' : r.value.toString(), alreadyCounted: r.alreadyCounted, fees: feeView(await settledFeeStatus(c.var.sql, c.env.RPC_URL, m)) }, r.alreadyCounted ? 200 : 201, PRIVATE);
 });

@@ -15,6 +15,10 @@ const probes: string[] = [];
 const quickCalls: { req: { side: string; amountIn: bigint }; opts: { simulate?: boolean; assume?: unknown } }[] = [];
 /** Fee transfers the fake chain knows: hash → { from, to, value, input, status }. */
 const chainTxs = new Map<string, { from: string; to: string; value: bigint; input: string; status: '0x1' | '0x0' }>();
+/** SafeReceived logs the fake chain has for the treasury, and the getLogs ranges asked for. */
+const safeLogs: { blockNumber: bigint; transactionHash: string; topics: string[]; data: string }[] = [];
+const scans: { from: bigint; to: bigint; sender: string }[] = [];
+let head = 1_000n;
 
 vi.mock('@rushr/trade/pools', () => ({
   discoverPools: async (_c: unknown, token: string) =>
@@ -72,6 +76,14 @@ vi.mock('../src/rpc', () => ({
           ? { status: tx.status }
           : { from: tx.from, to: tx.to, value: `0x${tx.value.toString(16)}`, input: tx.input };
       });
+    }
+    async blockNumber() {
+      return head;
+    }
+    async filteredLogs(from: bigint, to: bigint, filter: { address: string; topics: string[] }) {
+      scans.push({ from, to, sender: filter.topics[1]! });
+      if (filter.address.toLowerCase() !== TREASURY) return [];
+      return safeLogs.filter((l) => l.topics[0] === filter.topics[0] && l.topics[1] === filter.topics[1] && l.blockNumber >= from && l.blockNumber <= to);
     }
     async call() {
       throw new Error('no RPC in tests');
@@ -209,8 +221,58 @@ describe.skipIf(!pg)('agent trades on PONS bonding curves', () => {
     fees = (await t.call('GET', '/agents/me/fees', { auth: a.key })).json.fees;
     expect(fees).toMatchObject({ owed: '5000', paid: '5000', overdue: '0', outstanding: '0', feeTx: null });
 
-    // Each transfer counts once, for anyone.
-    expect((await t.call('POST', '/agents/me/fees', { auth: a.key, body: { txHash: hash(0xc2) } })).json.error.code).toBe('already_reported');
+    // Reporting it again is a no-op for you; another member can't claim it.
+    const again = await t.call('POST', '/agents/me/fees', { auth: a.key, body: { txHash: hash(0xc2) } });
+    expect(again.status).toBe(200);
+    expect(again.json).toMatchObject({ recorded: '0', alreadyCounted: true, fees: { paid: '5000' } });
+    const other = await register('feethief');
+    chainTxs.set(hash(0xc2), { from: other.wallet, to: TREASURY, value: 2000n, input: '0x', status: '0x1' });
+    expect((await t.call('POST', '/agents/me/fees', { auth: other.key, body: { txHash: hash(0xc2) } })).json.error.code).toBe('already_reported');
+  });
+
+  it('credits fees paid into the Safe treasury from its SafeReceived logs, without a report', async () => {
+    const { SAFE_RECEIVED_TOPIC } = await import('../src/agents/curve');
+    const a = await register('safepayer');
+    const sender = `0x${a.wallet.slice(2).padStart(64, '0')}`;
+    const body = { token: CURVE_TOKEN, side: 'buy', amountIn: '4000000' };
+    expect((await t.call('POST', '/trade/build', { auth: a.key, body })).status).toBe(200);
+    await indexSwap(a, { side: 'buy', amountIn: '4000000', minutesAgo: 15, tx: hash(0xe1) });
+    await t.sql`update swaps set block = 900 where tx = ${hash(0xe1)}`;
+
+    // Nothing paid yet: blocked, after one scan from the trade's block to the head.
+    scans.length = 0;
+    expect((await t.call('POST', '/trade/build', { auth: a.key, body })).json.error.code).toBe('fee_unpaid');
+    expect(scans).toEqual([{ from: 900n, to: 1000n, sender }]);
+
+    // The agent sends the fee to the Safe and doesn't report it: the next build finds the log and goes through.
+    head = 1_010n;
+    safeLogs.push({ blockNumber: 1_005n, transactionHash: hash(0xe2), topics: [SAFE_RECEIVED_TOPIC, sender], data: `0x${(10_000n).toString(16).padStart(64, '0')}` });
+    // Another wallet's deposit isn't credited to this agent.
+    safeLogs.push({ blockNumber: 1_006n, transactionHash: hash(0xe3), topics: [SAFE_RECEIVED_TOPIC, `0x${'ab'.repeat(20).padStart(64, '0')}`], data: `0x${(99_999n).toString(16).padStart(64, '0')}` });
+    scans.length = 0;
+    expect((await t.call('POST', '/trade/build', { auth: a.key, body })).status).toBe(200);
+    expect(scans).toEqual([{ from: 1_001n, to: 1_010n, sender }]); // only the blocks since the last scan
+    const fees = (await t.call('GET', '/agents/me/fees', { auth: a.key })).json.fees;
+    expect(fees).toMatchObject({ owed: '10000', paid: '10000', overdue: '0', outstanding: '0' });
+    const [credit] = await t.sql<{ data: Record<string, string> }[]>`select data from member_events where member_id = ${a.id} and type = 'curve_fee_paid'`;
+    expect(credit!.data).toEqual({ tx: hash(0xe2), value: '10000', via: 'safe_log' });
+
+    // Reporting the same transfer afterwards (the fast path, late) doesn't count it twice.
+    chainTxs.set(hash(0xe2), { from: a.wallet, to: TREASURY, value: 10_000n, input: '0x', status: '0x1' });
+    const r = await t.call('POST', '/agents/me/fees', { auth: a.key, body: { txHash: hash(0xe2) } });
+    expect(r.json).toMatchObject({ recorded: '0', alreadyCounted: true, fees: { paid: '10000' } });
+  });
+
+  it('keeps the block when the Safe scan finds nothing, and the report still clears it', async () => {
+    const a = await register('scanfail');
+    const body = { token: CURVE_TOKEN, side: 'buy', amountIn: '8000000' };
+    expect((await t.call('POST', '/trade/build', { auth: a.key, body })).status).toBe(200);
+    await indexSwap(a, { side: 'buy', amountIn: '8000000', minutesAgo: 20, tx: hash(0xf1) });
+    await t.sql`update swaps set block = 2000000 where tx = ${hash(0xf1)}`; // after the head: nothing to scan
+    expect((await t.call('POST', '/trade/build', { auth: a.key, body })).json.error).toMatchObject({ code: 'fee_unpaid', owed: '20000' });
+    chainTxs.set(hash(0xf2), { from: a.wallet, to: TREASURY, value: 20_000n, input: '0x', status: '0x1' });
+    expect((await t.call('POST', '/agents/me/fees', { auth: a.key, body: { txHash: hash(0xf2) } })).status).toBe(201);
+    expect((await t.call('POST', '/trade/build', { auth: a.key, body })).status).toBe(200);
   });
 
   it('charges nothing for curve swaps Rushr did not build', async () => {

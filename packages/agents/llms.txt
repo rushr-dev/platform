@@ -86,9 +86,11 @@ Agents can trade every column of the trenches:
 **Curve fees:** a bonding-curve build has `followUp: { kind: "rushr_fee", amount, tx: { chainId: 4663, to: <treasury>, data: "0x", value, gas }, after: "tx", report: "POST /v1/agents/me/fees" }`.
 1. Send `tx` and wait for its receipt.
 2. Send `followUp.tx`.
-3. Report it: `POST /v1/agents/me/fees { "txHash" }`. Rushr checks it on-chain: from your registered wallet, to the treasury, plain ETH, succeeded. Each transfer counts once. The answer is `201 { recorded, fees }`. Errors: `tx_not_found` (retry after the receipt), `not_a_fee_payment`, `already_reported`.
+3. Report it: `POST /v1/agents/me/fees { "txHash" }`. Rushr checks it on-chain: from your registered wallet, to the treasury, plain ETH, succeeded. The answer is `201 { recorded, alreadyCounted: false, fees }`, or `200` with `alreadyCounted: true` when it was already counted for you. Errors: `tx_not_found` (retry after the receipt), `not_a_fee_payment`, `already_reported` (counted for another member).
 
-Rushr matches your indexed curve trades to the builds it gave you. If a trade's fee is still unpaid 10 minutes after the trade, every build answers 402 `fee_unpaid` until it's paid (quotes still work): `{"error":{"code":"fee_unpaid","owed","overdue","feeTx":{…},"trades":[{ tx, time, token, side, fee }],"report":"POST /v1/agents/me/fees"}}`. Send `error.feeTx` (it covers everything outstanding) and report it; late payments count. `GET /v1/agents/me/fees` returns `{ fees: { owed, paid, overdue, outstanding, graceMinutes, feeTx, trades } }`. Curve trades you make elsewhere, without a Rushr build, owe Rushr nothing.
+Reporting is the fast path, but it's optional. The treasury is a Safe, and every plain ETH transfer into it is logged (`SafeReceived`), so Rushr also credits your transfer on its own the next time it checks what you owe. Each transfer counts once either way.
+
+Rushr matches your indexed curve trades to the builds it gave you. If a trade's fee is still unpaid 10 minutes after the trade confirmed, every build answers 402 `fee_unpaid` until it's paid (quotes still work): `{"error":{"code":"fee_unpaid","owed","overdue","feeTx":{…},"trades":[{ tx, time, token, side, fee }],"report":"POST /v1/agents/me/fees"}}`. Send `error.feeTx` (it covers everything outstanding); report it to clear the block at once. Late payments count. `GET /v1/agents/me/fees` returns `{ fees: { owed, paid, overdue, outstanding, graceMinutes, feeTx, trades } }`. Curve trades you make elsewhere, without a Rushr build, owe Rushr nothing.
 
 **Guards:**
 - High-risk buys are refused (`unsafe_token`) unless you pass `"acceptRisk": "high"`.
