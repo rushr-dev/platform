@@ -77,8 +77,10 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 | Share | What happens |
 | --- | --- |
 | **5%: dev buy, burned** | At launch the deploying wallet bought on the curve and burned 50,000,000 $RUSHR (5% of supply) by sending it to `0x…dEaD` in the same hour. |
-| **5.6%: team wallet, held publicly** | The rest of the deploying wallet's launch buy (44.1M, 4.4%) went to a separate team wallet, which also bought 11.8M (1.2%) on the market. It is verified on [FOMO](https://fomo.family/profile/rushrtrade) and holds its $RUSHR publicly, so anyone can watch it. |
+| **5.6%: team wallet, held publicly** | The rest of the deploying wallet's launch buy (44.1M, 4.4%) went to a separate team wallet, which also bought 11.8M (1.2%) on the market. It is verified on [FOMO](https://fomo.family/profile/rushrtrade) and holds its $RUSHR publicly, so anyone can watch it. On 16 Nov 2026 it burned 41,212,466 $RUSHR ([transaction](https://robin.etherscan.io/tx/0x33c9d4a768d03ecb30f313591abe33afad95acb2e4d5c20638cde507e159e711)) and now holds about 14.7M (1.47%). |
 | **89.4%: public** | Bought on the curve by anyone. When the curve completes, PONS migrates the token to Uniswap. |
+
+**Burned so far: 100,000,000 $RUSHR (10% of supply)**: the 50M launch burn, the first creator-tax buyback (8,787,534) and the team supply burn (41,212,466). Each one is listed with its transactions on [rushr.trade/transparency](https://rushr.trade/transparency#buybacks).
 
 No tokens were minted or allocated outside the curve: every $RUSHR the team holds was bought at market price, and every move between the dev and team wallets is a public on-chain transaction. Rushr's own safety check shows the dev and team holdings on the token's page like for any other token.
 
@@ -87,20 +89,22 @@ No tokens were minted or allocated outside the curve: every $RUSHR the team hold
 | | Address |
 | --- | --- |
 | $RUSHR token | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
-| Dev wallet (launch buy; 5% burned) | [0xe5ed29849043380aea7cfe62e97a23e82c55578e](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e), burn transaction [0x6b2e5c67…46cb](https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb) |
+| Dev wallet (launch buy; 5% burned; claims the creator tax and runs creator-tax buybacks) | [0xe5ed29849043380aea7cfe62e97a23e82c55578e](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e), burn transaction [0x6b2e5c67…46cb](https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb) |
 | Team wallet (held publicly on FOMO) | [0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D) |
-| Buyback wallet | _tbd_ |
-| Platform fee treasury (Safe) | [0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
+| Platform fee treasury (Safe; platform-fee buybacks and season rewards) | [0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
 
 ## 6. Buyback, burn and season prizes
 
-Two sources buy $RUSHR back each week, from the buyback wallet, on the open market:
+Two sources buy $RUSHR back on the open market, each from the wallet it's paid into, so no money moves between the team's wallets:
 
-| Source | Share | Goes to |
-| --- | --- | --- |
-| Rushr platform fees | 25% of fees | **Burned** |
-| Rushr platform fees | 25% of fees | **Season reward pool** |
-| $RUSHR creator tax (PONS) | 20% of the creator tax received | **Burned** |
+| Source | Share | Bought from | Goes to |
+| --- | --- | --- | --- |
+| $RUSHR creator tax (PONS) | 20% of each claim | Dev wallet, which claims it | **Burned** |
+| Rushr platform fees | 25% of fees | Treasury Safe | **Burned** |
+| Rushr platform fees | 25% of fees | Treasury Safe | **Season reward pool** |
+
+- **Creator-tax buybacks** run when the creator tax is claimed. The first was on 16 Nov 2026: 1.92875 ETH claimed, 0.386 ETH (20%) bought 8,787,534 $RUSHR, all burned.
+- **Platform-fee buybacks** run weekly from the treasury Safe, once the week's fees cover more than the gas.
 
 - **Burned** tokens are sent to a burn address, permanently removing them from supply.
 - **The season reward pool** is paid to the top of that season's leaderboard.
@@ -122,7 +126,8 @@ Every buyback, burn and reward payout is a public on-chain transaction, listed o
 ## 8. Roadmap
 
 - **Now (beta):** terminal, safety checks, calls and feed, agent API, Season 0 leaderboard.
-- **Next:** $RUSHR fair launch; weekly buybacks and the public buyback page; Season 0 prizes; treasury moved to a Safe multisig.
+- **Done:** $RUSHR fair launch; 100M $RUSHR (10%) burned; the first creator-tax buyback; platform fees paid to a Safe; the public buyback page.
+- **Next:** weekly platform-fee buybacks; Season 0 prizes; more signers on the treasury Safe.
 - **Later:** shareable PnL cards; copy trading; agents trading on a user's behalf within on-chain limits (after the router audit); one-transaction curve trades.
 
 ## 9. Risks

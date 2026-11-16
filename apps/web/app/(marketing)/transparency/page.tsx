@@ -32,6 +32,39 @@ const RUSHR_TOKEN = '0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed';
 
 const SOURCE_LABEL: Record<string, string> = { platform_fees: 'Platform fees', creator_tax: '$RUSHR creator tax' };
 
+const DEV_WALLET = '0xe5ed29849043380aea7cfe62e97a23e82c55578e';
+const TEAM_WALLET = '0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D';
+const TX = (h: string) => `https://robin.etherscan.io/tx/${h}`;
+
+/** Every $RUSHR burn so far, newest first. Each one is a plain transfer to 0x…dEaD; amounts are from the transactions. */
+const BURNS: { date: string; title: string; amount: string; note: string; txs: [string, string][] }[] = [
+  {
+    date: '16 Nov 2026',
+    title: 'Team supply burn',
+    amount: '41,212,466',
+    note: 'From the team wallet on FOMO, bringing total burned to 100M (10% of supply). The team wallet now holds about 14.7M (1.47%).',
+    txs: [['Burn', '0x33c9d4a768d03ecb30f313591abe33afad95acb2e4d5c20638cde507e159e711']],
+  },
+  {
+    date: '16 Nov 2026',
+    title: 'Creator-tax buyback #1',
+    amount: '8,787,534',
+    note: 'The dev wallet claimed 1.92875 ETH of creator tax, bought $RUSHR with 0.386 ETH (20% of the claim) and burned all of it.',
+    txs: [
+      ['Claim', '0x12a7233449e0a30a4a0a580d243832cf5a41b1613cc4a78a221ab0bb09ff94ce'],
+      ['Buy', '0xb2557bc185d2c5d11cd8fed983fbf7a448346d07de6b63ac88e2834df747ff9c'],
+      ['Burn', '0x70d78f38f00a7c34653a4e53c8c3271bd98637fb4b073ad1b6d5d6c1e1a44307'],
+    ],
+  },
+  {
+    date: '15 Nov 2026',
+    title: 'Launch burn',
+    amount: '50,000,000',
+    note: '5% of supply, bought on the PONS curve by the dev wallet at launch and burned the same hour.',
+    txs: [['Burn', '0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb']],
+  },
+];
+
 const amount = (n: number | null, digits: number, min = digits) =>
   n == null ? '—' : n.toLocaleString('en-US', { minimumFractionDigits: n === 0 ? 0 : min, maximumFractionDigits: digits });
 /** Fee amounts are small during the beta, so ETH under 1 keeps 6 decimals. */
@@ -220,31 +253,47 @@ export default async function TransparencyPage() {
                   it&apos;s claimed.
                 </p>
                 <p className="mt-3">
-                  <span className="font-semibold text-brand-deep">20%</span> of everything claimed is bought back and burned, and listed
-                  below with its transactions. Nothing has been claimed yet.
+                  <span className="font-semibold text-brand-deep">20%</span> of everything claimed is bought back and burned, from the dev
+                  wallet that claims it, and listed below with its transactions.
+                </p>
+                <p className="mt-3">
+                  First claim, 16 Nov 2026: <span className="font-mono font-semibold text-ink">1.92875 ETH</span>. 0.386 ETH of it bought{' '}
+                  <span className="font-mono font-semibold text-brand-deep">8,787,534 $RUSHR</span>, all burned.
                 </p>
               </div>
             </Section>
 
             <Section id="buybacks" title="Buybacks & burns">
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface px-5 py-4">
-                <div>
-                  <div className="text-sm text-muted">Launch burn · 15 Nov 2026 · dev wallet to 0x…dEaD</div>
-                  <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-brand-deep">50,000,000 $RUSHR burned</div>
-                  <div className="text-sm text-muted">5% of supply, bought on the curve at launch</div>
-                </div>
-                <a
-                  href="https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-mono text-xs underline underline-offset-2"
-                >
-                  {short('0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb')}
-                </a>
+              <div className="rounded-xl border border-line bg-surface p-5 md:p-6">
+                <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Total burned</div>
+                <div className="mt-2 font-mono text-3xl font-semibold tabular-nums tracking-tight text-brand-deep md:text-4xl">100,000,000 $RUSHR</div>
+                <div className="mt-1 text-sm text-muted">10% of the 1,000,000,000 supply, sent to 0x…dEaD and gone for good.</div>
               </div>
+              <ol className="mt-3 divide-y divide-line rounded-xl border border-line bg-surface">
+                {BURNS.map((b) => (
+                  <li key={b.title} className="flex flex-col gap-3 px-5 py-4 md:flex-row md:items-start md:justify-between md:gap-8">
+                    <div className="min-w-0">
+                      <div className="text-sm text-muted">
+                        {b.title} · {b.date}
+                      </div>
+                      <div className="mt-1 font-mono text-xl font-semibold tabular-nums text-brand-deep">{b.amount} $RUSHR burned</div>
+                      <p className="mt-1 max-w-xl text-sm text-muted">{b.note}</p>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 md:flex-col md:items-end">
+                      {b.txs.map(([label, h]) => (
+                        <a key={h} href={TX(h)} target="_blank" rel="noreferrer" className="font-mono text-xs underline underline-offset-2">
+                          {label} {short(h)}
+                        </a>
+                      ))}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              <h3 className="mb-3 mt-10 text-[17px] font-semibold tracking-[-0.015em]">Platform-fee buybacks</h3>
               {buybacks.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-ink/20 px-5 py-10 text-center text-muted">
-                  No fee buybacks yet. Each one will be listed here with its transactions.
+                  None yet. Platform-fee buybacks run weekly from the treasury Safe once the fees cover more than the gas, and each one is
+                  listed here with its transactions.
                 </div>
               ) : (
                 <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
@@ -291,9 +340,10 @@ export default async function TransparencyPage() {
                   {(
                     [
                       ['$RUSHR token', RUSHR_TOKEN, `https://robinhoodchain.blockscout.com/token/${RUSHR_TOKEN}`],
-                      ['Dev burn transaction (50M $RUSHR)', '0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb', 'https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb'],
-                      ['Team wallet (verified on FOMO)', '0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D', 'https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D'],
-                      ['Buyback wallet', null, null],
+                      ['Dev wallet (claims the creator tax, runs creator-tax buybacks)', DEV_WALLET, `https://robin.etherscan.io/address/${DEV_WALLET}`],
+                      ['Team wallet (verified on FOMO)', TEAM_WALLET, `https://robin.etherscan.io/address/${TEAM_WALLET}`],
+                      ['Treasury Safe (platform fees, fee buybacks, season rewards)', TREASURY, `https://robin.etherscan.io/address/${TREASURY}`],
+                      ['Burn address', '0x000000000000000000000000000000000000dEaD', `https://robin.etherscan.io/token/${RUSHR_TOKEN}?a=0x000000000000000000000000000000000000dEaD`],
                     ] as const
                   ).map(([k, addr, href]) => (
                     <tr key={k} className="border-b border-line first:border-t first:border-t-ink/15">
