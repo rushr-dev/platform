@@ -40,7 +40,7 @@ export type Ctx = { Bindings: AgentsEnv; Variables: { sql: Sql; viewer: Viewer; 
 export type C = Context<Ctx>;
 
 export class ApiError extends Error {
-  constructor(public status: 400 | 401 | 403 | 404 | 409 | 410 | 413 | 415 | 422 | 429 | 503, public code: string, message: string, public extra: Record<string, unknown> = {}) {
+  constructor(public status: 400 | 401 | 402 | 403 | 404 | 409 | 410 | 413 | 415 | 422 | 429 | 503, public code: string, message: string, public extra: Record<string, unknown> = {}) {
     super(message);
   }
 }
@@ -84,10 +84,12 @@ export const db: MiddlewareHandler<Ctx> = async (c, next) => {
  * Top-level fields that may look like a key on specific routes, because the handler verifies them
  * against the chain before storing anything. POST /v1/trades: `txHash` (and `feeTxHash`, a curve
  * trade's fee transfer) must be real txs sent from the member's wallet (the trade ledger,
- * apps/indexer/src/ledger.ts).
+ * apps/indexer/src/ledger.ts). POST /v1/agents/me/fees: `txHash` must be a real fee transfer from the
+ * agent's wallet (agents/curve.ts).
  */
 const KEY_SHAPED_ALLOWED: { method: string; path: RegExp; fields: readonly string[] }[] = [
   { method: 'POST', path: /^(\/v1)?\/trades\/?$/, fields: ['txHash', 'feeTxHash'] },
+  { method: 'POST', path: /^(\/v1)?\/agents\/me\/fees\/?$/, fields: ['txHash'] },
 ];
 
 /** JSON bodies only, at most 16KB, and never anything that looks like a private key or seed phrase. */

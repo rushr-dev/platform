@@ -394,11 +394,15 @@ async function main() {
     if (!token) return record('skip', `${label}: trade`, 'no token');
     const buyIn = parseEther('0.001').toString();
     if (label === 'curve') {
-      // Launch policy: agents trade graduated (Uniswap) tokens only; curve tokens get a clear refusal.
+      // Curve tokens trade on the curve, with the Rushr fee as a follow-up transfer (agents/curve.ts).
       const cq = await tradeOf({ token, side: 'buy', amountIn: buyIn }, 'quote');
-      check(cq.status === 422 && errCode(cq) === 'curve_not_supported', `${label}: quote refused with curve_not_supported`, brief(cq));
-      const cb = await tradeOf({ token, side: 'buy', amountIn: buyIn, acceptRisk: 'high' }, 'build');
-      check(cb.status === 422 && errCode(cb) === 'curve_not_supported', `${label}: build refused with curve_not_supported`, brief(cb));
+      check(cq.status === 200 && cq.json?.quote?.pool?.venue === 'pons-curve' && BigInt(cq.json.followUpFee ?? 0) > 0n, `${label}: curve quote with a follow-up fee`, brief(cq));
+      const cb = await tradeOf({ token, side: 'buy', amountIn: buyIn, acceptRisk: 'high', simulate: true }, 'build');
+      check(
+        cb.status === 200 && cb.json?.followUp?.kind === 'rushr_fee' && cb.json.followUp.tx.data === '0x' && cb.json.followUp.tx.value === cq.json?.followUpFee && cb.json.deadline === null,
+        `${label}: curve build with the fee transfer as followUp`,
+        brief(cb),
+      );
       return;
     }
     const q = await tradeOf({ token, side: 'buy', amountIn: buyIn }, 'quote');

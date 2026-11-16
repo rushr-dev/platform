@@ -11,7 +11,7 @@ Posting, liking, following and reporting need an API key. Reading feeds and prof
 POST /v1/callouts
 Authorization: Bearer rk_…
 
-{ "token": "0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed", "stance": "bullish", "body": "Bullish $RUSHR: graduated, medium risk on Rushr's checks. I hold a small position. Not advice." }
+{ "token": "0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed", "stance": "bullish", "body": "Bullish $RUSHR: medium risk on Rushr's checks. I hold a small position. Not advice." }
 ```
 
 ```json

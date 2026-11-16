@@ -2,7 +2,7 @@
 // transactions. Rushr never holds keys, never signs, never sends, never trades for anyone.
 import { Hono } from 'hono';
 import type { Sql, TransactionSql } from 'postgres';
-import { createPublicClient, encodeFunctionData, http, type Address, type Hex } from 'viem';
+import { createPublicClient, encodeFunctionData, http, maxUint256, type Address, type Hex } from 'viem';
 import { checkHandle } from '@rushr/agents/guard';
 import { newApiKey, newMemberId, newNonce } from '@rushr/agents/crypto';
 import { IP_LIMITS, MAX_OUTSTANDING_NONCES } from '@rushr/agents/limits';
@@ -14,13 +14,16 @@ import { isTradeError } from '@rushr/trade/errors';
 import { resolveConfig } from '@rushr/trade/config';
 import { erc20Abi, permit2Abi } from '@rushr/trade/abis';
 import { TRADE_ADDRESSES } from '@rushr/trade/addresses';
-import type { Approval } from '@rushr/trade/types';
+import type { Approval, PonsPool } from '@rushr/trade/types';
+import { curveFeeCall } from '@rushr/trade/curve-fee';
 import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
 import { publicMember } from './members';
 import { recordReferral } from './referrals';
 import { refreshSignalsIfStale } from '../signals-refresh';
 import { tokenPools } from '../data';
 import { checkBuy, type HoneypotCheck } from './honeypot';
+import { referralFor } from './referrals';
+import { assertFeesPaid, curveSimulation, settledFeeStatus, feeView, liveCurve, prepareCurve, recordCurveBuild, reportFeePayment, unsigned } from './curve';
 
 export const AGENT_SCOPES = ['read', 'profile', 'post', 'trade'];
 const AGENT_PURPOSES: Purpose[] = ['register', 'login'];
@@ -235,13 +238,11 @@ const PROBE_TRADER: Address = '0x0000000000000000000000000000000000000001';
 /** ETH amount for the probe when the agent's buy is quoted in USDG. */
 const PROBE_ETH_WEI = 10n ** 16n; // 0.01 ETH
 
-/** PONS tokens still on their bonding curve: agents trade graduated (Uniswap) tokens only for now. */
-async function onCurve(sql: Sql, token: string): Promise<boolean> {
+/** PONS tokens our index still shows on their bonding curve (the chain has the final word: liveCurve). */
+async function maybeOnCurve(sql: Sql, token: string): Promise<boolean> {
   const [t] = await sql<{ launchpad: string | null; status: string }[]>`select launchpad, status from tokens where address = ${token}`;
   return t?.launchpad === 'pons' && t.status !== 'migrated';
 }
-
-const CURVE_MESSAGE = 'This token is still on its PONS bonding curve; agent trading opens after graduation.';
 
 /** Each approval as a ready-to-send unsigned transaction next to its description. */
 export function approvalTx(a: Approval, nowSec = Math.floor(Date.now() / 1000)): { to: Address; data: Hex; value: string } {
@@ -263,12 +264,17 @@ async function prepare(c: C, mode: 'quote' | 'build') {
   // Validate first, so a malformed request doesn't use up the quote or build quota.
   const { req, acceptRisk, acceptImpact, simulate } = swapRequest(c, m);
   const sql = c.var.sql;
-  if (await onCurve(sql, req.token)) throw fail(422, 'curve_not_supported', CURVE_MESSAGE);
   await limit(c, mode);
+  // An overdue fee on an earlier curve trade blocks builds (quotes stay open), before any other work.
+  if (mode === 'build') await assertFeesPaid(sql, c.env.RPC_URL, m);
   const safety = await safetyOf(sql, req.token);
   refreshSignalsIfStale(c, req.token, safety.updatedAt);
   if (mode === 'build') riskGate(req.side, safety, acceptRisk);
   const client = createPublicClient({ chain: robinhoodChain, transport: http(c.env.RPC_URL) });
+  if (await maybeOnCurve(sql, req.token)) {
+    const curve = await liveCurve(client as never, req.token, req.trader).catch(() => null);
+    if (curve) return curveTrade(c, m, { req, curve, mode, safety, acceptRisk, acceptImpact, simulate, client });
+  }
   // A dry run must work before the agent funds its wallet: top it up inside the simulation only.
   const simulateFundEth = (req.side === 'buy' && req.quoteAsset === 'ETH' ? req.amountIn : 0n) + SIM_GAS_BUFFER_WEI;
   try {
@@ -308,6 +314,8 @@ async function prepare(c: C, mode: 'quote' | 'build') {
       {
         tx: toJsonSafe(p.tx),
         approvals: p.approvals.map((a) => ({ ...(toJsonSafe(a) as Record<string, unknown>), tx: approvalTx(a, nowSec) })),
+        // Uniswap routes take the fee inside the swap: nothing to send after it.
+        followUp: null,
         deadline: p.deadline.toString(),
         quote,
         simulation: p.simulation ? toJsonSafe(p.simulation) : null,
@@ -321,7 +329,86 @@ async function prepare(c: C, mode: 'quote' | 'build') {
     );
   } catch (e) {
     if (isTradeError(e)) {
-      if (e.code === 'UNSUPPORTED_VENUE' && /pons/i.test(e.message)) throw fail(422, 'curve_not_supported', CURVE_MESSAGE);
+      if (isInsufficientFunds(e.message)) throw fail(422, 'insufficient_funds', 'Not enough ETH in the wallet for this trade and gas.');
+      throw fail(422, `trade_${e.code}`, e.message);
+    }
+    throw e;
+  }
+}
+
+type SwapReq = ReturnType<typeof swapRequest>['req'];
+
+/**
+ * A token still on its PONS curve: trade the curve directly (the web app's path), with the Rushr fee
+ * as a follow-up ETH transfer to the treasury after the trade confirms (curve.ts).
+ */
+async function curveTrade(
+  c: C,
+  m: MemberRow,
+  x: { req: SwapReq; curve: PonsPool; mode: 'quote' | 'build'; safety: Safety; acceptRisk: unknown; acceptImpact: boolean; simulate: boolean; client: ReturnType<typeof createPublicClient> },
+) {
+  const { req, curve, mode, safety } = x;
+  if (req.quoteAsset !== 'ETH') throw fail(422, 'invalid_field', 'Bonding-curve tokens trade in ETH: use quoteAsset "ETH".', { field: 'quoteAsset' });
+  const sql = c.var.sql;
+  const ref = await referralFor(sql, m.wallet);
+  // Dry runs: the buy amount, the fee on top (≤ 1%) and gas headroom, inside the simulation only.
+  const fundEthWei = (req.side === 'buy' ? req.amountIn + req.amountIn / 100n : 0n) + SIM_GAS_BUFFER_WEI;
+  const client = x.client as never;
+  try {
+    const t = await prepareCurve(client, { side: req.side, token: req.token, amountIn: req.amountIn, trader: req.trader, slippageBps: req.slippageBps }, curve, {
+      mode, simulate: x.simulate, acceptImpact: x.acceptImpact, referral: ref, fundEthWei,
+    });
+    const q = t.quote!;
+    // Curve quotes are exempt from the buy→sell probe, as on the web: sells go back to the same curve.
+    const honeypotCheck: HoneypotCheck | null = req.side === 'buy' ? { checked: 'exempt', buyTaxBps: null, sellTaxBps: null, roundTripBps: null } : null;
+    const impactBps = q.priceImpactBps;
+    const impactOk = x.acceptImpact || impactBps == null || impactBps <= MAX_IMPACT_BPS;
+    const fee = q.fee.feeAmount;
+    const feeNote = req.side === 'buy'
+      ? 'The Rushr fee is a separate transfer on top of amountIn, sent after the trade confirms.'
+      : 'The Rushr fee is a separate transfer out of the ETH you receive, sent after the trade confirms.';
+    // The web builder stamps its own source; this trade is the agent's.
+    const quote = toJsonSafe({ ...q, request: { ...q.request, source: req.source } }) as Record<string, unknown>;
+    if (mode === 'quote') {
+      return c.json(
+        { quote, alternatives: [], safety, honeypotCheck, warnings: [...t.warnings, feeNote], deadlineSeconds: null, followUpFee: fee.toString(), wouldBuild: safetyAllows(req.side, safety, x.acceptRisk) && impactOk },
+        200,
+        PRIVATE,
+      );
+    }
+    if (!impactOk) {
+      throw fail(422, 'high_price_impact', `Price impact is ${(impactBps! / 100).toFixed(1)}% (over ${MAX_IMPACT_BPS / 100}%). Check your amountIn units; pass "acceptImpact": true to build it anyway.`, { priceImpactBps: impactBps });
+    }
+    let calls = t.calls;
+    // A dry run assumes no allowance; drop the curve approval when the wallet already has one.
+    if (x.simulate && req.side === 'sell' && calls.length > 1) {
+      const allowance = await (x.client as ReturnType<typeof createPublicClient>)
+        .readContract({ address: req.token, abi: erc20Abi, functionName: 'allowance', args: [req.trader, curve.curve] })
+        .catch(() => 0n);
+      if (allowance >= req.amountIn) calls = calls.filter((k) => k.label !== 'approve token for the curve');
+    }
+    const swap = calls.find((k) => k.label === 'swap')!;
+    const approvals = calls.filter((k) => k !== swap).map((k) => ({ kind: 'curve', token: req.token, spender: curve.curve, amount: maxUint256.toString(), tx: unsigned(k) }));
+    await recordCurveBuild(sql, m, t, curve.curve);
+    const feeCall = fee > 0n ? curveFeeCall(resolveConfig(), fee) : null;
+    return c.json(
+      {
+        tx: unsigned(swap),
+        approvals,
+        followUp: feeCall ? { kind: 'rushr_fee', amount: fee.toString(), tx: unsigned(feeCall), after: 'tx', report: 'POST /v1/agents/me/fees' } : null,
+        deadline: null,
+        quote,
+        simulation: curveSimulation(t, x.simulate),
+        safety,
+        honeypotCheck,
+        warnings: [...t.warnings.filter((w) => !w.startsWith('Pre-send simulation unavailable')), feeNote],
+        note: 'Unsigned. Send each approvals[i].tx, then tx, and wait for its receipt; then send followUp.tx (the Rushr fee) and report its hash with POST /v1/agents/me/fees. An unpaid fee blocks further builds. Rushr never signs or sends for you.',
+      },
+      200,
+      PRIVATE,
+    );
+  } catch (e) {
+    if (isTradeError(e)) {
       if (isInsufficientFunds(e.message)) throw fail(422, 'insufficient_funds', 'Not enough ETH in the wallet for this trade and gas.');
       throw fail(422, `trade_${e.code}`, e.message);
     }
@@ -342,3 +429,21 @@ function safetyAllows(side: 'buy' | 'sell', safety: Safety, acceptRisk: unknown)
 agents.post('/trade/quote', (c) => prepare(c, 'quote'));
 /** Same body plus `acceptRisk?: "high"`, `acceptImpact?: true`, `simulate?: true` → unsigned tx and approvals. */
 agents.post('/trade/build', (c) => prepare(c, 'build'));
+
+/** Curve-trade fees: what's owed, paid and overdue, with a ready-to-send transfer for the rest. */
+agents.get('/agents/me/fees', async (c) => {
+  const m = requireMember(c, { kind: 'agent' });
+  return c.json({ fees: feeView(await settledFeeStatus(c.var.sql, c.env.RPC_URL, m)) }, 200, PRIVATE);
+});
+
+/** `{ txHash }` of a fee transfer to the treasury: checked on-chain, then counted toward what's owed. */
+agents.post('/agents/me/fees', async (c) => {
+  const m = requireMember(c, { kind: 'agent', scope: 'trade' });
+  const b = (c.var.body ?? {}) as { txHash?: unknown };
+  const txHash = typeof b.txHash === 'string' ? b.txHash.toLowerCase() : '';
+  if (!/^0x[0-9a-f]{64}$/.test(txHash)) throw fail(422, 'invalid_field', 'txHash must be a 32-byte hex hash.', { field: 'txHash' });
+  await limit(c, 'write');
+  const r = await reportFeePayment(c.var.sql, c.env.RPC_URL, m, txHash);
+  // Already counted for you (an earlier report, or the treasury's SafeReceived log): nothing new to record.
+  return c.json({ recorded: r.alreadyCounted ? '0' : r.value.toString(), alreadyCounted: r.alreadyCounted, fees: feeView(await settledFeeStatus(c.var.sql, c.env.RPC_URL, m)) }, r.alreadyCounted ? 200 : 201, PRIVATE);
+});

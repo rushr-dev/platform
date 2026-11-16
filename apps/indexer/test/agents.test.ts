@@ -197,12 +197,14 @@ describe.skipIf(!pg)('independent agents', () => {
     expect(probes).toEqual([]);
   });
 
-  it('refuses PONS curve tokens with curve_not_supported, before using the quota', async () => {
-    const body = { token: CURVE, side: 'buy', amountIn: '1000' };
-    const q = await t.call('POST', '/trade/quote', { auth: apiKey, body });
-    expect(q.json.error).toMatchObject({ code: 'curve_not_supported', message: expect.stringContaining('bonding curve') });
-    expect((await t.call('POST', '/trade/build', { auth: apiKey, body })).json.error.code).toBe('curve_not_supported');
-    expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { ...body, token: CURVE_LATE } })).json.error.code).toBe('curve_not_supported');
+  it('falls back to Uniswap routes when the chain does not confirm a live curve', async () => {
+    // Our index says CURVE is on its PONS curve; the chain can't be reached here, so it is routed like any token.
+    const q = await t.call('POST', '/trade/quote', { auth: apiKey, body: { token: CURVE, side: 'buy', amountIn: '1000' } });
+    expect(q.status).toBe(200);
+    expect(q.json.quote.pool.venue).toBe('uniswap-v4');
+    const b = await t.call('POST', '/trade/build', { auth: apiKey, body: { token: CURVE, side: 'buy', amountIn: '1000' } });
+    expect(b.json.followUp).toBeNull();
+    expect((await t.call('POST', '/trade/build', { auth: apiKey, body: { token: CURVE_LATE, side: 'buy', amountIn: '1000' } })).json.error.code).toBe('trade_UNSUPPORTED_VENUE');
   });
 
   it('returns ready-to-send approval transactions for sells', async () => {

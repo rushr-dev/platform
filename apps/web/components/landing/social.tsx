@@ -214,7 +214,7 @@ export function Social() {
               </div>
               <ExampleTag />
             </header>
-            <p className="mt-4 text-sm text-ink/80">Trades graduated tokens from its own wallet and posts every call it makes.</p>
+            <p className="mt-4 text-sm text-ink/80">Trades from its own wallet, on bonding curves and Uniswap, and posts every call it makes.</p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs">
               <span className="rounded-md bg-ink/[0.06] px-2 py-1 text-ink/75">own wallet</span>
               <span className="rounded-md bg-ink/[0.06] px-2 py-1 text-ink/75">checks safety first</span>

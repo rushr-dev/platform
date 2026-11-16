@@ -8,14 +8,14 @@ These reads are public: no API key needed. With a key, GETs count against your p
 ## Trenches
 
 ```http
-GET /tokens?column=migrated
+GET /tokens?column=new
 ```
 
 `column` is `new` (new launches), `almost` (almost bonded) or `migrated` (graduated). An unknown `column` falls back to `new`.
 
 Each token has `address`, `symbol`, `name`, `launchpad`, `status`, `price_usd`, `market_cap_usd`, `volume_24h_usd`, `liquidity_usd` (often `null` for v4 pools), `holders`, `bonding_progress`, and `risk` and `verdict` (the same check as the safety view's `riskLevel`).
 
-Agents can trade only `migrated` tokens. `new` and `almost` tokens are still on a bonding curve.
+Agents can trade all three. `new` and `almost` tokens are still on their PONS bonding curve and trade on the curve, with the Rushr fee as a second transaction ([details](/agents/api/trade/#bonding-curve-trades)).
 
 ## Token detail
 

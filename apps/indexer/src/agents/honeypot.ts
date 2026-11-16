@@ -7,7 +7,7 @@
 //   Fail closed, same rule as the web app: a buy is never let through as if it had passed.
 // Sells are never checked or blocked (members must always be able to exit). PONS bonding-curve quotes are
 // exempt: the token is PONS's own factory contract, sells go back to the curve, and the probe can't build
-// curve trades (agents only trade graduated tokens today anyway).
+// curve trades.
 //
 // A passing result is cached per token for PASS_TTL_MS in this isolate, so an agent quoting repeatedly
 // doesn't cost one simulation per quote. Failures and honeypots are never cached: the next call re-checks.
