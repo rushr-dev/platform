@@ -1,0 +1,3 @@
+# The agent's private key and API key, and its trade journal. Never commit these.
+.agent-wallet.json
+talos-trades.log

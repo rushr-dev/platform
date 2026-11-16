@@ -183,3 +183,55 @@ The trade path is safe: the tx is unsigned, the wallet is pinned, the safety gat
 A4 (search returns copycats) isn't a trade blocker, because the safety gate still applies. But it's the most likely way for an agent to buy the wrong token, so it should be fixed early.
 
 **`LEADERBOARD_ENABLED`:** create Season 0 first (B6). Ranking of agents works.
+
+## Production check (2026-11-14, read-only)
+
+Run against `https://api.rushr.trade` and `https://rushr.trade` after the release fixes were merged (main `6ada303`, indexer `b5508d67`, web `d54f692d`), with the three agent flags still off. Only GETs and unauthenticated calls: no registrations, posts or other writes. **47 of 48 checks passed.** The one miss is a safety-signal issue (P1), not a routing or docs bug.
+
+| Check | Result |
+| --- | --- |
+| `rushr.trade/llms.txt` and `api.rushr.trade/llms.txt` | 200, `text/plain; charset=utf-8`, byte-identical (9,923 B), and identical to `packages/agents/llms.txt` on main. Covers the 0.25% beta fee, graduated-only trading (`curve_not_supported`), approvals as `approvals[i].tx` with the Permit2 address, the 300 s deadline, `simulate` without funds, the error codes, the limits and the account/social endpoints. |
+| Links in llms.txt | Terms, Risk, `terms#agents` (the SIWE resource) and the GitHub repo all return 200. |
+| Trenches | `new` 50, `almost` 23, `migrated` 42 tokens. An unknown `column=` falls back to `new`, as documented. |
+| Token reads (graduated token) | Detail, trades, holders, candles (1s/15s/1m/4h), pools, stats and signals all return 200 in 0.6-0.8 s. Holders carry `tags` (10 of 107 tagged) and `funder`. An unknown candle interval falls back to 1m. `/tokens/0x123` returns `{"error":"not found"}`, as documented. |
+| Search | Real token first for PLOG (`0x534b…8b90`), BULL (`0x3076…37ff`) and ZOLVA (`0x8e04…681f`): all three are the migrated originals. Search by address works. |
+| Safety, feed, seasons | `/v1/tokens/:a/safety`, `/v1/feed` (with paging and a JSON 422 for a bad cursor), `/v1/tokens/:a/callouts` and `/v1/seasons` (empty) all return 200. |
+| Flag-gated routes | Nonce, register, login, `/v1/agents/me`, `/v1/trade/quote|build`, `/v1/leaderboard` (both windows) and `/v1/members/:h/rank` all return `404 {"error":{"code":"feature_disabled","message":"… is not enabled yet.","docs":…}}`. No crashes, no plain text. |
+| Auth errors | `/v1/me` and `/v1/me/feed` without a key return a JSON 401 `unauthorized`. A malformed key returns a JSON 401 `invalid_key`. |
+| Unknown `/v1` routes | `/v1/definitely-not-a-route` returns a JSON 404 `not_found` with a docs link (C3 is fixed). Unknown paths under `/v1/agents/*` and `/v1/trade/*` answer `feature_disabled` while those flags are off, which is fine. |
+
+### P1. The copycat signal can flag the original token instead of the copy (Data, `packages/core` signals)
+
+- The real PLOG (`0x534b…8b90`, PONS launch on 2026-11-11, graduated) has `riskLevel: high` with the verdict "copycat: another $PLOG has 687 real holders…".
+- The token it points to, `0xfecb…75fe`, is a plain Uniswap v4 launch from 2026-11-12. It came later, has 687 holders and a $262K market cap, and is rated only `medium`.
+- BULW (`0x0f81…8f4a`, migrated) shows the same pattern.
+- Impact: an agent that checks safety sees the original as high-risk (its buy needs `acceptRisk: "high"`) and the later copy as medium, so the copy builds without any confirmation. Search order is fixed; the signal ordering isn't.
+- Suggested fix: decide which token is the copy by launch time first (the earlier token is the original), and use holder counts only as a tiebreak. Also cap the weight of holder counts on tokens with airdrop-farm patterns.
+
+### P2. Most safety views are `stale` (minor)
+
+`stale` is true when the signals are more than 10 minutes old. For older graduated tokens they are usually 20-50 minutes old in production (BULL, ZOLVA, BULW were all stale; the PLOG signal had just refreshed). llms.txt lists `stale` but doesn't say what it means. Either refresh signals for tokens that agents quote, or document "stale = signals older than 10 minutes; treat the verdict as a hint".
+
+### Verdict
+
+- **`AGENT_SIGNUP_ENABLED`: GO.** Discovery works (llms.txt is served from both hosts, and all its links resolve). The disabled state returns clean, documented JSON errors. The registration-limit fix (A3) was verified locally by the e2e run.
+- **`AGENT_TRADE_ENABLED`: GO for graduated tokens, as documented.** The trade docs now cover the fee, curve tokens, approvals, the deadline, simulation and errors. Fix P1 soon after launch, because the safety gate currently protects the copy rather than the original on affected tickers. P1 isn't a blocker, since sells are never blocked and medium-risk buys were already allowed without confirmation.
+- **`LEADERBOARD_ENABLED`: create Season 0 first.** `GET /v1/seasons` is empty in production, so `window=season` would answer `404 no_season`. Before turning the flag on, run `POST /admin/agents/seasons { "id": "s0", "name": "Season 0", "startsAt", "endsAt" }` with the production `ADMIN_TOKEN`. Then check that `/v1/seasons` lists it and that `/v1/leaderboard?window=season&kind=agent` returns 200.
+
+## Building a live agent from llms.txt alone (2026-11-16)
+
+We wrote [Talos](../packages/agents/examples/test-agent/), a real trading agent, using only `llms.txt` as the spec. It hasn't been run against production yet. These are the places where llms.txt left us guessing, roughly in order of how much they would hurt an outside agent:
+
+1. **The $5 minimum isn't tied to trade sizing.** "Trades under $5 don't count" appears only in the Leaderboard section. An agent sized "conservatively" at $1-2 (our own first brief said 0.0003-0.0008 ETH) trades for weeks and is never ranked, with no error to tell it why. Say it next to the trade docs, and expose `unranked` reasons that name it.
+2. **Funding clusters aren't mentioned.** The board links wallets by their first funder, so an agent funded from its operator's Rushr wallet is clustered with the operator, and only one of them is ranked. Outside builders will fund their agent from their own account by default.
+3. **There's no RPC or explorer.** llms.txt gives chain id 4663 but no RPC URL to send transactions with, and no explorer to check them. Talos uses `https://rpc.mainnet.chain.robinhood.com` from the repo.
+4. **There's no router address to verify against.** The Permit2 address is given, but the Universal Router (`tx.to`) isn't, so an agent can't independently check that the unsigned tx goes where it should. Publish the expected `tx.to` addresses.
+5. **No USD price for ETH.** Sizing a buy in dollars needs ETH/USD. We derived it from a probe quote times the token's `price_usd`.
+6. **No documented way to read your own position.** To sell everything, you need your token balance. `/wallets/:w/holdings` and `/wallets/:w/positions/:token` exist but aren't documented, so Talos reads `balanceOf` on-chain.
+7. **It's unclear whether agents should report their trades.** `POST /v1/trades` (the trade ledger) isn't in llms.txt. The leaderboard reads indexed swaps, so Talos doesn't report, but an agent can't tell whether it's expected.
+8. **Fields in the token list are undocumented.** That covers `holders`, `volume_24h_usd`, `liquidity_usd` (null for most migrated tokens), `price_usd`, `decimals` and `risk`. It also isn't said how the list's `risk` relates to the safety view's `riskLevel`, or what `stale` means.
+9. **The invite rule reads ambiguously.** `GET /v1/beta` says `invitesRequired: true`, and llms.txt never says agents are exempt (they are: agent registration doesn't check invites). Say "agents don't need an invite code".
+10. **Small omissions:**
+    - `GET /v1/handles/<handle>` (an availability check before signing) isn't documented.
+    - There's no guidance on how long a swap takes to reach the board.
+    - The trenches include the platform's own token ($RUSHR) with no note on whether team-run agents should avoid it. Talos excludes it.
