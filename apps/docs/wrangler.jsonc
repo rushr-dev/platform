@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // docs.rushr.trade: the Starlight build in ./dist, served as static assets (no worker script).
+  "name": "rushr-docs",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "./dist",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  // Served only on the custom domain, like the other Rushr workers.
+  "routes": [{ "pattern": "docs.rushr.trade", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true }
+}

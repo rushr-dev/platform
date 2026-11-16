@@ -1,0 +1,444 @@
+/* Rushr brand for Starlight.
+   Light (default) = the rushr.trade paper palette; dark = the app.rushr.trade terminal palette.
+   Values come from apps/web/app/globals.css (.theme-paper and the dark @theme). */
+
+/* ---------- Tokens ---------- */
+
+:root,
+:root[data-theme='light'] {
+  --sl-font: 'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --sl-font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --rushr-bg: rgb(247, 245, 242);
+  --rushr-surface: #fffefc;
+  --rushr-surface-2: #efede8;
+  --rushr-line: #e2dfd8;
+  --rushr-ink: #18201a;
+  --rushr-muted: #5c645b;
+  --rushr-brand: #2a8a22;
+  --rushr-brand-deep: #1d6e17;
+  --rushr-lime: #36d42a;
+  --rushr-note-bg: #f4ebe1;
+  --rushr-note-line: #e3cdb4;
+  --rushr-note-ink: #a8700e;
+
+  --sl-color-accent-low: #e3f0de;
+  --sl-color-accent: var(--rushr-brand);
+  --sl-color-accent-high: var(--rushr-brand-deep);
+  --sl-color-white: var(--rushr-ink);
+  --sl-color-gray-1: #232c25;
+  --sl-color-gray-2: #3a443b;
+  --sl-color-gray-3: var(--rushr-muted);
+  --sl-color-gray-4: #9a9f98;
+  --sl-color-gray-5: var(--rushr-line);
+  --sl-color-gray-6: var(--rushr-surface-2);
+  --sl-color-gray-7: var(--rushr-surface);
+  --sl-color-black: var(--rushr-bg);
+  --sl-color-bg: var(--rushr-bg);
+  --sl-color-bg-nav: color-mix(in srgb, var(--rushr-bg) 88%, transparent);
+  --sl-color-bg-sidebar: var(--rushr-bg);
+  --sl-color-bg-inline-code: var(--rushr-surface-2);
+  --sl-color-hairline-light: var(--rushr-line);
+  --sl-color-hairline: var(--rushr-line);
+  --sl-color-hairline-shade: #d6d2ca;
+  --sl-color-text: #2b342c;
+  --sl-color-text-accent: var(--rushr-brand-deep);
+  --sl-color-text-invert: #fff;
+  --sl-color-red: #c8402f;
+  --sl-color-orange: var(--rushr-note-ink);
+
+  --sl-content-width: 46rem;
+  --sl-sidebar-width: 17rem;
+  --sl-nav-height: 4rem;
+  --sl-text-h1: clamp(2.2rem, 4.5vw, 3.1rem);
+  --sl-text-h2: 1.7rem;
+  --sl-text-h3: 1.25rem;
+  --sl-line-height: 1.7;
+}
+
+:root[data-theme='dark'] {
+  --rushr-bg: #050706;
+  --rushr-surface: #0c100d;
+  --rushr-surface-2: #121813;
+  --rushr-line: #1d241e;
+  --rushr-ink: #eef2ec;
+  --rushr-muted: #8a958a;
+  --rushr-brand: #36d42a;
+  --rushr-brand-deep: #5fe052;
+  --rushr-lime: #36d42a;
+  --rushr-note-bg: #17130c;
+  --rushr-note-line: #3a2e18;
+  --rushr-note-ink: #ffb547;
+
+  --sl-color-accent-low: #0f2b0c;
+  --sl-color-accent: var(--rushr-brand);
+  --sl-color-accent-high: var(--rushr-brand-deep);
+  --sl-color-white: var(--rushr-ink);
+  --sl-color-gray-1: #dde3db;
+  --sl-color-gray-2: #b7c0b6;
+  --sl-color-gray-3: var(--rushr-muted);
+  --sl-color-gray-4: #4f594f;
+  --sl-color-gray-5: var(--rushr-line);
+  --sl-color-gray-6: var(--rushr-surface);
+  --sl-color-black: var(--rushr-bg);
+  --sl-color-bg: var(--rushr-bg);
+  --sl-color-bg-nav: color-mix(in srgb, var(--rushr-bg) 88%, transparent);
+  --sl-color-bg-sidebar: var(--rushr-bg);
+  --sl-color-bg-inline-code: var(--rushr-surface-2);
+  --sl-color-hairline-light: var(--rushr-line);
+  --sl-color-hairline: var(--rushr-line);
+  --sl-color-hairline-shade: #121813;
+  --sl-color-text: #cdd5cb;
+  --sl-color-text-accent: var(--rushr-brand-deep);
+  --sl-color-text-invert: #050706;
+  --sl-color-red: #ff6b5b;
+  --sl-color-orange: var(--rushr-note-ink);
+}
+
+body {
+  background: var(--rushr-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Header ---------- */
+
+header.header {
+  backdrop-filter: saturate(1.4) blur(10px);
+  border-bottom: 1px solid var(--rushr-line);
+}
+header.header .social-icons::after {
+  display: none;
+}
+/* Search box: a quiet pill. */
+site-search button[data-open-modal] {
+  background: var(--rushr-surface);
+  border: 1px solid var(--rushr-line);
+  border-radius: 9px;
+  color: var(--rushr-muted);
+}
+site-search button[data-open-modal]:hover {
+  border-color: var(--sl-color-gray-4);
+  color: var(--rushr-ink);
+}
+starlight-theme-select select,
+starlight-theme-select label {
+  color: var(--rushr-muted);
+}
+
+/* ---------- Sidebar: mono uppercase group labels like the whitepaper's CONTENTS ---------- */
+
+.sidebar-content {
+  padding-top: 1.5rem;
+}
+.sidebar-content .group-label .large,
+.sidebar-content summary .large {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--rushr-muted);
+}
+.sidebar-content a {
+  color: var(--rushr-muted);
+  font-size: 0.93rem;
+  border-radius: 7px;
+  padding-block: 0.32em;
+}
+.sidebar-content a:hover {
+  color: var(--rushr-ink);
+}
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+  background: var(--rushr-surface-2);
+  color: var(--rushr-ink);
+  font-weight: 600;
+}
+/* Top-level single links (Introduction, FAQ...) read as items, not headers. */
+.sidebar-content > ul > li > a .large {
+  font-size: 0.93rem;
+  font-weight: 500;
+}
+
+/* ---------- Page title and prose ---------- */
+
+.content-panel {
+  border-top: 0;
+}
+.content-panel + .content-panel {
+  border-top: 1px solid var(--rushr-line);
+}
+h1#_top {
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+  color: var(--rushr-ink);
+}
+.sl-markdown-content :is(h2, h3, h4) {
+  color: var(--rushr-ink);
+  font-weight: 650;
+  letter-spacing: -0.025em;
+}
+.sl-markdown-content h2 {
+  margin-top: 2.6rem;
+}
+.sl-markdown-content :is(p, li) {
+  color: var(--sl-color-text);
+}
+.sl-markdown-content strong {
+  color: var(--rushr-ink);
+  font-weight: 600;
+}
+.sl-markdown-content a:not(.go, .path, .card, .sl-link-card, [class]) {
+  color: var(--rushr-ink);
+  text-decoration-color: color-mix(in srgb, var(--rushr-brand) 55%, transparent);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+.sl-markdown-content a:not([class]):hover {
+  color: var(--rushr-brand);
+}
+/* Page description under the title. */
+.sl-container > p:first-child {
+  color: var(--rushr-muted);
+}
+
+/* Inline code */
+.sl-markdown-content :not(pre) > code {
+  background: var(--rushr-surface-2);
+  border: 1px solid var(--rushr-line);
+  border-radius: 5px;
+  padding: 0.08em 0.38em;
+  font-size: 0.86em;
+  color: var(--rushr-ink);
+  overflow-wrap: anywhere;
+}
+
+/* Tables: a clean card with hairlines; scrolls sideways on phones. */
+.sl-markdown-content table {
+  display: block;
+  overflow-x: auto;
+  border: 1px solid var(--rushr-line);
+  border-radius: 12px;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--rushr-surface);
+  font-size: 0.92rem;
+}
+.sl-markdown-content :is(th, td) {
+  border: 0;
+  border-bottom: 1px solid var(--rushr-line);
+  padding: 0.65rem 0.9rem;
+}
+.sl-markdown-content tr:last-child td {
+  border-bottom: 0;
+}
+.sl-markdown-content th {
+  background: var(--rushr-surface-2);
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--rushr-muted);
+}
+.sl-markdown-content th:empty {
+  display: none;
+}
+.sl-markdown-content thead:has(th:empty) {
+  display: none;
+}
+
+/* Asides: the whitepaper's tan IMPORTANT box, with a mono label. */
+.starlight-aside {
+  border: 1px solid var(--rushr-line);
+  border-inline-start-width: 1px;
+  border-radius: 12px;
+  background: var(--rushr-surface);
+  padding: 1rem 1.15rem;
+}
+.starlight-aside--caution,
+.starlight-aside--danger {
+  background: var(--rushr-note-bg);
+  border-color: var(--rushr-note-line);
+}
+.starlight-aside--danger {
+  --rushr-note-ink: var(--sl-color-red);
+}
+.starlight-aside__title {
+  font-family: var(--sl-font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--rushr-note-ink);
+}
+.starlight-aside--note .starlight-aside__title,
+.starlight-aside--tip .starlight-aside__title {
+  color: var(--rushr-brand);
+}
+.starlight-aside__icon {
+  display: none;
+}
+
+/* Right-hand "On this page" */
+starlight-toc h2,
+mobile-starlight-toc .toggle {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--rushr-muted);
+}
+starlight-toc a {
+  color: var(--rushr-muted);
+}
+starlight-toc a[aria-current='true'] {
+  color: var(--rushr-brand);
+}
+
+/* Prev / next */
+.pagination-links a {
+  border: 1px solid var(--rushr-line);
+  border-radius: 12px;
+  background: var(--rushr-surface);
+  box-shadow: none;
+}
+.pagination-links a:hover {
+  border-color: var(--sl-color-gray-4);
+}
+.pagination-links .link-title {
+  color: var(--rushr-ink);
+  font-weight: 600;
+}
+
+/* Starlight cards and link cards, if used. */
+.card,
+.sl-link-card {
+  --sl-card-border: var(--rushr-line);
+  --sl-card-bg: var(--rushr-surface-2);
+  border: 1px solid var(--rushr-line);
+  border-radius: 14px;
+  background: var(--rushr-surface);
+  box-shadow: none;
+}
+
+/* ---------- Splash page ---------- */
+
+[data-has-hero] .content-panel {
+  border: 0;
+}
+[data-has-hero] .sl-container {
+  max-width: 64rem;
+}
+.rushr-paths {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  gap: 1rem;
+}
+.rushr-paths .path {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.6rem 1.6rem 1.4rem;
+  border: 1px solid var(--rushr-line);
+  border-radius: 16px;
+  background: var(--rushr-surface);
+  text-decoration: none;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.rushr-paths .path:hover {
+  border-color: var(--rushr-brand);
+  transform: translateY(-2px);
+}
+.rushr-paths .path-title {
+  font-size: 1.45rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--rushr-ink);
+}
+.rushr-paths .path-body {
+  color: var(--rushr-muted);
+  line-height: 1.6;
+}
+.rushr-paths .go {
+  margin-top: 0.6rem;
+  font-weight: 600;
+  color: var(--rushr-brand);
+}
+.rushr-index .kicker,
+.rushr-paths .kicker {
+  font-family: var(--sl-font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--rushr-muted);
+  margin: 0;
+}
+.rushr-index {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 1.75rem 1.5rem;
+  margin-top: 3rem !important;
+  padding-top: 2.25rem;
+  border-top: 1px solid var(--rushr-line);
+}
+.rushr-index > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.rushr-index .kicker {
+  margin-bottom: 0.35rem;
+}
+.rushr-index a {
+  color: var(--rushr-ink);
+  text-decoration: none;
+  font-weight: 500;
+  margin: 0 !important;
+}
+.rushr-index a:hover {
+  color: var(--rushr-brand);
+}
+
+/* ---------- Footer ---------- */
+
+footer .meta,
+footer .kudos {
+  color: var(--rushr-muted);
+}
+
+@media (max-width: 50rem) {
+  .rushr-paths .path {
+    padding: 1.25rem;
+  }
+}
+
+/* Starlight spaces sibling blocks in prose; the splash grids handle their own gaps. */
+.rushr-index > div,
+.rushr-paths > a,
+.rushr-paths > a > * {
+  margin-top: 0 !important;
+}
+
+/* Search modal: brand focus instead of Pagefind's default. */
+#starlight__search {
+  --pagefind-ui-border: var(--rushr-line);
+  --pagefind-ui-primary: var(--rushr-brand);
+}
+#starlight__search .pagefind-ui__search-input:focus,
+#starlight__search input:focus-visible {
+  outline: 2px solid var(--rushr-brand);
+  outline-offset: -2px;
+}
+
+/* Mobile menu button: the same quiet square as the header icon buttons. */
+.sl-menu-button {
+  box-shadow: none;
+  border: 1px solid var(--rushr-line);
+  border-radius: 10px;
+  background: var(--rushr-surface);
+  color: var(--rushr-ink);
+}

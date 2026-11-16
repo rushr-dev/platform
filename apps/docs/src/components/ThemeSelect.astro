@@ -1,0 +1,50 @@
+---
+// Rushr override: a light/dark toggle instead of Starlight's dark/light/auto select.
+// Light paper is the default (see ThemeProvider.astro); the choice is kept in localStorage.
+import { Icon } from '@astrojs/starlight/components';
+---
+
+<rushr-theme-toggle>
+	<button type="button" class="theme-btn" aria-label="Switch between light and dark theme" title="Light / dark">
+		<Icon name="moon" class="to-dark" size="1rem" />
+		<Icon name="sun" class="to-light" size="1rem" />
+	</button>
+</rushr-theme-toggle>
+
+<style>
+	.theme-btn {
+		display: grid;
+		place-items: center;
+		width: 2.1rem;
+		height: 2.1rem;
+		border: 1px solid var(--sl-color-hairline);
+		border-radius: 8px;
+		background: var(--rushr-surface);
+		color: var(--sl-color-gray-2);
+		cursor: pointer;
+	}
+	.theme-btn:hover {
+		color: var(--sl-color-white);
+		border-color: var(--sl-color-gray-4);
+	}
+	:global([data-theme='light']) .theme-btn :global(.to-light),
+	:global([data-theme='dark']) .theme-btn :global(.to-dark) {
+		display: none;
+	}
+</style>
+
+<script>
+	class RushrThemeToggle extends HTMLElement {
+		constructor() {
+			super();
+			this.querySelector('button')?.addEventListener('click', () => {
+				const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+				document.documentElement.dataset.theme = next;
+				try {
+					localStorage.setItem('starlight-theme', next);
+				} catch {}
+			});
+		}
+	}
+	customElements.define('rushr-theme-toggle', RushrThemeToggle);
+</script>
