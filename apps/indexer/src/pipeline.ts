@@ -23,7 +23,7 @@ import {
 } from '@rushr/core';
 import { HistoryTooLarge, type Rpc } from './rpc';
 import { repairTraders, type Pair } from './attribution';
-import { applySupply, circulatingSql } from './supply';
+import { applySupply, capSupplySql } from './supply';
 
 const ETH_LIKE = new Set<string>([NATIVE_ETH, QUOTES.WETH]);
 const ZERO = NATIVE_ETH;
@@ -934,14 +934,14 @@ export class Pipeline {
     for (const [token, { price, time }] of [...last].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       if (!this.tokens.has(token)) continue;
       const at = new Date(time * 1000);
-      // Market cap on circulating supply (see circulatingSql). ATH always counts; current price only moves
+      // Market cap on total supply (see capSupplySql). ATH always counts; current price only moves
       // forward in time (backfill can't overwrite live).
       await tx`update tokens t set
                  price_usd = case when t.price_at is null or t.price_at <= ${at} then ${price}::numeric else t.price_usd end,
                  market_cap_usd = case when t.price_at is null or t.price_at <= ${at} then ${price}::numeric * c.supply else t.market_cap_usd end,
                  price_at = greatest(coalesce(t.price_at, ${at}), ${at}),
                  ath_market_cap_usd = greatest(coalesce(t.ath_market_cap_usd, 0), ${price}::numeric * c.supply), updated_at = now()
-               from (${circulatingSql(tx, token)}) c
+               from (${capSupplySql(tx, token)}) c
                where t.address = ${token}`;
     }
     // PONS curve progress is read from the curves' reserves by the poller every ~15s (curves.ts).

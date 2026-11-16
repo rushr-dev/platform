@@ -1,9 +1,9 @@
-// Live total supply and circulating market caps (src/supply.ts), and the pipeline path that feeds them.
+// Live total supply, market caps on total supply, circulating supply (src/supply.ts), and the pipeline path that feeds them.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Sql } from 'postgres';
 import { circulatingSupply } from '@rushr/core';
 import { freshDb, pgAvailable } from '../../../packages/agents/test/pg';
-import { DEAD_WALLETS, circulatingSql, refreshSupply, repriceCaps, supplyDeltas, supplyTouched } from '../src/supply';
+import { DEAD_WALLETS, capSupplySql, circulatingSql, refreshSupply, repriceCaps, supplyDeltas, supplyTouched } from '../src/supply';
 import { Pipeline } from '../src/pipeline';
 
 const ZERO = '0x0000000000000000000000000000000000000000';
@@ -75,13 +75,13 @@ describe.skipIf(!ok)('supply tracking (local Postgres)', () => {
       log(ZERO, ALICE, 1_000n * E18, 50, 1), // the launch mint: before the reading
       log(ALICE, ZERO, 30n * E18, 90, 2), // burnt before the reading: already in it
       log(ALICE, ZERO, 64n * E18, 150, 3), // burn() after it
-      log(ALICE, DEAD, 10n * E18, 160, 4), // sent to 0xdead: still in totalSupply, out of circulation
+      log(ALICE, DEAD, 10n * E18, 160, 4), // sent to 0xdead: still in totalSupply, so still in market cap
       log(ZERO, ALICE, 4n * E18, 170, 5), // a later mint
     ]).backfillTransfers(TOKEN as never, 0n, 200n);
     const r = await row();
     expect(r.total_supply).toBe((940n * E18).toString());
-    // (940 − 10 dead) × $2
-    expect(Number(r.market_cap_usd)).toBeCloseTo(1_860, 6);
+    // 940 × $2: market cap is on total supply (as GMGN), the 0xdead balance included
+    expect(Number(r.market_cap_usd)).toBeCloseTo(1_880, 6);
   });
 
   it('leaves rows read at an unknown block alone (supply_block null)', async () => {
@@ -98,13 +98,15 @@ describe.skipIf(!ok)('supply tracking (local Postgres)', () => {
     expect((await row()).total_supply).toBe((995n * E18).toString());
   });
 
-  it('circulatingSql and repriceCaps use totalSupply minus dead balances', async () => {
+  it('circulatingSql drops dead balances; capSupplySql and repriceCaps use totalSupply', async () => {
     await token(935_361_757n * E18, 100n, 0.0000382);
     await db.sql`insert into balances (token, wallet, amount, first_received_at) values (${TOKEN}, ${DEAD}, ${(10_000_000n * E18).toString()}, now())`;
     const [c] = await db.sql<{ supply: string }[]>`${circulatingSql(db.sql, TOKEN)}`;
     expect(Number(c!.supply)).toBe(925_361_757);
+    const [cap] = await db.sql<{ supply: string }[]>`${capSupplySql(db.sql, TOKEN)}`;
+    expect(Number(cap!.supply)).toBe(935_361_757);
     await repriceCaps(db.sql, [TOKEN]);
-    expect(Number((await row()).market_cap_usd)).toBeCloseTo(925_361_757 * 0.0000382, 4);
+    expect(Number((await row()).market_cap_usd)).toBeCloseTo(935_361_757 * 0.0000382, 4);
   });
 
   it('refreshSupply stores the reading with its block, adds back burns indexed past it, and reprices', async () => {

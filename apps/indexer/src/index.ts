@@ -246,7 +246,7 @@ app.post('/admin/liftfun/progress', async (c) => {
   }
 });
 
-// Re-read totalSupply() at a known block (one eth_call per token) and reprice caps on circulating supply.
+// Re-read totalSupply() at a known block (one eth_call per token) and reprice caps on it.
 // ?tokens=a,b,c for specific tokens, else the next `limit` pending ones (supply_block null and active, see
 // pendingSupply). Dry run unless ?write=1: the reply lists every change either way.
 app.post('/admin/tokens/supply', async (c) => {

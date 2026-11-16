@@ -1,14 +1,16 @@
-// Live token supply and the circulating supply market caps use.
+// Live token supply, the supply market caps use, and circulating supply.
 //
 // tokens.total_supply is the on-chain totalSupply() as of tokens.supply_block. Indexed Transfers keep it
 // current: a mint (from 0x0) adds and a burn (to 0x0, e.g. ERC20Burnable.burn) subtracts, but only for
 // blocks after supply_block (earlier ones are already in the reading). Rows with a null supply_block
 // (read before this existed) are left alone until re-read with refreshSupply.
 //
-// Circulating supply = total_supply minus what sits at the burn addresses (0xdead and friends; tokens
-// "burnt" by a plain transfer still count in totalSupply). That is what GMGN and DexScreener use for
-// market cap, and what holder shares (top 10, dev, snipers...) are measured against. Contracts such as
-// lockers, vesting and pools stay in circulation, as on DexScreener.
+// Market cap = price × total_supply (the on-chain totalSupply), as GMGN shows it: tokens "burnt" by a plain
+// transfer to 0xdead still count, only real burns (to 0x0, which lower totalSupply) shrink it.
+//
+// Circulating supply = total_supply minus what sits at the burn addresses (0xdead and friends). Holder
+// shares (top 10, dev, snipers...) are measured against it, and the token page shows it. Contracts such
+// as lockers, vesting and pools stay in circulation, as on DexScreener.
 import type { Sql, TransactionSql } from 'postgres';
 import { BURN_ADDRESSES, NATIVE_ETH, type DecodedTransfer } from '@rushr/core';
 import type { Address } from 'viem';
@@ -20,6 +22,11 @@ export const DEAD_WALLETS = BURN_ADDRESSES.map((a) => a.toLowerCase()).filter((a
 const DEAD = new Set(DEAD_WALLETS);
 
 type Db = Sql | TransactionSql;
+
+/** One row `{ supply }`: the supply market cap uses (total_supply) in whole tokens, for `from (…) c` in an update. */
+export function capSupplySql(sql: Db, token: string) {
+  return sql`select t.total_supply / power(10::numeric, t.decimals) as supply from tokens t where t.address = ${token}`;
+}
 
 /**
  * One row `{ supply }`: a token's circulating supply in whole tokens (numeric), for `from (…) c` in an
@@ -46,7 +53,7 @@ export function supplyDeltas(transfers: Pick<DecodedTransfer, 'token' | 'from' |
   return rows;
 }
 
-/** Tokens whose circulating supply these transfers change (mints, burns, moves to or from a dead address). */
+/** Tokens whose supply these transfers change (mints, burns, and moves to or from a dead address, which change circulating supply). */
 export function supplyTouched(transfers: Pick<DecodedTransfer, 'token' | 'from' | 'to'>[]): string[] {
   const out = new Set<string>();
   for (const t of transfers) {
@@ -59,7 +66,7 @@ export function supplyTouched(transfers: Pick<DecodedTransfer, 'token' | 'from' 
 
 /**
  * Apply newly inserted transfers to total_supply (mints/burns after supply_block) and refresh the market
- * cap of every token whose circulating supply moved. Rare (most transfers are trades), so it costs
+ * cap of every token whose supply moved. Rare (most transfers are trades), so it costs
  * nothing on the hot path.
  */
 export async function applySupply(tx: TransactionSql, transfers: DecodedTransfer[]) {
@@ -83,18 +90,12 @@ export async function applySupply(tx: TransactionSql, transfers: DecodedTransfer
   await repriceCaps(tx, touched);
 }
 
-/** market_cap_usd = price_usd × circulating supply, for tokens that have a price. */
+/** market_cap_usd = price_usd × total supply, for tokens that have a price. */
 export async function repriceCaps(sql: Db, tokens: string[]) {
   if (!tokens.length) return;
   await sql`
-    update tokens t set market_cap_usd = t.price_usd * c.supply, updated_at = now()
-    from (
-      select k.address, greatest(k.total_supply - coalesce((
-        select sum(b.amount) from balances b where b.token = k.address and b.wallet = any(${DEAD_WALLETS})
-      ), 0), 0) / power(10::numeric, k.decimals) as supply
-      from tokens k where k.address = any(${tokens})
-    ) c
-    where t.address = c.address and t.price_usd is not null`;
+    update tokens t set market_cap_usd = t.price_usd * t.total_supply / power(10::numeric, t.decimals), updated_at = now()
+    where t.address = any(${tokens}) and t.price_usd is not null`;
 }
 
 export interface SupplyChange {
@@ -109,28 +110,26 @@ export interface SupplyChange {
 
 /**
  * Re-read totalSupply() for these tokens (one batched eth_call each, at one block), store it with that
- * block, and reprice their market caps on circulating supply. `dryRun` reads and reports without writing.
+ * block, and reprice their market caps on it. `dryRun` reads and reports without writing.
  */
 export async function refreshSupply(sql: Sql, rpc: Rpc, tokens: string[], opts: { dryRun?: boolean } = {}): Promise<SupplyChange[]> {
   if (!tokens.length) return [];
   const reads = await rpc.totalSupplies(tokens as Address[]);
   const ok = reads.filter((r) => r.totalSupply != null && r.totalSupply > 0n);
   if (!ok.length) return [];
-  const rows = await sql<{ address: string; symbol: string; total_supply: string; decimals: number; price_usd: string | null; market_cap_usd: string | null; dead: string }[]>`
-    select t.address, t.symbol, t.total_supply::text, t.decimals, t.price_usd::text, t.market_cap_usd::text,
-      coalesce((select sum(b.amount) from balances b where b.token = t.address and b.wallet = any(${DEAD_WALLETS})), 0)::text as dead
+  const rows = await sql<{ address: string; symbol: string; total_supply: string; decimals: number; price_usd: string | null; market_cap_usd: string | null }[]>`
+    select t.address, t.symbol, t.total_supply::text, t.decimals, t.price_usd::text, t.market_cap_usd::text
     from tokens t where t.address = any(${ok.map((r) => r.token)})`;
   const byToken = new Map(rows.map((r) => [r.address, r]));
   const changes: SupplyChange[] = [];
   for (const r of ok) {
     const t = byToken.get(r.token);
     if (!t) continue;
-    const circ = r.totalSupply! - BigInt(t.dead);
     const price = t.price_usd == null ? null : Number(t.price_usd);
     changes.push({
       token: r.token, symbol: t.symbol, before: t.total_supply, after: r.totalSupply!.toString(), supplyBlock: r.supplyBlock.toString(),
       marketCapBefore: t.market_cap_usd == null ? null : Number(t.market_cap_usd),
-      marketCapAfter: price == null ? null : price * (Number(circ > 0n ? circ : 0n) / 10 ** t.decimals),
+      marketCapAfter: price == null ? null : price * (Number(r.totalSupply!) / 10 ** t.decimals),
     });
   }
   if (opts.dryRun || !changes.length) return changes;
