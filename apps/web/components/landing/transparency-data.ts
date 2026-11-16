@@ -34,7 +34,7 @@ export interface Transparency {
 }
 
 /** The platform fee treasury, as published in docs/whitepaper.md. Used until the feed answers. */
-export const TREASURY = '0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40';
+export const TREASURY = '0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3';
 /** The beta fee, in basis points (0.25%), as in docs/whitepaper.md. */
 export const BETA_RATE_BPS = 25;
 

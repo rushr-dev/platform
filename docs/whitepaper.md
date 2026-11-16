@@ -90,7 +90,7 @@ No tokens were minted or allocated outside the curve: every $RUSHR the team hold
 | Dev wallet (launch buy; 5% burned) | [0xe5ed29849043380aea7cfe62e97a23e82c55578e](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e), burn transaction [0x6b2e5c67…46cb](https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb) |
 | Team wallet (held publicly on FOMO) | [0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D) |
 | Buyback wallet | _tbd_ |
-| Platform fee treasury | `0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40` |
+| Platform fee treasury (Safe) | [0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
 
 ## 6. Buyback, burn and season prizes
 

@@ -161,7 +161,7 @@ export default async function TransparencyPage() {
               <Tile label="USDG balance" value={usdg(data?.treasury.usdg ?? null)} />
               <Tile label="Total value" value={data?.treasury.usd == null ? '—' : approx(data.treasury.usd)!} sub="at today's prices" />
             </div>
-            <p className="mt-5 text-sm text-muted">Currently a single wallet. Moving to a Safe multisig before volume grows.</p>
+            <p className="mt-5 text-sm text-muted">Held in a Safe smart-contract wallet. Its signers are listed on the explorer and in the Safe app.</p>
           </div>
 
           {!data && (
