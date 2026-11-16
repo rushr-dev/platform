@@ -1,0 +1,77 @@
+---
+// Rushr override for the splash page: a big, tight headline like rushr.trade, no giant logo.
+const { data } = Astro.locals.starlightRoute.entry;
+const { title = data.title, tagline, actions = [] } = data.hero || {};
+---
+
+<header class="rushr-hero">
+	<p class="eyebrow">Documentation · Beta · Robinhood Chain</p>
+	<h1 id="_top" data-page-title set:html={title} />
+	{tagline && <p class="tagline" set:html={tagline} />}
+	{actions.length > 0 && (
+		<div class="actions">
+			{actions.map(({ link, text, variant }) => (
+				<a href={link} class:list={['btn', variant === 'primary' ? 'primary' : 'secondary']}>{text}</a>
+			))}
+		</div>
+	)}
+</header>
+
+<style>
+	.rushr-hero {
+		text-align: center;
+		padding: clamp(2.5rem, 7vw, 5.5rem) 0 clamp(2rem, 5vw, 3.5rem);
+		max-width: 52rem;
+		margin: 0 auto;
+	}
+	.eyebrow {
+		font-family: var(--sl-font-mono);
+		font-size: 0.72rem;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--sl-color-gray-3);
+		margin: 0 0 1.25rem;
+	}
+	h1 {
+		font-size: clamp(2.6rem, 7vw, 4.6rem);
+		line-height: 1.02;
+		letter-spacing: -0.045em;
+		font-weight: 700;
+		color: var(--sl-color-white);
+		margin: 0;
+	}
+	.tagline {
+		font-size: clamp(1.05rem, 2vw, 1.2rem);
+		line-height: 1.6;
+		color: var(--sl-color-gray-3);
+		max-width: 40rem;
+		margin: 1.25rem auto 0;
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 0.75rem;
+		margin-top: 2rem;
+	}
+	.btn {
+		padding: 0.85rem 1.5rem;
+		border-radius: 10px;
+		font-weight: 600;
+		text-decoration: none;
+		font-size: 1rem;
+	}
+	.primary {
+		background: var(--rushr-lime);
+		color: #0b130b;
+		box-shadow: 0 10px 30px -10px color-mix(in srgb, var(--rushr-lime) 70%, transparent);
+	}
+	.secondary {
+		background: var(--rushr-surface);
+		color: var(--sl-color-white);
+		border: 1px solid var(--sl-color-hairline);
+	}
+	.btn:hover {
+		filter: brightness(1.04);
+	}
+</style>
