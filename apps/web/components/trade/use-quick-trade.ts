@@ -323,10 +323,17 @@ export function useQuickTrade(tokenArg: TradeToken) {
       // Honeypot / tax probe once per token, on the first buy quote (one eth_simulateV1 call).
       if (side === 'buy' && t.quote && !probe) {
         const p = await probeTokenSafety(client, { ...t.quote, request: { ...t.quote.request, trader: GUEST } }, cfg).catch(() => null);
-        if (p) {
+        if (p?.buyOk) {
           safetyRef.current = p;
           setSafety(p);
           if (p.honeypot || (p.buyTaxBps ?? 0) > 0 || (p.sellTaxBps ?? 0) > 0) return build(side, amount, silent, p);
+        } else if (trader !== GUEST && t.quote.pool.venue !== 'pons-curve') {
+          // Fail closed: if the buy→sell check could not run (RPC down, simulation error), don't let the buy
+          // through as if it had passed. Nothing is cached, so the next background refresh tries again.
+          // PONS curve tokens are exempt: the token is PONS's own factory contract and sells go back to the
+          // curve, so a token-level honeypot isn't possible there (and the probe can't build curve trades).
+          const blockers = [...t.blockers, { code: 'SAFETY_UNVERIFIED' as const, message: "Couldn't run the sell check for this token yet, so buying is paused. Retrying…" }];
+          return { ...t, ok: false, blockers };
         }
       }
       return t;

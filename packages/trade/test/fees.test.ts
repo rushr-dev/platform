@@ -57,7 +57,7 @@ describe('config', () => {
     expect(cfg.feeBps).toBe(25); // beta rate (half price); 50 after the beta
     expect([BETA_FEE_BPS, STANDARD_FEE_BPS]).toEqual([25, 50]);
     expect([cfg.referralDiscountBps, cfg.referrerShareBps]).toEqual([1_000, 2_000]);
-    expect(cfg.feeRecipient).toBe('0x447a590b70cd55Cc6B62CEaf79D4c6c09A955E40');
+    expect(cfg.feeRecipient).toBe('0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3');
     expect(() => assertSignable(cfg)).not.toThrow();
     try {
       assertSignable(resolveConfig({ feeRecipient: PLACEHOLDER_FEE_RECIPIENT }));

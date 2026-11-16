@@ -32,7 +32,7 @@ if (!LOCAL && process.env.AGENT_E2E_ALLOW_REMOTE !== '1') {
   process.exit(2);
 }
 
-const TREASURY = '0x447a590b70cd55cc6b62ceaf79d4c6c09a955e40';
+const TREASURY = '0x2ae062c61a757b66d3039154a6e965aa48cd75f3';
 const PERMIT2: Address = '0x000000000022d473030f116ddee9f6b43ac78ba3';
 const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const NATIVE_EMITTER = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
