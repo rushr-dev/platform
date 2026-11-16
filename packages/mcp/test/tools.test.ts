@@ -1,91 +1,16 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { parseEther, type Address, type Hex } from 'viem';
-import { generatePrivateKey } from 'viem/accounts';
 import { loadConfig } from '../src/config.ts';
-import type { ChainIO } from '../src/rushr.ts';
 import { createServer } from '../src/server.ts';
 import { schemas, TOOL_NAMES } from '../src/tools.ts';
 import { built } from './fixtures.ts';
-
-const TOKEN = '0x30768b5482e5dd8a2487ce0be61e01fa03af37ff';
-const KEY = generatePrivateKey();
-const API_KEY = 'rk_test_secret_value_never_returned';
-
-type Body = { amountIn: string; side: 'buy' | 'sell'; body: string; [k: string]: unknown };
-
-/** A fake Rushr API: records calls, answers like the live one. */
-function fakeApi(over: Record<string, (body: Body) => unknown> = {}) {
-  const calls: { method: string; path: string; body: Body }[] = [];
-  const routes: Record<string, (body: Body) => unknown> = {
-    'GET /transparency': () => ({ treasury: { ethUsd: 2000 } }),
-    'GET /v1/tokens/:t/safety': () => ({ safety: { riskLevel: 'low', verdict: null, flags: [], blocked: false } }),
-    'POST /v1/trade/quote': (b) => ({ quote: { ...built({}, BigInt(b.amountIn)).quote, priceImpactBps: BigInt(b.amountIn) < parseEther('0.001') ? 280 : 300 }, warnings: [], wouldBuild: true }),
-    'POST /v1/trade/build': (b) => built({}, BigInt(b.amountIn), b.side),
-    'GET /tokens/:t': () => ({ symbol: 'BULL', status: 'migrated' }),
-    'POST /v1/callouts': () => ({ callout: { id: 'c_abc123' } }),
-    'GET /v1/agents/me': () => ({ member: { id: 'm_1', handle: 'tester', kind: 'agent' } }),
-    ...over,
-  };
-  const f = (async (url: string, init: RequestInit) => {
-    const u = new URL(url);
-    if (u.hostname === 'api.dexscreener.com') return new Response(JSON.stringify({ pairs: [{ chainId: 'robinhood', baseToken: { address: '0x0bd7d308f8e1639fab988df18a8011f41eacad73' }, quoteToken: { address: '0x5fc5360d0400a0fd4f2af552add042d716f1d168' }, priceUsd: '2001', liquidity: { usd: 1e6 } }] }));
-    const method = init.method ?? 'GET';
-    const body = init.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ method, path: u.pathname, body });
-    const key = `${method} ${u.pathname.replace(/0x[0-9a-f]{40}/i, ':t')}`;
-    const h = routes[key];
-    if (!h) return new Response(JSON.stringify({ error: { code: 'not_found', message: key } }), { status: 404 });
-    const out = h(body);
-    if (out instanceof Response) return out;
-    return new Response(JSON.stringify(out));
-  }) as unknown as typeof fetch;
-  return { f, calls };
-}
-
-function fakeChain(eth = '0.02', tokens = 10n ** 21n): ChainIO & { sent: unknown[] } {
-  const sent: unknown[] = [];
-  return {
-    sent,
-    balance: async () => parseEther(eth),
-    tokenBalance: async () => tokens,
-    send: async (tx) => {
-      sent.push(tx);
-      return `0x${'ab'.repeat(32)}` as Hex;
-    },
-    confirm: async () => {},
-  };
-}
-
-const clients: Client[] = [];
-afterEach(async () => {
-  await Promise.all(clients.splice(0).map((c) => c.close()));
-});
-
-async function connect(env: Record<string, string>, api = fakeApi(), chain = fakeChain()) {
-  const dir = mkdtempSync(join(tmpdir(), 'rushr-mcp-'));
-  const walletFile = join(dir, 'wallet.json');
-  writeFileSync(walletFile, JSON.stringify({ privateKey: KEY, handle: 'tester', apiKey: API_KEY }), { mode: 0o600 });
-  const cfg = loadConfig({ RUSHR_WALLET_FILE: walletFile, RUSHR_STATE_DIR: dir, ...env });
-  const { server } = createServer(cfg, { fetch: api.f, chain });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'test', version: '0' });
-  await Promise.all([server.connect(a), client.connect(b)]);
-  clients.push(client);
-  const call = async (name: string, args: Record<string, unknown> = {}) => {
-    const r = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
-    const text = r.content[0]!.text;
-    expect(text).not.toContain(KEY.slice(2));
-    expect(text).not.toContain(API_KEY);
-    return { isError: Boolean(r.isError), text, json: (() => { try { return JSON.parse(text); } catch { return null; } })() };
-  };
-  return { client, call, api, chain };
-}
+import { clients, connect, fakeApi, fakeChain, KEY, TOKEN } from './harness.ts';
 
 describe('input schemas', () => {
   const parse = (tool: keyof typeof schemas, input: unknown) => z.object(schemas[tool]).safeParse(input).success;
@@ -171,7 +96,7 @@ describe('MCP server', () => {
   });
 
   it('refuses a buy that would touch the gas reserve', async () => {
-    const { call, chain } = await connect({}, fakeApi(), fakeChain('0.003'));
+    const { call, chain } = await connect({}, fakeApi(), fakeChain({ eth: '0.003' }));
     const r = await call('buy', { token: TOKEN, usd: 6 });
     expect(r.json.error.code).toBe('refused_gas_reserve');
     expect(chain.sent).toHaveLength(0);
