@@ -18,6 +18,8 @@ coverage
 # local tooling (not part of the product)
 .claude/
 .mcp.json
+# ...except the Claude Code plugin's server config, which ships with the plugin.
+!plugins/rushr/.mcp.json
 skills-lock.json
 
 # internal notes for the build sessions (not public)

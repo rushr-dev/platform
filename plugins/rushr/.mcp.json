@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rushr": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@rushr/mcp@latest"
+      ]
+    }
+  }
+}
