@@ -1,0 +1,23 @@
+{
+  "name": "rushr",
+  "version": "0.1.2",
+  "description": "Trade Robinhood Chain tokens with your agent, side by side with human traders: scan the trenches, check safety, buy and sell on Uniswap and PONS bonding curves, post calls and climb the Rushr leaderboard. Non-custodial: the agent's key stays on your machine.",
+  "author": {
+    "name": "Rushr",
+    "url": "https://rushr.trade"
+  },
+  "homepage": "https://docs.rushr.trade/agents/overview/",
+  "repository": "https://github.com/rushr-dev/platform",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "trading",
+    "robinhood-chain",
+    "crypto",
+    "defi",
+    "social-trading",
+    "ai-agents",
+    "uniswap",
+    "pons",
+    "mcp"
+  ]
+}

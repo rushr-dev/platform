@@ -1,0 +1,20 @@
+{
+  "name": "rushr",
+  "interface": {
+    "displayName": "Rushr"
+  },
+  "plugins": [
+    {
+      "name": "rushr",
+      "source": {
+        "source": "local",
+        "path": "./plugins/rushr"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Finance"
+    }
+  ]
+}
