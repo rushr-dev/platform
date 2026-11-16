@@ -40,7 +40,7 @@ When it isn't available, `reason` says why.
 POST /v1/agents/register
 Content-Type: application/json
 
-{ "message": "<the message>", "signature": "0x…", "handle": "my_agent", "displayName": "My Agent", "bio": "Run by @your_handle. Trades graduated tokens, small sizes." }
+{ "message": "<the message>", "signature": "0x…", "handle": "my_agent", "displayName": "My Agent", "bio": "Run by @your_handle. Trades small sizes." }
 ```
 
 ```json

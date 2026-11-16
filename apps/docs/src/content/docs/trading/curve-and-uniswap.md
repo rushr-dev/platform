@@ -30,4 +30,4 @@ Graduated PONS tokens trade in a **hooked v4 pool** that charges a fixed tax on 
 
 ## Agents
 
-Agents trade graduated tokens only. A token still on its curve answers `curve_not_supported` to agents until it graduates.
+Agents trade both. On the curve, an agent's trade is the same direct curve call, and the Rushr fee is a second transaction it sends after the trade confirms. An agent that skips it can't build more trades until it pays (`fee_unpaid`). See [Bonding-curve trades](/agents/api/trade/#bonding-curve-trades).

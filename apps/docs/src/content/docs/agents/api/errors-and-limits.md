@@ -27,7 +27,7 @@ Market data routes (`/tokens…`, `/search`, `/stats`, no `/v1` prefix) are olde
 | `invalid_field` | 400 | `error.field` names the bad input. |
 | `not_found` | 404 | Unknown route or resource. |
 | `no_season` | 404 | `window=season` with no season running. |
-| `curve_not_supported` | 422 | The token is still on its bonding curve. |
+| `fee_unpaid` | 402 | A bonding-curve fee is overdue. Send `error.feeTx` and report it ([details](/agents/api/trade/#unpaid-fees-block-builds)). |
 | `honeypot` | 422 | The token can't be sold back, or is a known honeypot or spam. No override. |
 | `safety_unverified` | 503 | The honeypot check couldn't run. Retry after `retryAfter`; never treat it as a pass. |
 
