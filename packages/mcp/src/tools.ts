@@ -14,7 +14,7 @@ const usd = z.number().positive().max(100_000).describe('USD value to spend. Cap
 
 export const schemas = {
   scan: {
-    column: z.enum(['new', 'almost', 'migrated']).default('migrated').describe('Trenches column: new launches, almost bonded, or migrated (graduated, the only ones agents can trade).'),
+    column: z.enum(['new', 'almost', 'migrated']).default('migrated').describe('Trenches column: new launches, almost bonded, or migrated (graduated to Uniswap).'),
     limit: z.number().int().min(1).max(50).default(15),
   },
   token: { address: address.describe('Token contract address.') },
@@ -47,7 +47,7 @@ export const schemas = {
     amount: z.string().regex(/^\d+$/).optional().describe('Sell: exact token base units (or use percent).'),
   },
   buy: {
-    token: address.describe('Graduated token to buy with ETH.'),
+    token: address.describe('Token to buy with ETH: graduated (Uniswap) or a PONS token still on its bonding curve.'),
     usd: usd.optional(),
     amountEth: ethAmount.optional().describe('ETH to spend instead of usd.'),
   },
@@ -82,7 +82,7 @@ export function registerTools(server: McpServer, r: Rushr) {
   const capsLine = `Caps: $${cfg.maxTradeUsd} per buy, $${cfg.dailyUsd} per 24h, size impact <= ${cfg.maxSizeImpactBps} bps, total impact <= ${cfg.maxTotalImpactBps} bps, ${cfg.gasReserveEth} ETH kept for gas.${cfg.dryRun ? ' DRY RUN: nothing is signed or sent.' : ''}`;
   const read = { readOnlyHint: true, openWorldHint: true } as const;
 
-  server.registerTool('scan', { title: 'Scan the trenches', description: 'List tokens in a Rushr trenches column, with price, liquidity, 24h volume, holders, risk and any fixed buy/sell tax. Only `migrated` (graduated) tokens can be traded by agents.', inputSchema: schemas.scan, annotations: read }, (a) => run(() => r.scan(a)));
+  server.registerTool('scan', { title: 'Scan the trenches', description: 'List tokens in a Rushr trenches column, with price, liquidity, 24h volume, holders, risk and any fixed buy/sell tax. `tradeVia` says where buy and sell trade it: `uniswap` (graduated), `pons-curve` (a PONS token on its bonding curve) or null (not tradable through Rushr yet).', inputSchema: schemas.scan, annotations: read }, (a) => run(() => r.scan(a)));
 
   server.registerTool('token', { title: 'Token detail and safety', description: "One token's market data plus Rushr's safety verdict (riskLevel, flags, blocked). Check this before buying.", inputSchema: schemas.token, annotations: read }, (a) => run(() => r.token(a.address as `0x${string}`)));
 
@@ -106,13 +106,13 @@ export function registerTools(server: McpServer, r: Rushr) {
 
   server.registerTool(
     'buy',
-    { title: 'Buy a token with ETH', description: `Buy a graduated token with ETH: Rushr builds an unsigned transaction, it is simulated and checked (router, fee <= 25 bps, amounts), then signed on this machine and sent. Refuses blocked tokens and anything over the caps; the API's own refusals (honeypot, unsafe_token, ...) pass straight through. Returns the tx hash and an explorer link. ${capsLine}`, inputSchema: schemas.buy, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
+    { title: 'Buy a token with ETH', description: `Buy a token with ETH: graduated tokens on Uniswap, or PONS tokens on their bonding curve. Rushr builds an unsigned transaction; it is simulated and checked (contract, fee <= 25 bps, amounts), then signed on this machine and sent. On a curve, Rushr's fee is a second transfer to the Rushr treasury, sent after the trade confirms and counted toward the caps; both hashes are returned. An overdue curve fee (fee_unpaid) is paid automatically up to 0.005 ETH. Refuses blocked tokens and anything over the caps; the API's own refusals (honeypot, unsafe_token, snipe_tax_active, ...) pass straight through. ${capsLine}`, inputSchema: schemas.buy, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
     (a) => run(() => r.buy(a as Parameters<Rushr['buy']>[0])),
   );
 
   server.registerTool(
     'sell',
-    { title: 'Sell a token for ETH', description: `Sell some or all of a token back to ETH. Sends the approvals the build asks for (token to Permit2, Permit2 to the router) first. Sells are never blocked on impact or risk. Returns the tx hashes and explorer links.${cfg.dryRun ? ' DRY RUN: nothing is signed or sent.' : ''}`, inputSchema: schemas.sell, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
+    { title: 'Sell a token for ETH', description: `Sell some or all of a token back to ETH, on Uniswap or a PONS bonding curve. Sends the approvals the build asks for first (token to Permit2 and Permit2 to the router, or token to its curve). On a curve, Rushr's fee follows as a second transfer after the trade confirms. Sells are never blocked on impact or risk. Returns the tx hashes and explorer links.${cfg.dryRun ? ' DRY RUN: nothing is signed or sent.' : ''}`, inputSchema: schemas.sell, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
     (a) => run(() => r.sell(a as Parameters<Rushr['sell']>[0])),
   );
 

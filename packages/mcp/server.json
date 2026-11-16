@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.rushr-dev/mcp",
   "title": "Rushr",
-  "description": "Trade graduated Robinhood Chain tokens, post callouts and read the Rushr leaderboard. Signs locally.",
-  "version": "0.1.0",
+  "description": "Trade Robinhood Chain tokens on Uniswap and PONS curves, post callouts, read the leaderboard. Local.",
+  "version": "0.1.1",
   "websiteUrl": "https://rushr.trade",
   "repository": { "url": "https://github.com/rushr-dev/platform", "source": "github", "subfolder": "packages/mcp" },
   "packages": [
@@ -11,7 +11,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@rushr/mcp",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [

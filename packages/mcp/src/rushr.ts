@@ -1,17 +1,32 @@
-import { createPublicClient, createWalletClient, erc20Abi, formatEther, http, parseEther, type Address, type Hex } from 'viem';
+import { createPublicClient, createWalletClient, erc20Abi, formatEther, http, parseEther, zeroAddress, type Address, type Hex } from 'viem';
+import { ponsFactoryAbi } from '@rushr/trade/abis';
+import { TRADE_ADDRESSES } from '@rushr/trade/addresses';
 import { robinhoodChain } from '@rushr/trade/chain';
 import { ApiError, type Api } from './api.ts';
 import type { Config } from './config.ts';
-import { checkBuyCaps, checkImpact, checkSafety, GuardError, probeAmount, splitImpact, vetBuild, type Built, type ImpactSplit, type Quote, type Safety, type SpendLedger } from './guards.ts';
+import { checkBuyCaps, checkFeeUnpaid, checkImpact, checkSafety, GuardError, isCurve, probeAmount, splitImpact, vetBuild, type Built, type FeeUnpaid, type ImpactSplit, type Quote, type Safety, type SpendLedger, type UnsignedTx } from './guards.ts';
 import { usdToWei, weiToUsd } from './price.ts';
 import type { AgentWallet } from './wallet.ts';
+
+export interface SendTx {
+  to: Address;
+  data: Hex;
+  value: bigint;
+  gas?: bigint;
+  /** Pinned nonce: fee retries reuse it, so a retry can never pay twice. */
+  nonce?: number;
+}
 
 /** The chain operations the server needs. Real ones use viem; tests pass fakes. */
 export interface ChainIO {
   balance(address: Address): Promise<bigint>;
   tokenBalance(token: Address, owner: Address): Promise<bigint>;
+  /** The token's PONS curve from PONS's factory, or null if PONS didn't launch it. */
+  ponsCurve(token: Address): Promise<Address | null>;
+  /** The wallet's next nonce, pending transactions included. */
+  nonce(address: Address): Promise<number>;
   /** Signs locally with the agent's key and broadcasts. Never called in dry run. */
-  send(tx: { to: Address; data: Hex; value: bigint }): Promise<Hex>;
+  send(tx: SendTx): Promise<Hex>;
   /** Waits for the receipt; throws if it reverted. */
   confirm(hash: Hex): Promise<void>;
 }
@@ -23,9 +38,14 @@ export function viemChain(cfg: Config, wallet: AgentWallet | null): ChainIO {
   return {
     balance: (address) => pub.getBalance({ address }),
     tokenBalance: (token, owner) => pub.readContract({ address: token, abi: erc20Abi, functionName: 'balanceOf', args: [owner] }),
+    async ponsCurve(token) {
+      const [, curve] = await pub.readContract({ address: TRADE_ADDRESSES.pons.factory, abi: ponsFactoryAbi, functionName: 'getLaunchedToken', args: [token] });
+      return curve && curve !== zeroAddress ? curve : null;
+    },
+    nonce: (address) => pub.getTransactionCount({ address, blockTag: 'pending' }),
     async send(tx) {
       if (!signer) throw new GuardError('no_wallet', 'no wallet configured');
-      return signer.sendTransaction({ to: tx.to, data: tx.data, value: tx.value });
+      return signer.sendTransaction({ to: tx.to, data: tx.data, value: tx.value, gas: tx.gas, nonce: tx.nonce });
     },
     async confirm(hash) {
       const r = await pub.waitForTransactionReceipt({ hash, timeout: 120_000 });
@@ -42,7 +62,13 @@ export interface Deps {
   ethUsd: () => Promise<number>;
   ledger: SpendLedger;
   now?: () => number;
+  /** Waits between retries (tests pass a no-op). */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** Fee transfer: tries to send it this many times (same nonce), then reports it this many times. */
+const FEE_SEND_ATTEMPTS = 3;
+const FEE_REPORT_ATTEMPTS = 5;
 
 /** Builds the callout text: the author's words plus a disclosure that an AI agent posted it and whether it holds the token. */
 export function withDisclosure(body: string, symbol: string, holds: boolean): string {
@@ -56,6 +82,21 @@ interface QuoteResponse {
   safety?: { riskLevel?: string; blocked?: boolean; verdict?: string | null } | null;
   warnings: string[];
   wouldBuild: boolean;
+  /** Curve quotes: Rushr's fee in wei, paid as a follow-up transfer after the trade. */
+  followUpFee?: string | null;
+  deadlineSeconds?: number | null;
+}
+
+/** What happened to a curve trade's fee transfer. Never silent: anything but `paid` says what to do. */
+export interface FeeOutcome {
+  status: 'paid' | 'paid_unreported' | 'unpaid';
+  amountWei: string;
+  amountEth: string;
+  hash?: string;
+  explorer?: string;
+  attempts: number;
+  error?: string;
+  action?: string;
 }
 
 type BuyAmount = { usd?: number; amountEth?: string };
@@ -63,6 +104,9 @@ type SellAmount = { percent?: number; amount?: string };
 
 /** Everything the tools do, behind the guards. Each method returns a compact, JSON-serialisable object. */
 export class Rushr {
+  /** Fee transfers this process paid but couldn't report yet: reported before any new fee is paid. */
+  private readonly unreported = new Set<Hex>();
+
   constructor(private readonly d: Deps) {}
 
   get cfg() {
@@ -121,7 +165,7 @@ export class Rushr {
     const key = w.apiKey();
     const me = key ? await this.d.api<{ member?: { handle: string; id: string; kind: string; displayName?: string } }>('GET', '/v1/agents/me').catch(() => null) : null;
     const h = me?.member?.handle ?? handle;
-    const [holdings, pnl, rank, callouts] = await Promise.all([
+    const [holdings, pnl, rank, callouts, fees] = await Promise.all([
       this.d.api<{ holdings?: Holding[] }>('GET', `/wallets/${w.address.toLowerCase()}/holdings`, { auth: false })
         .then((r) => (r.holdings ?? []).map((x) => ({ token: x.token, symbol: x.symbol, amount: x.amount_ui, valueUsd: num2(x.value_usd), costUsd: num2(x.cost_basis_usd), unrealizedUsd: num2(x.unrealized_usd), realizedUsd: num2(x.realized_usd) })))
         .catch((e) => ({ error: errText(e) })),
@@ -130,6 +174,12 @@ export class Rushr {
         .catch((e) => ({ error: errText(e) })),
       h ? this.d.api<unknown>('GET', `/v1/members/${h}/rank`).catch((e) => ({ error: errText(e) })) : null,
       h ? this.d.api<{ items?: { id: string; createdAt: string; token?: { symbol?: string; address?: string }; stance: string; body: string }[] }>('GET', `/v1/members/${h}/callouts`, { query: { limit: 10 } }).then((r) => (r.items ?? []).map((c) => ({ id: c.id, at: c.createdAt, token: c.token?.symbol ?? c.token?.address, stance: c.stance, body: c.body.slice(0, 140) }))).catch((e) => ({ error: errText(e) })) : null,
+      // Rushr fees owed on PONS curve trades (paid as separate transfers).
+      key
+        ? this.d.api<{ fees: { owed: string; paid: string; overdue: string; outstanding: string; graceMinutes: number; trades?: unknown[] } }>('GET', '/v1/agents/me/fees')
+            .then(({ fees: f }) => ({ owedEth: formatEther(BigInt(f.owed)), paidEth: formatEther(BigInt(f.paid)), outstandingEth: formatEther(BigInt(f.outstanding)), overdueEth: formatEther(BigInt(f.overdue)), graceMinutes: f.graceMinutes, buildsBlocked: BigInt(f.overdue) > 0n, trades: f.trades?.length ?? 0 }))
+            .catch((e) => (e instanceof ApiError && e.status === 404 ? null : { error: errText(e) }))
+        : null,
     ]);
     const free = bal > this.d.cfg.gasReserveWei ? bal - this.d.cfg.gasReserveWei : 0n;
     const spent = this.d.ledger.spent24h(this.now());
@@ -144,6 +194,8 @@ export class Rushr {
       pnl,
       rank,
       callouts,
+      curveFees: fees,
+      ...(this.unreported.size ? { unreportedFeePayments: [...this.unreported] } : {}),
     };
   }
 
@@ -205,6 +257,8 @@ export class Rushr {
       ethUsd = a.ethUsd;
     } else amountIn = (await this.sellAmount(token, i)).amount;
     const { q, impact } = await this.quoteWithImpact(token, i.side, amountIn);
+    // Curve trades pay Rushr's fee as a separate transfer after the trade (on top of a buy).
+    const curveFee = q.followUpFee ? BigInt(q.followUpFee) : 0n;
     // Would buy() accept it? Report every guard instead of throwing, so the model can adjust.
     const refusals: string[] = [];
     if (i.side === 'buy') {
@@ -217,7 +271,7 @@ export class Rushr {
       try {
         const bal = await this.d.chain.balance(this.wallet().address);
         const free = bal > this.d.cfg.gasReserveWei ? bal - this.d.cfg.gasReserveWei : 0n;
-        refusals.push(...checkBuyCaps({ usd: usd!, amountWei: amountIn, maxTradeUsd: this.d.cfg.maxTradeUsd, dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free, dryRun: true }));
+        refusals.push(...checkBuyCaps({ usd: usd! + weiToUsd(curveFee, ethUsd!), amountWei: amountIn + curveFee, maxTradeUsd: this.d.cfg.maxTradeUsd, dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free, dryRun: true }));
       } catch (e) {
         refusals.push(errText(e));
       }
@@ -232,6 +286,9 @@ export class Rushr {
       fee: { bps: q.quote.fee.feeBps, amount: q.quote.fee.feeAmount },
       impact: impact ?? { totalBps: q.quote.priceImpactBps },
       venue: q.quote.pool.venue,
+      ...(q.followUpFee
+        ? { curveFee: { amountWei: q.followUpFee, amountEth: formatEther(curveFee), paidAs: i.side === 'buy' ? 'a separate transfer to the Rushr treasury after the trade, on top of amountIn' : 'a separate transfer to the Rushr treasury after the trade, out of the ETH received' } }
+        : {}),
       safety: q.safety ? { riskLevel: q.safety.riskLevel, blocked: q.safety.blocked } : null,
       warnings: q.warnings,
       wouldTrade: i.side === 'sell' ? true : refusals.length === 0,
@@ -249,44 +306,178 @@ export class Rushr {
     const warnings = checkBuyCaps({ usd, amountWei: wei, maxTradeUsd: this.d.cfg.maxTradeUsd, dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free, dryRun: this.d.cfg.dryRun });
     const { safety } = await this.d.api<{ safety: Safety }>('GET', `/v1/tokens/${token}/safety`);
     checkSafety(safety);
-    const { q, impact } = await this.quoteWithImpact(token, 'buy', wei);
-    if (!q.wouldBuild) throw new GuardError('refused_would_not_build', `the API would refuse this build: ${q.warnings.join('; ') || 'risk or price impact'}`);
-    checkImpact(impact!, this.d.cfg);
-    // Never passes acceptRisk or acceptImpact: the API's own refusals (unsafe_token, honeypot, ...) pass straight through.
-    const b = await this.d.api<Built>('POST', '/v1/trade/build', { body: { ...this.body(token, 'buy', wei), simulate: true } });
-    vetBuild(b, 'buy', token, wei);
-    const summary = { token, side: 'buy' as const, amountInEth: formatEther(wei), usd: round2(usd), expectedOut: b.quote.amountOut, minOut: b.quote.minAmountOut, feeBps: b.quote.fee.feeBps, impact, venue: b.quote.pool.venue, riskLevel: safety.riskLevel };
-    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: [...warnings, ...b.warnings], note: 'RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.' };
+    const ethUsd = await this.d.ethUsd();
+    // A token that graduates between the quote and the build answers curve_graduated: quote it again
+    // (now on Uniswap, with its own impact) and build once more.
+    let feePaidFirst: FeeOutcome | null = null;
+    let attempt = 0;
+    let q: QuoteResponse, impact: ImpactSplit | null, b: Built;
+    for (;;) {
+      ({ q, impact } = await this.quoteWithImpact(token, 'buy', wei));
+      if (!q.wouldBuild) throw new GuardError('refused_would_not_build', `the API would refuse this build: ${q.warnings.join('; ') || 'risk or price impact'}`);
+      checkImpact(impact!, this.d.cfg);
+      try {
+        // Never passes acceptRisk or acceptImpact: the API's own refusals (unsafe_token, honeypot, ...) pass straight through.
+        const r = await this.build(token, 'buy', wei);
+        b = r.b;
+        feePaidFirst ??= r.feePaidFirst;
+        break;
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'curve_graduated' && attempt++ === 0) continue;
+        throw e;
+      }
+    }
+    const curveOnChain = isCurve(b.quote) ? await this.d.chain.ponsCurve(token).catch(() => null) : undefined;
+    vetBuild(b, 'buy', token, wei, { trader: w.address, curveOnChain });
+    // A curve buy pays Rushr's fee on top of the buy: check the caps and balance on the total.
+    const fee = b.followUp ? BigInt(b.followUp.amount) : 0n;
+    if (fee > 0n) warnings.push(...checkBuyCaps({ usd: usd + weiToUsd(fee, ethUsd), amountWei: wei + fee, maxTradeUsd: this.d.cfg.maxTradeUsd, dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free, dryRun: this.d.cfg.dryRun }));
+    const summary = { token, side: 'buy' as const, amountInEth: formatEther(wei), usd: round2(usd), expectedOut: b.quote.amountOut, minOut: b.quote.minAmountOut, feeBps: b.quote.fee.feeBps, impact, venue: b.quote.pool.venue, riskLevel: safety.riskLevel, ...this.curveFeeView(b) };
+    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: [...warnings, ...b.warnings], note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${b.followUp ? ' Live, the fee transfer would follow the trade.' : ''}` };
     const sent = await this.sendBuilt(b);
     this.d.ledger.record(usd, sent.hash, this.now());
-    return { status: 'confirmed', ...summary, ...sent, warnings: b.warnings };
+    return this.result(summary, sent, b, feePaidFirst, ethUsd);
   }
 
   async sell(i: { token: Address } & SellAmount) {
     const token = i.token.toLowerCase() as Address;
+    const w = this.wallet();
     this.key();
     const { amount, held } = await this.sellAmount(token, i);
     // Sells are never blocked on impact or risk (llms.txt): getting out must always be possible.
-    const b = await this.d.api<Built>('POST', '/v1/trade/build', { body: { ...this.body(token, 'sell', amount), simulate: true } });
-    vetBuild(b, 'sell', token, amount);
-    const summary = { token, side: 'sell' as const, amount: amount.toString(), heldBefore: held.toString(), expectedEthOut: formatEther(BigInt(b.quote.amountOut)), minEthOut: formatEther(BigInt(b.quote.minAmountOut)), feeBps: b.quote.fee.feeBps, impactBps: b.quote.priceImpactBps, venue: b.quote.pool.venue, approvalsNeeded: b.approvals.map((a) => a.kind) };
-    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: b.warnings, note: 'RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.' };
+    let r: { b: Built; feePaidFirst: FeeOutcome | null };
+    try {
+      r = await this.build(token, 'sell', amount);
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === 'curve_graduated')) throw e;
+      r = await this.build(token, 'sell', amount);
+    }
+    const { b, feePaidFirst } = r;
+    const curveOnChain = isCurve(b.quote) ? await this.d.chain.ponsCurve(token).catch(() => null) : undefined;
+    vetBuild(b, 'sell', token, amount, { trader: w.address, curveOnChain });
+    const summary = { token, side: 'sell' as const, amount: amount.toString(), heldBefore: held.toString(), expectedEthOut: formatEther(BigInt(b.quote.amountOut)), minEthOut: formatEther(BigInt(b.quote.minAmountOut)), feeBps: b.quote.fee.feeBps, impactBps: b.quote.priceImpactBps, venue: b.quote.pool.venue, approvalsNeeded: b.approvals.map((a) => a.kind), ...this.curveFeeView(b) };
+    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: b.warnings, note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${b.followUp ? ' Live, the fee transfer would follow the trade.' : ''}` };
     const sent = await this.sendBuilt(b);
-    return { status: 'confirmed', ...summary, ...sent, warnings: b.warnings };
+    return this.result(summary, sent, b, feePaidFirst, await this.d.ethUsd().catch(() => null));
   }
 
-  /** Approvals in order, then the swap. Each confirmed before the next. Refuses a build too close to its deadline. */
+  /** The curve fee as the tools show it (nothing for Uniswap builds, whose fee is inside the swap). */
+  private curveFeeView(b: Built) {
+    if (!b.followUp) return {};
+    return { curveFee: { amountWei: b.followUp.amount, amountEth: formatEther(BigInt(b.followUp.amount)), paidAs: 'a separate transfer to the Rushr treasury, sent after the trade confirms', to: b.followUp.tx.to } };
+  }
+
+  /** The tool result after sending: both hashes, and a status that never hides an unpaid fee. */
+  private result(summary: Record<string, unknown>, sent: Awaited<ReturnType<Rushr['sendBuilt']>>, b: Built, feePaidFirst: FeeOutcome | null, ethUsd: number | null) {
+    if (sent.fee && sent.fee.status !== 'unpaid' && ethUsd) this.d.ledger.record(weiToUsd(BigInt(sent.fee.amountWei), ethUsd), sent.fee.hash, this.now());
+    const status = !sent.fee || sent.fee.status === 'paid' ? 'confirmed' : sent.fee.status === 'paid_unreported' ? 'confirmed_fee_unreported' : 'confirmed_fee_unpaid';
+    return { status, ...summary, hash: sent.hash, explorer: sent.explorer, approvals: sent.approvals, ...(sent.fee ? { fee: sent.fee } : {}), ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings };
+  }
+
+  /**
+   * POST /v1/trade/build (simulated). On 402 `fee_unpaid` (an overdue curve fee blocks builds), pays the
+   * overdue transfer when checkFeeUnpaid allows it, reports it, and builds once more. In dry run it
+   * refuses instead: paying is a real transaction.
+   */
+  private async build(token: Address, side: 'buy' | 'sell', amountIn: bigint): Promise<{ b: Built; feePaidFirst: FeeOutcome | null }> {
+    const body = { ...this.body(token, side, amountIn), simulate: true };
+    try {
+      return { b: await this.d.api<Built>('POST', '/v1/trade/build', { body }), feePaidFirst: null };
+    } catch (e) {
+      if (!(e instanceof ApiError && e.code === 'fee_unpaid')) throw e;
+      const info = ((e.body as { error?: FeeUnpaid } | null)?.error ?? {}) as FeeUnpaid;
+      // A fee this session paid but couldn't report: report it now instead of paying a second time.
+      let reported = false;
+      for (const h of [...this.unreported]) {
+        const ok = await this.d.api('POST', '/v1/agents/me/fees', { body: { txHash: h } }).then(
+          () => true,
+          (err) => err instanceof ApiError && err.code === 'already_reported',
+        );
+        if (ok) {
+          this.unreported.delete(h);
+          reported = true;
+        }
+      }
+      if (reported && !this.unreported.size) return { b: await this.d.api<Built>('POST', '/v1/trade/build', { body }), feePaidFirst: null };
+      if (this.unreported.size) throw new GuardError('fee_unpaid', `Builds are blocked by an overdue Rushr fee, and a fee this server already paid (${[...this.unreported].join(', ')}) isn't reported yet. Not paying again; report it with POST /v1/agents/me/fees and retry.`, { unreported: [...this.unreported] });
+      if (this.d.cfg.dryRun) throw new GuardError('fee_unpaid', `This wallet owes ${info.owed ?? '?'} wei of overdue Rushr curve fees, so builds are blocked. RUSHR_DRY_RUN=1, so it isn't paid; live, the server pays it (up to 0.005 ETH) and retries.`, { owed: info.owed });
+      const ethUsd = await this.d.ethUsd();
+      const bal = await this.d.chain.balance(this.wallet().address);
+      const free = bal > this.d.cfg.gasReserveWei ? bal - this.d.cfg.gasReserveWei : 0n;
+      const owed = checkFeeUnpaid(info, { feeUsd: weiToUsd(BigInt(info.owed ?? '0'), ethUsd), dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free });
+      const paid = await this.payFee(info.feeTx!, owed);
+      if (paid.status !== 'unpaid') this.d.ledger.record(weiToUsd(owed, ethUsd), paid.hash, this.now());
+      if (paid.status !== 'paid') throw new GuardError('fee_unpaid', `Tried to pay the overdue Rushr fee: ${paid.error ?? paid.status}. ${paid.action ?? ''}`.trim(), { fee: paid });
+      return { b: await this.d.api<Built>('POST', '/v1/trade/build', { body }), feePaidFirst: paid };
+    }
+  }
+
+  /**
+   * Approvals in order, then the trade, each confirmed before the next. Uniswap builds are refused
+   * within 30 s of their deadline; curve builds have none. A curve build's fee transfer follows the
+   * confirmed trade (payFee), and its outcome is always returned.
+   */
   private async sendBuilt(b: Built) {
-    if (this.now() / 1000 > Number(b.deadline) - 30) throw new GuardError('refused_deadline', 'build is too close to its deadline; quote again');
+    if (b.deadline !== null && this.now() / 1000 > Number(b.deadline) - 30) throw new GuardError('refused_deadline', 'build is too close to its deadline; quote again');
     const approvals: { kind: string; hash: string; explorer: string }[] = [];
     for (const a of b.approvals) {
-      const h = await this.d.chain.send({ to: a.tx.to, data: a.tx.data, value: BigInt(a.tx.value) });
+      const h = await this.d.chain.send(toSend(a.tx));
       await this.d.chain.confirm(h);
       approvals.push({ kind: a.kind, hash: h, explorer: this.explorerTx(h) });
     }
-    const hash = await this.d.chain.send({ to: b.tx.to, data: b.tx.data, value: BigInt(b.tx.value) });
+    const hash = await this.d.chain.send(toSend(b.tx));
     await this.d.chain.confirm(hash);
-    return { hash, explorer: this.explorerTx(hash), approvals };
+    const fee = b.followUp ? await this.payFee(b.followUp.tx, BigInt(b.followUp.amount)) : null;
+    return { hash, explorer: this.explorerTx(hash), approvals, fee };
+  }
+
+  /**
+   * Sends a fee transfer and reports it (POST /v1/agents/me/fees). Every attempt uses the same nonce, so a
+   * retry after an attempt that did go through is rejected by the chain instead of paying twice.
+   */
+  private async payFee(tx: UnsignedTx, amount: bigint): Promise<FeeOutcome> {
+    const base = { amountWei: amount.toString(), amountEth: formatEther(amount) };
+    const owe = `Rushr's fee of ${formatEther(amount)} ETH on this curve trade is still owed. From 10 minutes after the trade, builds are refused until it's paid; the next buy or sell pays it automatically (up to 0.005 ETH), or send it to ${tx.to} and report it with POST /v1/agents/me/fees.`;
+    const sleep = this.d.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    let nonce: number;
+    try {
+      nonce = await this.d.chain.nonce(this.wallet().address);
+    } catch (e) {
+      return { status: 'unpaid', ...base, attempts: 0, error: errText(e), action: owe };
+    }
+    let hash: Hex | null = null;
+    let attempts = 0;
+    let lastError = '';
+    while (attempts < FEE_SEND_ATTEMPTS && !hash) {
+      attempts++;
+      try {
+        const h = await this.d.chain.send({ ...toSend(tx), value: amount, nonce });
+        await this.d.chain.confirm(h);
+        hash = h;
+      } catch (e) {
+        lastError = errText(e);
+        // A transfer that was mined and reverted used the nonce: the next try needs a new one.
+        if (e instanceof GuardError && e.code === 'tx_reverted') nonce = await this.d.chain.nonce(this.wallet().address).catch(() => nonce);
+        // The nonce is taken: an earlier attempt may have gone through. Don't send again; my_status shows what's owed.
+        else if (/nonce too low|already known|replacement/i.test(lastError)) return { status: 'unpaid', ...base, attempts, error: lastError, action: `An earlier attempt may have gone through. Check my_status (fees) before paying again. ${owe}` };
+        if (attempts < FEE_SEND_ATTEMPTS) await sleep(3_000 * attempts);
+      }
+    }
+    if (!hash) return { status: 'unpaid', ...base, attempts, error: lastError, action: owe };
+    const sent = { ...base, hash, explorer: this.explorerTx(hash), attempts };
+    for (let r = 0; r < FEE_REPORT_ATTEMPTS; r++) {
+      try {
+        await this.d.api('POST', '/v1/agents/me/fees', { body: { txHash: hash } });
+        return { status: 'paid', ...sent };
+      } catch (e) {
+        if (e instanceof ApiError && e.code === 'already_reported') return { status: 'paid', ...sent };
+        lastError = errText(e);
+        if (!(e instanceof ApiError && (e.code === 'tx_not_found' || e.code === 'rate_limited' || e.status >= 500))) break;
+        await sleep(5_000);
+      }
+    }
+    this.unreported.add(hash);
+    return { status: 'paid_unreported', ...sent, error: lastError, action: `The fee was paid (${hash}) but not reported yet. Report it with POST /v1/agents/me/fees { "txHash": "${hash}" }, or the next build will ask for it again.` };
   }
 
   // ------------------------------------------------------------------ social
@@ -313,11 +504,10 @@ export class Rushr {
   // ------------------------------------------------------------------ reads (no wallet needed)
 
   async scan(i: { column: 'new' | 'almost' | 'migrated'; limit: number }) {
-    const r = await this.d.api<{ tokens: { address: string; symbol: string; name?: string; price_usd?: number | null; market_cap_usd?: number | null; liquidity_usd?: number | null; volume_24h_usd?: number | null; holders?: number | null; risk?: string | null; buy_tax_bps?: number | null; sell_tax_bps?: number | null }[] }>('GET', `/tokens`, { auth: false, query: { column: i.column } });
+    const r = await this.d.api<{ tokens: { address: string; symbol: string; name?: string; status?: string; launchpad?: string | null; price_usd?: number | null; market_cap_usd?: number | null; liquidity_usd?: number | null; volume_24h_usd?: number | null; holders?: number | null; risk?: string | null; buy_tax_bps?: number | null; sell_tax_bps?: number | null }[] }>('GET', `/tokens`, { auth: false, query: { column: i.column } });
     return {
       column: i.column,
-      tradable: i.column === 'migrated',
-      tokens: r.tokens.slice(0, i.limit).map((t) => ({ address: t.address, symbol: t.symbol, priceUsd: t.price_usd ?? null, mcapUsd: t.market_cap_usd ?? null, liquidityUsd: t.liquidity_usd ?? null, vol24hUsd: t.volume_24h_usd ?? null, holders: t.holders ?? null, risk: t.risk ?? null, buyTaxBps: t.buy_tax_bps ?? null, sellTaxBps: t.sell_tax_bps ?? null })),
+      tokens: r.tokens.slice(0, i.limit).map((t) => ({ address: t.address, symbol: t.symbol, tradeVia: tradeVia(t.status, t.launchpad), priceUsd: t.price_usd ?? null, mcapUsd: t.market_cap_usd ?? null, liquidityUsd: t.liquidity_usd ?? null, vol24hUsd: t.volume_24h_usd ?? null, holders: t.holders ?? null, risk: t.risk ?? null, buyTaxBps: t.buy_tax_bps ?? null, sellTaxBps: t.sell_tax_bps ?? null })),
     };
   }
 
@@ -330,7 +520,8 @@ export class Rushr {
       symbol: pick('symbol'),
       name: pick('name'),
       status: pick('status'),
-      tradable: detail.status === undefined ? null : detail.status === 'migrated',
+      launchpad: pick('launchpad'),
+      tradeVia: tradeVia(detail.status as string | undefined, detail.launchpad as string | undefined),
       priceUsd: pick('price_usd'),
       mcapUsd: pick('market_cap_usd'),
       liquidityUsd: pick('liquidity_usd'),
@@ -366,6 +557,19 @@ export class Rushr {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Where an agent can trade a token: graduated tokens on Uniswap, PONS tokens still on their bonding
+ * curve on the curve (Rushr's fee then follows as a separate transfer). Other launchpads' pre-graduation
+ * tokens aren't tradable through the API (null).
+ */
+export function tradeVia(status: string | null | undefined, launchpad: string | null | undefined): 'uniswap' | 'pons-curve' | null {
+  if (status === 'migrated') return 'uniswap';
+  if (launchpad === 'pons') return 'pons-curve';
+  return null;
+}
+
+const toSend = (tx: UnsignedTx): SendTx => ({ to: tx.to, data: tx.data || '0x', value: BigInt(tx.value), gas: tx.gas ? BigInt(tx.gas) : undefined });
 const num2 = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? round2(v) : null);
 
 interface Holding {
