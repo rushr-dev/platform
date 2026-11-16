@@ -104,4 +104,12 @@ describe('llms.txt', () => {
     const { LLMS_TXT } = await import('../src/llms-txt');
     expect(LLMS_TXT).toBe(readFileSync(new URL('../llms.txt', import.meta.url), 'utf8'));
   });
+
+  it('src/skill-md.ts is generated from the current skill.md, which starts with Agent Skills frontmatter', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { SKILL_MD } = await import('../src/skill-md');
+    expect(SKILL_MD).toBe(readFileSync(new URL('../skill.md', import.meta.url), 'utf8'));
+    const front = /^---\nname: rushr\ndescription: (.+)\n---\n/.exec(SKILL_MD);
+    expect(front?.[1]?.length ?? 0).toBeGreaterThan(40);
+  });
 });
