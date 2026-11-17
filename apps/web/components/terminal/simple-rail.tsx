@@ -109,7 +109,7 @@ function Fig({ k, v }: { k: string; v: string }) {
 /**
  * Post your call on this token (POST /v1/callouts), visible to everyone; your most recent buy of
  * the token is linked by the server. The stance starts from your last trade here, and right after
- * a buy the box offers to share the call. Posting needs a registered member (sign-up is invite-only).
+ * a buy the box offers to share the call. Posting needs a registered member.
  */
 export function ThesisBox({ t, position }: { t: TokenDetail; position: LivePosition }) {
   const session = useAuth();

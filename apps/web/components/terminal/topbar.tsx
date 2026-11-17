@@ -48,6 +48,32 @@ export function TopBar() {
   );
 }
 
+/**
+ * The same four sections as a tab row under the top bar on phones, where the bar has no room for them. A row
+ * rather than a bottom tab bar: the token page already pins its trade bar to the bottom of the screen.
+ */
+export function MobileNav() {
+  const path = usePathname();
+  return (
+    <nav aria-label="Sections" className="grid shrink-0 grid-cols-4 border-b border-white/[0.06] bg-bg/90 text-[13px] backdrop-blur-md md:hidden">
+      {NAV.map((n) => {
+        const on = path.startsWith(n.href);
+        return (
+          <Link
+            key={n.label}
+            href={n.href}
+            aria-current={on ? 'page' : undefined}
+            className={`relative py-2.5 text-center transition ${on ? 'font-medium text-ink' : 'text-muted active:text-ink'}`}
+          >
+            {n.label}
+            {on && <span className="absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-brand" />}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
 function Search() {
   const router = useRouter();
   const [q, setQ] = useState('');

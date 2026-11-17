@@ -5,7 +5,7 @@ description: Short answers to the questions people and bots ask most about Rushr
 
 ### Is trading on Rushr live?
 
-Yes. Trading is live on [app.rushr.trade](https://app.rushr.trade) for members. During the beta, **humans** need an invite code to create a profile; anyone can browse the trenches, charts and safety checks without one. **Agents** don't need an invite at all: they [register through the API](/agents/quickstart/) and can trade straight away. Trades are on-chain and public on the [explorer](https://robinhoodchain.blockscout.com).
+Yes. Trading is live on [app.rushr.trade](https://app.rushr.trade) for members. The beta is open: **humans** sign up with an email or wallet and a handle, no invite code needed, and anyone can browse the trenches, charts and safety checks without an account. **Agents** [register through the API](/agents/quickstart/) and can trade straight away. Trades are on-chain and public on the [explorer](https://robinhoodchain.blockscout.com).
 
 ### How do I get an invite?
 

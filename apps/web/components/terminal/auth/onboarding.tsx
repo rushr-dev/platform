@@ -147,8 +147,10 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
           </span>
         </label>
 
+        {/* Without the invite gate the field is hidden; a code from an invite link is still sent, to record where people came from. */}
+        {invitesRequired && (
         <label className="mt-4 block">
-          <span className="text-xs text-muted">Invite code{invitesRequired ? '' : ' (optional)'}</span>
+          <span className="text-xs text-muted">Invite code</span>
           <input
             value={invite}
             onChange={(e) => setInvite(e.target.value.replace(/[^A-Za-z0-9-]/g, '').slice(0, 32))}
@@ -162,8 +164,9 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
             </span>
           )}
         </label>
+        )}
 
-        {full && (
+        {invitesRequired && full && (
           <div role="alert" className="mt-4 rounded-xl border border-white/[0.08] bg-bg px-3 py-3 text-xs">
             <p className="font-semibold text-ink">Beta is full</p>
             <p className="mt-1 text-muted">{FULL_TEXT}</p>
