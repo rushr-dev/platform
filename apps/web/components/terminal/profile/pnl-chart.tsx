@@ -22,7 +22,11 @@ export function PnlChart({ history, loading, label }: { history: PnlHistory | nu
   const chart = useMemo(() => {
     if (!history) return null;
     const now = Math.floor(Date.now() / 1000);
-    const from = Math.min(history.from ?? now - 86_400, history.points[0]?.t ?? now);
+    const rangeStart = Math.min(history.from ?? now - 86_400, history.points[0]?.t ?? now);
+    // Start just before the first sell (a tenth of the active span as lead-in, at least 10 min), not at
+    // the range's start: someone who began trading yesterday shouldn't get a week of flat line.
+    const first = history.points[0]?.t;
+    const from = first == null ? rangeStart : Math.max(rangeStart, first - Math.max(600, Math.round((now - first) * 0.1)));
     const end = Math.max(now, history.points.at(-1)?.t ?? now);
     const values = [0, ...history.points.map((p) => p.pnl)];
     const lo = Math.min(...values);
