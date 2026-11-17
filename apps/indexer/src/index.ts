@@ -388,16 +388,57 @@ app.post('/admin/metadata/all', async (c) => {
 
 // Public reads: serve from the edge cache for as long as each route's s-maxage allows (1-30s),
 // so a burst of page loads costs one database round instead of one each.
+//
+// - A hit goes out with the route's own cache-control. Served as is, a cached copy reached browsers with
+//   the zone's 4-hour browser TTL (max-age=14400), so a browser could keep showing an old PnL or board.
+// - Slow routes (the leaderboard takes ~6 s to compute) are stale-while-revalidate: past s-maxage the last
+//   copy is still served at once, for up to STALE_SECONDS, while one background request recomputes it.
+const CC_HEADER = 'x-rushr-cc';
+const FRESH_UNTIL = 'x-rushr-fresh-until';
+const REVALIDATE = 'x-rushr-revalidate';
+/** Per isolate: only this worker's own background refresh may skip the cache (a client can't force a recompute). */
+const REVALIDATE_TOKEN = crypto.randomUUID();
+const STALE_SECONDS = 600;
+const SWR_ROUTES = [/^\/v1\/leaderboard\b/, /^\/v1\/members\/[^/]+$/];
+/** URLs this isolate is already refreshing, so a burst of stale hits starts one recompute. */
+const refreshing = new Set<string>();
+
 app.use('*', async (c, next) => {
   if (c.req.method !== 'GET' || c.req.path === '/ws' || c.req.path === '/health') return next();
   const cache = caches.default;
   const key = new Request(c.req.url);
-  const hit = await cache.match(key);
-  if (hit) return new Response(hit.body, hit);
-  await next();
-  if (c.res.status === 200 && /s-maxage=\d+/.test(c.res.headers.get('cache-control') ?? '')) {
-    c.executionCtx.waitUntil(cache.put(key, c.res.clone()));
+  const revalidating = c.req.header(REVALIDATE) === REVALIDATE_TOKEN;
+  if (!revalidating) {
+    const hit = await cache.match(key);
+    if (hit) {
+      const res = new Response(hit.body, hit);
+      const own = hit.headers.get(CC_HEADER);
+      if (own) res.headers.set('cache-control', own);
+      const freshUntil = Number(hit.headers.get(FRESH_UNTIL) ?? 0);
+      res.headers.delete(CC_HEADER);
+      res.headers.delete(FRESH_UNTIL);
+      if (freshUntil && Date.now() > freshUntil && !refreshing.has(c.req.url)) {
+        refreshing.add(c.req.url);
+        const again = new Request(c.req.url, { headers: { [REVALIDATE]: REVALIDATE_TOKEN } });
+        c.executionCtx.waitUntil(
+          Promise.resolve(app.fetch(again, c.env, c.executionCtx)).catch(() => undefined).finally(() => refreshing.delete(c.req.url)),
+        );
+      }
+      return res;
+    }
   }
+  await next();
+  const cc = c.res.headers.get('cache-control') ?? '';
+  const sMaxAge = Number(/s-maxage=(\d+)/.exec(cc)?.[1] ?? 0);
+  if (c.res.status !== 200 || !sMaxAge) return;
+  const stored = c.res.clone();
+  const headers = new Headers(stored.headers);
+  headers.set(CC_HEADER, cc);
+  if (SWR_ROUTES.some((r) => r.test(c.req.path))) {
+    headers.set(FRESH_UNTIL, String(Date.now() + sMaxAge * 1000));
+    headers.set('cache-control', `public, s-maxage=${sMaxAge + STALE_SECONDS}`);
+  }
+  c.executionCtx.waitUntil(cache.put(key, new Response(stored.body, { status: 200, headers })));
 });
 
 // Trade ledger routes run inside /v1 (its auth, limits, errors). Hono copies routes on route(), so
