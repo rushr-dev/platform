@@ -396,8 +396,12 @@ app.post('/admin/metadata/all', async (c) => {
 const CC_HEADER = 'x-rushr-cc';
 const FRESH_UNTIL = 'x-rushr-fresh-until';
 const REVALIDATE = 'x-rushr-revalidate';
-/** Per isolate: only this worker's own background refresh may skip the cache (a client can't force a recompute). */
-const REVALIDATE_TOKEN = crypto.randomUUID();
+/**
+ * Per isolate: only this worker's own background refresh may skip the cache (a client can't force a
+ * recompute). Made on first use: Workers don't allow random values at global scope.
+ */
+let revalidateToken: string | undefined;
+const ownToken = () => (revalidateToken ??= crypto.randomUUID());
 const STALE_SECONDS = 600;
 const SWR_ROUTES = [/^\/v1\/leaderboard\b/, /^\/v1\/members\/[^/]+$/];
 /** URLs this isolate is already refreshing, so a burst of stale hits starts one recompute. */
@@ -407,7 +411,7 @@ app.use('*', async (c, next) => {
   if (c.req.method !== 'GET' || c.req.path === '/ws' || c.req.path === '/health') return next();
   const cache = caches.default;
   const key = new Request(c.req.url);
-  const revalidating = c.req.header(REVALIDATE) === REVALIDATE_TOKEN;
+  const revalidating = c.req.header(REVALIDATE) === ownToken();
   if (!revalidating) {
     const hit = await cache.match(key);
     if (hit) {
@@ -419,7 +423,7 @@ app.use('*', async (c, next) => {
       res.headers.delete(FRESH_UNTIL);
       if (freshUntil && Date.now() > freshUntil && !refreshing.has(c.req.url)) {
         refreshing.add(c.req.url);
-        const again = new Request(c.req.url, { headers: { [REVALIDATE]: REVALIDATE_TOKEN } });
+        const again = new Request(c.req.url, { headers: { [REVALIDATE]: ownToken() } });
         c.executionCtx.waitUntil(
           Promise.resolve(app.fetch(again, c.env, c.executionCtx)).catch(() => undefined).finally(() => refreshing.delete(c.req.url)),
         );
