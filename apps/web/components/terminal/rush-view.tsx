@@ -103,7 +103,7 @@ export function RushView() {
             <div className="flex flex-wrap items-end gap-x-10 gap-y-4">
               <div>
                 <div className="font-mono text-[11px] uppercase tracking-wider text-muted">Prize pool</div>
-                <div className="font-mono text-3xl font-semibold text-ink md:text-4xl">up to {ev ? usd(ev.poolUsd) : '$1.0K'}</div>
+                <div className="font-mono text-3xl font-semibold text-ink md:text-4xl">up to ${(ev?.poolUsd ?? 1000).toLocaleString('en-US')}</div>
               </div>
               {ev && status && startsAt && endsAt && (
                 <div>
