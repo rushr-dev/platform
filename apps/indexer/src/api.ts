@@ -15,6 +15,7 @@ import { refreshSignalsIfStale } from './signals-refresh';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
 import { PAUSED_BODY, readPause } from './pause';
 import { TRANSPARENCY_CACHE_S, transparency } from './transparency';
+import { PNL_RANGES, walletPnlHistory, walletTrades, type PnlRange } from './wallet-history';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
 
@@ -218,6 +219,24 @@ api.get('/wallets/:address/pnl', async (c) => {
   const wallet = addr(c.req.param('address'));
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
   return c.json(await walletPnl(c.var.sql, wallet, page((k) => c.req.query(k))), 200, cache(10));
+});
+
+/** Cumulative realized PnL over ?range=24h|7d|30d|all (default 7d): one point per sell, for the profile chart. */
+api.get('/wallets/:address/pnl/history', async (c) => {
+  const wallet = addr(c.req.param('address'));
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
+  const range = (c.req.query('range') ?? '7d') as PnlRange;
+  if (!PNL_RANGES.includes(range)) return c.json({ error: 'range is 24h, 7d, 30d or all' }, 400);
+  return c.json(await walletPnlHistory(c.var.sql, wallet, range), 200, cache(10));
+});
+
+/** A wallet's buys and sells, newest first (?limit=50, max 200; ?before=<unix seconds> pages back). */
+api.get('/wallets/:address/trades', async (c) => {
+  const wallet = addr(c.req.param('address'));
+  if (!/^0x[0-9a-f]{40}$/.test(wallet)) return c.json({ error: 'bad address' }, 400);
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50) || 50, 1), 200);
+  const before = Number(c.req.query('before') ?? 0) || null;
+  return c.json(await walletTrades(c.var.sql, wallet, { limit, before }), 200, cache(10));
 });
 
 /**

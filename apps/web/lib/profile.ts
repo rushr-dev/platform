@@ -142,6 +142,48 @@ export function useWalletPnl(wallet: string | null, tick = 0): Loadable<{ summar
   );
 }
 
+export type PnlRange = '24h' | '7d' | '30d' | 'all';
+
+/** Cumulative realized PnL in a range: one point per sell (unix seconds), from $0 at `from`. */
+export interface PnlHistory {
+  range: PnlRange;
+  from: number | null;
+  realizedUsd: number;
+  sells: number;
+  points: { t: number; pnl: number }[];
+}
+
+export function usePnlHistory(wallet: string | null, range: PnlRange): Loadable<PnlHistory> {
+  return useJson(
+    wallet ? `${API_URL}/wallets/${wallet.toLowerCase()}/pnl/history?range=${range}` : null,
+    (b) => (Array.isArray((b as PnlHistory).points) ? (b as PnlHistory) : null),
+    { refreshMs: 30_000 },
+  );
+}
+
+/** One buy or sell, with the token's market cap at that price and, for sells, the realized PnL. */
+export interface WalletTrade {
+  tx: string;
+  logIndex: number;
+  time: number;
+  token: string;
+  symbol: string | null;
+  imageUrl: string | null;
+  side: 'buy' | 'sell';
+  usd: number | null;
+  priceUsd: number | null;
+  mcapUsd: number | null;
+  realizedUsd: number | null;
+}
+
+export function useWalletTrades(wallet: string | null): Loadable<WalletTrade[]> {
+  return useJson(
+    wallet ? `${API_URL}/wallets/${wallet.toLowerCase()}/trades?limit=200` : null,
+    (b) => (b as { trades?: WalletTrade[] }).trades ?? null,
+    { refreshMs: 30_000 },
+  );
+}
+
 export function useSuggestions(signedIn: boolean): Loadable<Suggestion[]> {
   return useJson(signedIn ? `${V1}/me/suggestions?limit=8` : `${V1}/suggestions?limit=8`, (b) => (b as { items?: Suggestion[] }).items ?? null, {
     authed: signedIn,

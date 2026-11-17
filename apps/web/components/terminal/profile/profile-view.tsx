@@ -14,13 +14,18 @@ import {
   useProfileMember,
   useRelationship,
   useSuggestions,
+  usePnlHistory,
   useWalletPnl,
+  useWalletTrades,
   type Callout,
+  type PnlRange,
   type PnlSummary,
   type Position,
   type ProfileMember,
   type Suggestion,
+  type WalletTrade,
 } from '@/lib/profile';
+import { PnlChart } from './pnl-chart';
 import { MemberAvatar } from '../member-avatar';
 import { iconSrc, TokenAvatar } from '../bits';
 import { EditProfile } from './edit-profile';
@@ -113,12 +118,12 @@ function ProfilePage({ view, onEdited }: { view: View; onEdited?: () => void }) 
         <Header view={view} summary={summary} onEdited={onEdited} />
         <div className="grid gap-3 px-3 sm:px-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_300px]">
           <div className="min-w-0 space-y-3">
-            <Portfolio total={total} summary={summary} loading={pnl.state === 'loading'} />
+            <Portfolio wallet={view.wallet} total={total} summary={summary} loading={pnl.state === 'loading'} />
             {view.own && <WalletOverview wallet={view.wallet} holdings={holdings} menu={<WalletMenu />} />}
             <Positions state={pnl.state} positions={positions} />
           </div>
           <div className="min-w-0">
-            <Activity handle={view.handle} />
+            <Activity handle={view.handle} wallet={view.wallet} />
           </div>
           <div className="min-w-0 space-y-3 lg:col-span-2 xl:col-span-1">
             <TopTraders exclude={view.handle} />
@@ -278,15 +283,18 @@ function Count({ label, value }: { label: string; value: number | null }) {
 
 /* ------------------------------------------------------------------ portfolio */
 
-type Range = '24h' | '7d' | '30d' | 'all';
+type Range = PnlRange;
 const RANGE_LABEL: Record<Range, string> = { '24h': '24H', '7d': '7D', '30d': '30D', all: 'ALL' };
 
-function Portfolio({ total, summary, loading }: { total: number | null; summary: PnlSummary | null; loading: boolean }) {
-  const [range, setRange] = useState<Range>('24h');
+function Portfolio({ wallet, total, summary, loading }: { wallet: string | null; total: number | null; summary: PnlSummary | null; loading: boolean }) {
+  const [range, setRange] = useState<Range>('7d');
+  const history = usePnlHistory(wallet, range);
+  const hist = history.state === 'ready' ? history.data : null;
   const realized =
     range === '24h' ? summary?.realized_24h_usd : range === '7d' ? summary?.realized_7d_usd : range === '30d' ? summary?.realized_30d_usd : summary?.realized_usd;
   const allPnl = summary ? (summary.realized_usd ?? 0) + (summary.unrealized_usd ?? 0) : null;
-  const value = range === 'all' ? allPnl : (realized ?? null);
+  // The chart's own total is read live from the trades; the summary refreshes every few minutes.
+  const value = range === 'all' ? allPnl : (hist?.realizedUsd ?? realized ?? null);
   const up = (value ?? 0) >= 0;
   return (
     <section className="rounded-2xl border border-white/[0.06] bg-surface p-4">
@@ -307,20 +315,7 @@ function Portfolio({ total, summary, loading }: { total: number | null; summary:
           </button>
         ))}
       </div>
-      {/* The PnL curve needs per-day history the API doesn't serve yet; a flat guide until then. */}
-      <div className="relative mt-3 h-28 overflow-hidden rounded-xl border border-white/[0.04] bg-bg">
-        <svg viewBox="0 0 300 100" preserveAspectRatio="none" className="absolute inset-0 size-full" aria-hidden>
-          <defs>
-            <linearGradient id="pnl-fill" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0" stopColor={up ? '#36d42a' : '#ff6b5b'} stopOpacity="0.18" />
-              <stop offset="1" stopColor={up ? '#36d42a' : '#ff6b5b'} stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <path d="M0 60 L300 60 L300 100 L0 100 Z" fill="url(#pnl-fill)" />
-          <path d="M0 60 L300 60" stroke={up ? '#36d42a' : '#ff6b5b'} strokeOpacity="0.5" strokeWidth="1.5" fill="none" strokeDasharray="4 4" />
-        </svg>
-        <span className="absolute bottom-2 right-3 text-[10px] text-muted">PnL history chart coming soon</span>
-      </div>
+      <PnlChart history={hist} loading={history.state === 'loading'} label={`Realized PnL · ${RANGE_LABEL[range]}`} />
     </section>
   );
 }
@@ -372,8 +367,18 @@ function Positions({ state, positions }: { state: 'loading' | 'ready' | 'unavail
       const pnl = p.realized_usd + p.unrealized_usd;
       return { p, held, value, pnl, pnlPct: p.bought_usd > 0 ? (pnl / p.bought_usd) * 100 : null, open: held > 0 };
     });
-    return all.filter((r) => (tab === 'open' ? r.open : !r.open)).filter((r) => tab === 'closed' || dust || r.value >= DUST_USD);
+    const shown = all.filter((r) => (tab === 'open' ? r.open : !r.open)).filter((r) => tab === 'closed' || dust || r.value >= DUST_USD);
+    // Closed: most recent exit first (open keeps the API's order, biggest value first).
+    if (tab === 'closed') shown.sort((a, b) => (b.p.last_trade_at ?? '').localeCompare(a.p.last_trade_at ?? ''));
+    return shown;
   }, [positions, tab, dust]);
+  // Copycats share tickers: when two rows have the same symbol, show each one's contract address.
+  const twins = useMemo(() => {
+    const seen = new Map<string, number>();
+    for (const r of rows) seen.set(r.p.symbol, (seen.get(r.p.symbol) ?? 0) + 1);
+    return new Set([...seen].filter(([, n]) => n > 1).map(([s]) => s));
+  }, [rows]);
+  const closedTotal = tab === 'closed' ? rows.reduce((s, r) => s + r.p.realized_usd, 0) : null;
   return (
     <section className="overflow-hidden rounded-2xl border border-white/[0.06] bg-surface">
       <div className="flex items-center gap-1 border-b border-white/[0.05] px-3 py-2">
@@ -383,6 +388,11 @@ function Positions({ state, positions }: { state: 'loading' | 'ready' | 'unavail
             {t}
           </button>
         ))}
+        {closedTotal != null && rows.length > 0 && (
+          <span className="ml-auto font-mono text-[11px] text-muted">
+            {rows.length} closed · <span className={closedTotal >= 0 ? 'text-brand' : 'text-risk-high'}>{usdSigned(closedTotal)}</span>
+          </span>
+        )}
         {tab === 'open' && (
           <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-[11px] text-muted">
             <input type="checkbox" checked={dust} onChange={(e) => setDust(e.target.checked)} className="accent-[var(--color-brand)]" />
@@ -398,23 +408,41 @@ function Positions({ state, positions }: { state: 'loading' | 'ready' | 'unavail
         <Empty text={tab === 'open' ? 'No open positions.' : 'No closed positions yet.'} />
       ) : (
         <ul>
-          {rows.map(({ p, held, value, pnl, pnlPct }) => (
-            <li key={p.token} className="border-t border-white/[0.03] first:border-0">
-              <Link href={`/token/${p.token}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.02]">
-                <TokenAvatar t={{ address: p.token, symbol: p.symbol, launchpad: null, image_url: p.image_url }} size={32} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold">{p.symbol}</span>
-                  <span className="block font-mono text-[11px] text-muted">{held > 0 ? `${compact(held)} ${p.symbol}` : `${p.buys} buys · ${p.sells} sells`}</span>
-                </span>
-                <span className="text-right font-mono">
-                  <span className="block text-sm">{value >= 0.01 ? usd(value) : '—'}</span>
-                  <span className={`block text-[11px] ${pnl >= 0 ? 'text-brand' : 'text-risk-high'}`}>
-                    {pnlPct != null ? `${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : usdSigned(pnl)}
+          {rows.map(({ p, held, value, pnl, pnlPct, open }) => {
+            const tone = pnl >= 0 ? 'text-brand' : 'text-risk-high';
+            const pct = pnlPct != null ? `${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : null;
+            return (
+              <li key={p.token} className="border-t border-white/[0.03] first:border-0">
+                <Link href={`/token/${p.token}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.02]">
+                  <TokenAvatar t={{ address: p.token, symbol: p.symbol, launchpad: null, image_url: p.image_url }} size={32} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline gap-1.5">
+                      <span className="truncate text-sm font-semibold">{p.symbol}</span>
+                      {twins.has(p.symbol) && <span className="font-mono text-[10px] text-muted">{short(p.token)}</span>}
+                    </span>
+                    <span className="block font-mono text-[11px] text-muted">
+                      {open
+                        ? `${compact(held)} ${p.symbol}`
+                        : `Bought ${usd(p.bought_usd)} · Sold ${usd(p.sold_usd)}${p.last_trade_at ? ` · ${age(Date.parse(p.last_trade_at), Date.now())} ago` : ''}`}
+                    </span>
                   </span>
-                </span>
-              </Link>
-            </li>
-          ))}
+                  <span className="text-right font-mono">
+                    {open ? (
+                      <>
+                        <span className="block text-sm">{value >= 0.01 ? usd(value) : '—'}</span>
+                        <span className={`block text-[11px] ${tone}`}>{pct ?? usdSigned(pnl)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className={`block text-sm ${tone}`}>{usdSigned(p.realized_usd)}</span>
+                        {pct && <span className={`block text-[11px] ${tone} opacity-80`}>{pct}</span>}
+                      </>
+                    )}
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
@@ -435,11 +463,12 @@ function heldTokens(p: Position): number {
 
 /* ------------------------------------------------------------------ activity */
 
-function Activity({ handle }: { handle: string | null }) {
+function Activity({ handle, wallet }: { handle: string | null; wallet: string | null }) {
   const [tab, setTab] = useState<'feed' | 'tx'>('feed');
   const [side, setSide] = useState<'all' | 'buy' | 'sell'>('all');
   const [min, setMin] = useState(0);
   const callouts = useCallouts(handle);
+  const trades = useWalletTrades(tab === 'tx' ? wallet : null);
   return (
     <section className="overflow-hidden rounded-2xl border border-white/[0.06] bg-surface">
       <div className="flex flex-wrap items-center gap-1 border-b border-white/[0.05] px-3 py-2">
@@ -476,10 +505,47 @@ function Activity({ handle }: { handle: string | null }) {
         ) : (
           <CalloutList items={callouts.data.filter((c) => (side === 'all' || c.side === side) && (c.entry?.usd ?? 0) >= min)} />
         )
+      ) : trades.state === 'loading' ? (
+        <Rows />
+      ) : trades.state !== 'ready' ? (
+        <Empty text="Transactions show up here." sub="Each buy and sell with its size and the market cap at the time." />
       ) : (
-        <Empty text="Transaction history is coming soon." sub="Each buy and sell with its size and the market cap at the time." />
+        <TradeList items={trades.data.filter((t) => (side === 'all' || t.side === side) && (t.usd ?? 0) >= min)} />
       )}
     </section>
+  );
+}
+
+/** The wallet's buys and sells: token, size, market cap at the price traded, and the result of each sell. */
+function TradeList({ items }: { items: WalletTrade[] }) {
+  const now = useNow(Date.now());
+  if (!items.length) return <Empty text="No trades yet." />;
+  return (
+    <ul>
+      {items.map((t) => (
+        <li key={`${t.tx}:${t.logIndex}`} className="border-t border-white/[0.03] first:border-0">
+          <Link href={`/token/${t.token}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.02]">
+            <span className={`w-9 shrink-0 rounded px-1.5 py-0.5 text-center text-[10px] font-semibold ${t.side === 'buy' ? 'bg-brand/15 text-brand' : 'bg-risk-high/15 text-risk-high'}`}>
+              {t.side === 'buy' ? 'Buy' : 'Sell'}
+            </span>
+            <TokenAvatar t={{ address: t.token, symbol: t.symbol ?? '?', launchpad: null, image_url: t.imageUrl }} size={26} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{t.symbol ?? short(t.token)}</span>
+              <span className="block font-mono text-[11px] text-muted">{t.mcapUsd != null ? `at ${usd(t.mcapUsd)} MC` : '—'}</span>
+            </span>
+            <span className="text-right font-mono">
+              <span className="block text-sm">{t.usd != null ? usd(t.usd) : '—'}</span>
+              <span className="block text-[11px] text-muted">
+                {t.realizedUsd != null && (
+                  <span className={`mr-1.5 ${t.realizedUsd >= 0 ? 'text-brand' : 'text-risk-high'}`}>{usdSigned(t.realizedUsd)}</span>
+                )}
+                {age(t.time * 1000, now)}
+              </span>
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
