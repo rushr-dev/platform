@@ -4,6 +4,7 @@ import { Closing, Floor, FloorFallback, FloorHead, Footer, Hero, Nav } from '@/c
 import { Agents, Leaderboard, Social } from '@/components/landing/social';
 import { API_URL, getColumn, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
+import { getLandingData } from '@/lib/landing';
 import { Numbers, NumbersFallback } from '@/components/landing/numbers';
 
 export const revalidate = 30;
@@ -64,7 +65,9 @@ async function getClones(symbol: string, original: string): Promise<TokenCard[]>
   }
 }
 
-export default function Home() {
+export default async function Home() {
+  // Real calls, members and the season's top five for the social and leaderboard sections (cached ~2 min).
+  const landing = await getLandingData().catch(() => null);
   return (
     <div className="theme-paper min-h-dvh">
       <Nav />
@@ -73,8 +76,8 @@ export default function Home() {
         <Suspense fallback={<NumbersFallback />}>
           <Numbers />
         </Suspense>
-        <Social />
-        <Leaderboard />
+        <Social data={landing} />
+        <Leaderboard rows={landing?.rows ?? []} />
         <Agents />
         <FloorHead />
         {/* Everything above is static; only the terminal shot and safety cards wait on the API and DexScreener. */}
