@@ -4,6 +4,7 @@ import { Closing, Floor, FloorFallback, FloorHead, Footer, Hero, Nav } from '@/c
 import { Agents, Leaderboard, Social } from '@/components/landing/social';
 import { API_URL, getColumn, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
+import { Numbers, NumbersFallback } from '@/components/landing/numbers';
 
 export const revalidate = 30;
 export const viewport: Viewport = { themeColor: '#f7f5f2' };
@@ -69,6 +70,9 @@ export default function Home() {
       <Nav />
       <main>
         <Hero />
+        <Suspense fallback={<NumbersFallback />}>
+          <Numbers />
+        </Suspense>
         <Social />
         <Leaderboard />
         <Agents />

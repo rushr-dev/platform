@@ -28,9 +28,9 @@ describe('feeTotals', () => {
         { fee_token: ETH, route: 'uniswap', trades: 1, raw: '500000000000000', usd: 0.88 },
         { fee_token: USDG, route: 'uniswap', trades: 3, raw: '2500000', usd: 2.5 },
       ],
-      { trades: 6, traders: 4 },
+      { trades: 6, traders: 4, volumeUsd: 2056.004 },
     );
-    expect(t).toMatchObject({ trades: 6, traders: 4, usd: 5.14 });
+    expect(t).toMatchObject({ trades: 6, traders: 4, volumeUsd: 2056, usd: 5.14 });
     expect(t.byToken.map((x) => [x.token, x.amount])).toEqual([['ETH', '0.0015'], ['USDG', '2.5']]);
     expect(t.byRoute.curve).toMatchObject({ trades: 2, usd: 1.76 });
     expect(t.byRoute.uniswap.byToken[1]).toMatchObject({ token: 'USDG', raw: '2500000' });
@@ -57,6 +57,10 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
       row('3', { fee_token: USDG, fee_amount: '2500000', ts: new Date() }),
       row('4', { status: 'submitted', ts: new Date() }),
     ] as never)}`;
+    // Trade 3's own swap, $1,000 (two legs in one tx: the largest counts). Trades 1 and 2 aren't indexed yet.
+    await sql`insert into swaps (tx, log_index, token, pool, block, time, trader, side, token_amount, quote, quote_amount, usd)
+      values (${'0x' + '3'.padStart(64, '0')}, 0, ${'0x' + 'a'.repeat(40)}, ${'0x' + 'b'.repeat(40)}, 1, now(), ${'0x' + '1'.repeat(40)}, 'buy', 1, ${USDG}, 1000000000, 1000),
+             (${'0x' + '3'.padStart(64, '0')}, 1, ${'0x' + 'a'.repeat(40)}, ${'0x' + 'c'.repeat(40)}, 1, now(), ${'0x' + '1'.repeat(40)}, 'buy', 1, ${USDG}, 999000000, 999)`;
   });
   afterAll(async () => {
     resetPauseCache();
@@ -72,7 +76,7 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
     expect(body.treasury.address).toBe(RUSHR_TREASURY);
     expect(body.treasury.explorer).toBe(`https://robinhoodchain.blockscout.com/address/${RUSHR_TREASURY}`);
     expect(body.feeRate).toMatchObject({ currentBps: 25, standardBps: 50, beta: true });
-    expect(body.fees.allTime).toMatchObject({ trades: 3, traders: 2, usd: 6.5 });
+    expect(body.fees.allTime).toMatchObject({ trades: 3, traders: 2, volumeUsd: 1000, usd: 6.5 });
     expect(body.fees.allTime.byRoute.curve.trades).toBe(1);
     expect(body.fees.allTime.byRoute.uniswap.trades).toBe(2);
     expect(body.fees.season).toMatchObject({ id: 's0', trades: 2, traders: 1, usd: 4.5 });

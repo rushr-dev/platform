@@ -50,6 +50,8 @@ export interface TokenTotal {
 export interface FeeTotals {
   trades: number;
   traders: number;
+  /** USD traded through Rushr: each confirmed trade's indexed swap value (trades not indexed yet count 0). */
+  volumeUsd: number;
   usd: number;
   byToken: TokenTotal[];
   /** Curve = PONS bonding curves (fee paid as a follow-up transfer); uniswap = Universal Router routes. */
@@ -85,12 +87,12 @@ function byToken(rows: FeeRow[]): TokenTotal[] {
 }
 
 /** Group ledger sums into the response shape (pure; exported for tests). */
-export function feeTotals(rows: FeeRow[], counts: { trades: number; traders: number }): FeeTotals {
+export function feeTotals(rows: FeeRow[], counts: { trades: number; traders: number; volumeUsd?: number }): FeeTotals {
   const route = (k: 'curve' | 'uniswap') => {
     const mine = rows.filter((r) => r.route === k);
     return { trades: mine.reduce((s, r) => s + r.trades, 0), usd: round2(mine.reduce((s, r) => s + r.usd, 0)), byToken: byToken(mine) };
   };
-  return { ...counts, usd: round2(rows.reduce((s, r) => s + r.usd, 0)), byToken: byToken(rows), byRoute: { curve: route('curve'), uniswap: route('uniswap') } };
+  return { ...counts, volumeUsd: round2(counts.volumeUsd ?? 0), usd: round2(rows.reduce((s, r) => s + r.usd, 0)), byToken: byToken(rows), byRoute: { curve: route('curve'), uniswap: route('uniswap') } };
 }
 
 /**
@@ -115,10 +117,13 @@ async function ledgerTotals(sql: Sql, ethNow: number | null, range?: { from: Dat
     ) px on true
     where l.status = 'confirmed' and l.chain_id = ${CHAIN_ID} and l.fee_amount is not null ${within}
     group by 1, 2`;
-  const [c] = await sql<{ trades: number; traders: number }[]>`
-    select count(*)::int as trades, count(distinct l.trader)::int as traders from trades_ledger l
+  // Volume: the trade's own indexed swap (the largest leg, for routes with several swaps in one tx).
+  const [c] = await sql<{ trades: number; traders: number; volume_usd: number }[]>`
+    select count(*)::int as trades, count(distinct l.trader)::int as traders, coalesce(sum(v.usd), 0)::float8 as volume_usd
+    from trades_ledger l
+    left join lateral (select s.usd from swaps s where s.tx = l.tx_hash and s.usd > 0 order by s.usd desc limit 1) v on true
     where l.status = 'confirmed' and l.chain_id = ${CHAIN_ID} ${within}`;
-  return feeTotals(rows, c ?? { trades: 0, traders: 0 });
+  return feeTotals(rows, c ? { trades: c.trades, traders: c.traders, volumeUsd: c.volume_usd } : { trades: 0, traders: 0 });
 }
 
 /**

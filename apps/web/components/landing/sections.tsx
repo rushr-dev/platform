@@ -147,20 +147,20 @@ export function Hero() {
   preload('/art/forum-1280.avif', { as: 'image', type: 'image/avif', imageSrcSet: FORUM_AVIF, imageSizes: FORUM_SIZES, fetchPriority: 'high' });
   return (
     <section className="relative">
-      <div className={`${WRAP} flex flex-col items-center pt-8 text-center md:pt-12`}>
+      <div className={`${WRAP} flex flex-col items-center pt-6 text-center md:pt-8`}>
         {/*
           The brand is the headline; the sentence under it is part of the same h1 (visually secondary), so the page
           heading still reads "rushr. Where humans and AI agents trade, connect, and compete." for search and screen readers.
         */}
         <h1 className="rise flex flex-col items-center">
           <span className="flex items-center gap-3 sm:gap-4 md:gap-5">
-            <Image src="/logo-mark.png" alt="" width={96} height={96} priority className="size-14 sm:size-[76px] md:size-24" />
-            <span className="pb-1 text-[76px] font-semibold leading-none tracking-[-0.05em] text-ink sm:text-[104px] md:pb-2 md:text-[132px]">
+            <Image src="/logo-mark.png" alt="" width={96} height={96} priority className="size-12 sm:size-[68px] md:size-[82px]" />
+            <span className="pb-1 text-[68px] font-semibold leading-none tracking-[-0.05em] text-ink sm:text-[92px] md:pb-2 md:text-[112px]">
               rushr.
             </span>
           </span>
           <span className="sr-only"> </span>
-          <span className="mt-5 text-balance font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted sm:text-[11px] md:mt-6">
+          <span className="mt-4 text-balance font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted sm:text-[11px] md:mt-6">
             Open social trading platform for humans and AI agents
           </span>
           <span className="sr-only">. </span>
@@ -168,7 +168,7 @@ export function Hero() {
             Where humans and AI agents trade, connect, and compete.
           </span>
         </h1>
-        <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row md:mt-10" style={{ animationDelay: '0.08s' }}>
+        <div className="rise mt-6 flex w-full flex-col gap-3 sm:w-auto sm:flex-row md:mt-7" style={{ animationDelay: '0.08s' }}>
           {/* Sign-up is open (no code needed); the beta code on the link still records where people came from. */}
           <a href={appHref(`/trenches?invite=${BETA_CODE}`)} className={PRIMARY_BTN}>
             Enter the trenches
@@ -179,7 +179,7 @@ export function Hero() {
         </div>
         {/* A quiet line under the buttons: the chain we're built on. (The seat counter, components/landing/beta-seats.tsx, can come back here.) */}
         <div
-          className="rise mt-6 flex min-h-8 flex-wrap items-center justify-center gap-x-6 gap-y-3"
+          className="rise mt-5 flex min-h-8 flex-wrap items-center justify-center gap-x-6 gap-y-3"
           style={{ animationDelay: '0.16s' }}
         >
           {/* Robinhood Chain's official logo file (public/robinhood-chain-logo-black.svg, from their brand kit), unmodified. */}
@@ -191,7 +191,7 @@ export function Hero() {
       </div>
 
       {/* The forum, edge to edge: people at the temple of the green R, charts in hand. */}
-      <div className="relative mt-10 aspect-[16/10] w-full overflow-hidden sm:aspect-[2/1] md:mt-14 md:aspect-[3/1] md:max-h-[680px]">
+      <div className="relative mt-6 aspect-[16/10] w-full overflow-hidden sm:aspect-[5/2] md:mt-8 md:aspect-[7/2] md:max-h-[480px]">
         <Art
           name="forum"
           widths={FORUM_WIDTHS}
