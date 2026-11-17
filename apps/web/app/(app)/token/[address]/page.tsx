@@ -9,17 +9,20 @@ import { fromApi, TRADE_LIMIT } from '@/lib/trades';
 
 export const dynamic = 'force-dynamic';
 
-type Props = { params: Promise<{ address: string }> };
+type Props = { params: Promise<{ address: string }>; searchParams: Promise<{ pnl?: string }> };
 
 /** One detail read per request, shared by the metadata and the page. */
 const detailOf = cache((address: string) => getTokenDetail(address));
 
-export async function generateMetadata({ params }: Props): Promise<Metadata> {
+export async function generateMetadata({ params, searchParams }: Props): Promise<Metadata> {
   const address = (await params).address.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(address)) return { title: 'Token' };
   const t = await detailOf(address);
   if (!t || isPending(t)) return { title: 'Token' };
-  return appShare(`$${t.symbol}`, `/token/${address}`, `$${t.symbol} (${t.name}) on Robinhood Chain: live chart, safety check and calls on Rushr.`);
+  // `?pnl=<handle>` on a shared link previews as that member's PnL card for this token.
+  const who = (await searchParams).pnl?.toLowerCase();
+  const card = who && /^[a-z0-9_]{3,20}$/.test(who) ? { url: `/card/position/${who}/${address}`, alt: `@${who}'s $${t.symbol} PnL on Rushr` } : undefined;
+  return appShare(`$${t.symbol}`, `/token/${address}`, `$${t.symbol} (${t.name}) on Robinhood Chain: live chart, safety check and calls on Rushr.`, {}, card);
 }
 
 export default async function TokenPage({ params }: Props) {

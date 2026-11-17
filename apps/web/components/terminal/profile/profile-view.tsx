@@ -25,6 +25,7 @@ import {
   type WalletTrade,
 } from '@/lib/profile';
 import { PnlChart } from './pnl-chart';
+import { ShareCard, type ShareTarget } from '../share-card';
 import { CallCard } from '../calls-feed';
 import type { Callout } from '@/lib/callouts';
 import { MemberAvatar } from '../member-avatar';
@@ -47,6 +48,40 @@ type View = {
   avatarSeed: string;
   avatarUrl: string | null;
 };
+
+/* ------------------------------------------------------------------ share cards */
+
+const CARD_RANGES = [
+  { id: '24h', label: '24H' },
+  { id: '7d', label: '7D' },
+  { id: '30d', label: '30D' },
+  { id: 'all', label: 'ALL' },
+];
+
+/** The profile's PnL card (lib/card): shared links preview as the card for the chosen range. */
+function profileShare(handle: string, own: boolean): ShareTarget {
+  return {
+    title: own ? 'Share your PnL' : `Share @${handle}'s PnL`,
+    ranges: CARD_RANGES,
+    defaultRange: 'all',
+    image: (r) => `/card/profile/${handle}?range=${r}`,
+    link: (r) => `${window.location.origin}/u/${handle}?card=${r}`,
+    text: () => (own ? 'My PnL on @rushrtrade 📈' : `@${handle}'s PnL on @rushrtrade 📈`),
+    filename: (r) => `rushr-${handle}-pnl-${r}.png`,
+  };
+}
+
+/** One position's card: realized result when closed, open PnL while held. */
+function positionShare(handle: string, own: boolean, p: Position, pnl: number, pnlPct: number | null): ShareTarget {
+  const result = pnlPct != null ? `${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : usdSigned(pnl);
+  return {
+    title: own ? `Share your $${p.symbol} trade` : `Share @${handle}'s $${p.symbol} trade`,
+    image: () => `/card/position/${handle}/${p.token}`,
+    link: () => `${window.location.origin}/token/${p.token}?pnl=${handle}`,
+    text: () => `${result} on $${p.symbol} ${own ? '' : `by @${handle} `}on @rushrtrade ${pnl >= 0 ? '📈' : '📉'}`.replace(/\s+/g, ' '),
+    filename: () => `rushr-${handle}-${p.symbol.toLowerCase()}.png`,
+  };
+}
 
 /* ------------------------------------------------------------------ entry points */
 
@@ -121,7 +156,7 @@ function ProfilePage({ view, onEdited }: { view: View; onEdited?: () => void }) 
           <div className="min-w-0 space-y-3">
             <Portfolio wallet={view.wallet} total={total} summary={summary} loading={pnl.state === 'loading'} />
             {view.own && <WalletOverview wallet={view.wallet} holdings={holdings} menu={<WalletMenu />} />}
-            <Positions state={pnl.state} positions={positions} />
+            <Positions state={pnl.state} positions={positions} handle={view.handle} own={view.own} />
           </div>
           <div className="min-w-0">
             <Activity handle={view.handle} wallet={view.wallet} />
@@ -143,17 +178,16 @@ function Header({ view, summary, onEdited }: { view: View; summary: PnlSummary |
   const rel = useRelationship(view.own ? null : view.handle, authenticated);
   const [editing, setEditing] = useState(false);
   const [shared, setShared] = useState(false);
+  const [card, setCard] = useState(false);
+  // Members get the PnL card popup; a wallet without a handle can only share its page link.
   const share = async () => {
-    const url = view.handle ? `${window.location.origin}/u/${view.handle}` : window.location.href;
+    if (view.handle) return setCard(true);
     try {
-      if (navigator.share) await navigator.share({ title: `${view.name} on Rushr`, url });
-      else {
-        await navigator.clipboard.writeText(url);
-        setShared(true);
-        setTimeout(() => setShared(false), 1500);
-      }
+      await navigator.clipboard.writeText(window.location.href);
+      setShared(true);
+      setTimeout(() => setShared(false), 1500);
     } catch {
-      // dismissed
+      // not allowed
     }
   };
   return (
@@ -258,6 +292,7 @@ function Header({ view, summary, onEdited }: { view: View; summary: PnlSummary |
           )}
         </div>
       </div>
+      {card && view.handle && <ShareCard target={profileShare(view.handle, view.own)} onClose={() => setCard(false)} />}
       {editing && m && (
         <EditProfile
           member={m}
@@ -358,9 +393,10 @@ function WalletMenu() {
 
 const DUST_USD = 1;
 
-function Positions({ state, positions }: { state: 'loading' | 'ready' | 'unavailable'; positions: Position[] }) {
+function Positions({ state, positions, handle, own }: { state: 'loading' | 'ready' | 'unavailable'; positions: Position[]; handle: string | null; own: boolean }) {
   const [tab, setTab] = useState<'open' | 'closed'>('open');
   const [dust, setDust] = useState(false);
+  const [sharing, setSharing] = useState<ShareTarget | null>(null);
   const rows = useMemo(() => {
     const all = positions.map((p) => {
       const held = heldTokens(p);
@@ -413,8 +449,8 @@ function Positions({ state, positions }: { state: 'loading' | 'ready' | 'unavail
             const tone = pnl >= 0 ? 'text-brand' : 'text-risk-high';
             const pct = pnlPct != null ? `${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : null;
             return (
-              <li key={p.token} className="border-t border-white/[0.03] first:border-0">
-                <Link href={`/token/${p.token}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.02]">
+              <li key={p.token} className="flex items-center border-t border-white/[0.03] first:border-0 hover:bg-white/[0.02]">
+                <Link href={`/token/${p.token}`} className="flex min-w-0 flex-1 items-center gap-3 py-2.5 pl-3">
                   <TokenAvatar t={{ address: p.token, symbol: p.symbol, launchpad: null, image_url: p.image_url }} size={32} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-1.5">
@@ -441,11 +477,25 @@ function Positions({ state, positions }: { state: 'loading' | 'ready' | 'unavail
                     )}
                   </span>
                 </Link>
+                {handle ? (
+                  <button
+                    type="button"
+                    aria-label={`Share the ${p.symbol} trade`}
+                    title="Share"
+                    onClick={() => setSharing(positionShare(handle, own, p, open ? pnl : p.realized_usd, open ? pnlPct : p.bought_usd > 0 ? (p.realized_usd / p.bought_usd) * 100 : null))}
+                    className="mx-1.5 shrink-0 rounded-lg p-2 text-muted transition hover:bg-white/[0.05] hover:text-ink"
+                  >
+                    <ShareNetwork size={15} />
+                  </button>
+                ) : (
+                  <span className="w-3 shrink-0" />
+                )}
               </li>
             );
           })}
         </ul>
       )}
+      {sharing && <ShareCard target={sharing} onClose={() => setSharing(null)} />}
     </section>
   );
 }

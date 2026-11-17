@@ -14,14 +14,16 @@ const DEFAULT_DESCRIPTION =
  * Metadata for an app page: the tab title ("Trenches" becomes "Trenches | Rushr" via the root template) and a
  * matching X / Open Graph preview that links to the page itself on the app host.
  */
-export function appShare(title: string, path: string, description = DEFAULT_DESCRIPTION, extra: Metadata = {}): Metadata {
+export function appShare(title: string, path: string, description = DEFAULT_DESCRIPTION, extra: Metadata = {}, card?: { url: string; alt: string }): Metadata {
   const full = `${title} | Rushr`;
+  // A shared PnL card (lib/card) previews as itself; everything else gets the brand card.
+  const image = card ? { url: card.url, width: 1200, height: 630, alt: card.alt } : SHARE_IMAGE;
   return {
     title,
     description,
     alternates: { canonical: path },
-    openGraph: { title: full, description, url: path, siteName: 'Rushr', type: 'website', images: [SHARE_IMAGE] },
-    twitter: { card: 'summary_large_image', site: '@rushrtrade', title: full, description, images: [SHARE_IMAGE] },
+    openGraph: { title: full, description, url: path, siteName: 'Rushr', type: 'website', images: [image] },
+    twitter: { card: 'summary_large_image', site: '@rushrtrade', title: full, description, images: [image] },
     ...extra,
   };
 }
