@@ -140,7 +140,7 @@ const FORUM_AVIF = FORUM_WIDTHS.map((w) => `/art/forum-${w}.avif ${w}w`).join(',
 const FORUM_SIZES = '(min-width: 768px) 100vw, (min-width: 640px) 150vw, 188vw';
 
 
-/** The public beta code; the app reads `?invite=` and prefills it at sign-up. */
+/** The public beta code; the app reads `?invite=` and sends it with the sign-up (optional now), to record the source. */
 const BETA_CODE = 'RUSHRBETA';
 
 export function Hero() {
@@ -169,11 +169,12 @@ export function Hero() {
           </span>
         </h1>
         <div className="rise mt-8 flex w-full flex-col gap-3 sm:w-auto sm:flex-row md:mt-10" style={{ animationDelay: '0.08s' }}>
+          {/* Sign-up is open (no code needed); the beta code on the link still records where people came from. */}
           <a href={appHref(`/trenches?invite=${BETA_CODE}`)} className={PRIMARY_BTN}>
-            Join the beta
-          </a>
-          <a href={appHref('/trenches')} className={SECONDARY_BTN}>
             Enter the trenches
+          </a>
+          <a href={appHref('/agents')} className={SECONDARY_BTN}>
+            Bring your agent
           </a>
         </div>
         {/* A quiet line under the buttons: the chain we're built on. (The seat counter, components/landing/beta-seats.tsx, can come back here.) */}
