@@ -403,7 +403,7 @@ const REVALIDATE = 'x-rushr-revalidate';
 let revalidateToken: string | undefined;
 const ownToken = () => (revalidateToken ??= crypto.randomUUID());
 const STALE_SECONDS = 600;
-const SWR_ROUTES = [/^\/v1\/leaderboard\b/, /^\/v1\/members\/[^/]+$/];
+const SWR_ROUTES = [/^\/v1\/leaderboard\b/, /^\/v1\/members\/[^/]+$/, /^\/v1\/events\//];
 /** URLs this isolate is already refreshing, so a burst of stale hits starts one recompute. */
 const refreshing = new Set<string>();
 

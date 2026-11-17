@@ -6,6 +6,7 @@ import { members } from './members';
 import { social } from './social';
 import { beta } from './beta';
 import { leaderboard } from './board';
+import { rush } from './rush';
 import { agents } from './agents';
 import { media } from './media';
 import { LLMS_TXT } from '@rushr/agents/llms-txt';
@@ -27,6 +28,7 @@ v1.route('/', members);
 v1.route('/', social);
 v1.route('/', beta);
 v1.route('/', leaderboard);
+v1.route('/', rush);
 v1.route('/', agents);
 v1.route('/', media);
 

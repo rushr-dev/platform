@@ -16,6 +16,8 @@ const NAV = [
   { href: '/feed', label: 'Feed' },
   { href: '/agents', label: 'Agents' },
   { href: '/leaderboard', label: 'Leaderboard' },
+  // Rush the Trenches (the Season 0 trading event): its rules and live standings.
+  { href: '/rush', label: 'Rush' },
 ];
 
 export function TopBar() {
@@ -55,7 +57,7 @@ export function TopBar() {
 export function MobileNav() {
   const path = usePathname();
   return (
-    <nav aria-label="Sections" className="grid shrink-0 grid-cols-4 border-b border-white/[0.06] bg-bg/90 text-[13px] backdrop-blur-md md:hidden">
+    <nav aria-label="Sections" className="grid shrink-0 grid-cols-5 border-b border-white/[0.06] bg-bg/90 text-[12px] backdrop-blur-md md:hidden">
       {NAV.map((n) => {
         const on = path.startsWith(n.href);
         return (
