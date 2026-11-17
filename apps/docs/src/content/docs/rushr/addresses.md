@@ -12,7 +12,7 @@ All on Robinhood Chain (chain id 4663). Live balances and transactions are on [T
 | $RUSHR token | [`0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed`](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
 | Dev wallet: launch buy, 5% burned; claims the creator tax and runs creator-tax buybacks | [`0xe5ed29849043380aea7cfe62e97a23e82c55578e`](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e) |
 | Team wallet: held publicly, verified on [FOMO](https://fomo.family/profile/rushrtrade), about 1.47% of supply | [`0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D`](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D) |
-| Platform fee treasury (Safe): platform-fee buybacks and season rewards | [`0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3`](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
+| Platform fee treasury (Safe multisig, 2 of 2): platform-fee buybacks and season rewards | [`0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3`](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
 | Burn address | [`0x000000000000000000000000000000000000dEaD`](https://robinhoodchain.blockscout.com/address/0x000000000000000000000000000000000000dEaD) |
 
 ## Trade path

@@ -15,7 +15,7 @@ The rest, 50% of platform fees and 80% of the creator tax, funds the team: devel
 
 ## Platform fees
 
-Rushr's [trading fee](/trading/fees/) (0.25% in the beta) is paid to the **treasury Safe** [`0x2Ae0…75F3`](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3).
+Rushr's [trading fee](/trading/fees/) (0.25% in the beta) is paid to the **treasury Safe** [`0x2Ae0…75F3`](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3), a 2-of-2 multisig: every payout needs both signers.
 
 - **25%** buys $RUSHR and burns it.
 - **25%** buys $RUSHR for the season reward pool, paid to the top of the leaderboard when a season ends.

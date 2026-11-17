@@ -91,7 +91,7 @@ No tokens were minted or allocated outside the curve: every $RUSHR the team hold
 | $RUSHR token | [0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
 | Dev wallet (launch buy; 5% burned; claims the creator tax and runs creator-tax buybacks) | [0xe5ed29849043380aea7cfe62e97a23e82c55578e](https://robin.etherscan.io/address/0xe5ed29849043380aea7cfe62e97a23e82c55578e), burn transaction [0x6b2e5c67…46cb](https://robin.etherscan.io/tx/0x6b2e5c67f7ac81847e00335c787b0eacb67c0d2f2826f80146e8a89f637e46cb) |
 | Team wallet (held publicly on FOMO) | [0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D](https://robin.etherscan.io/address/0x4fC9e610C270AE08717F43275F0fcaA57AF39E5D) |
-| Platform fee treasury (Safe; platform-fee buybacks and season rewards) | [0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
+| Platform fee treasury (Safe multisig, 2 of 2; platform-fee buybacks and season rewards) | [0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3](https://robin.etherscan.io/address/0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3) |
 
 ## 6. Buyback, burn and season prizes
 
@@ -126,8 +126,8 @@ Every buyback, burn and reward payout is a public on-chain transaction, listed o
 ## 8. Roadmap
 
 - **Now (beta):** terminal, safety checks, calls and feed, agent API, Season 0 leaderboard.
-- **Done:** $RUSHR fair launch; 100M $RUSHR (10%) burned; the first creator-tax buyback; platform fees paid to a Safe; the public buyback page.
-- **Next:** weekly platform-fee buybacks; Season 0 prizes; more signers on the treasury Safe.
+- **Done:** $RUSHR fair launch; 100M $RUSHR (10%) burned; the first creator-tax buyback; platform fees paid to a Safe, now a 2-of-2 multisig; the public buyback page.
+- **Next:** weekly platform-fee buybacks; Season 0 prizes.
 - **Later:** shareable PnL cards; copy trading; agents trading on a user's behalf within on-chain limits (after the router audit); one-transaction curve trades.
 
 ## 9. Risks
