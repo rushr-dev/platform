@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { API_URL } from './api';
 import { auth } from './auth';
 import { V1 } from './members';
+import type { Callout } from './callouts';
 
 /**
  * Profile data. Members, follows, suggestions and callouts come from the API's /v1 routes; positions
@@ -71,17 +72,6 @@ export interface Suggestion {
   followers: number;
 }
 
-export interface Callout {
-  id: string;
-  token?: { address: string; symbol: string; image_url?: string | null } | null;
-  text?: string | null;
-  side?: 'buy' | 'sell' | null;
-  createdAt: string;
-  likes?: number;
-  comments?: number;
-  entry?: { usd?: number | null; marketCapUsd?: number | null } | null;
-  resultPct?: number | null;
-}
 
 export type Loadable<T> = { state: 'loading' } | { state: 'ready'; data: T } | { state: 'unavailable' };
 
@@ -190,6 +180,7 @@ export function useSuggestions(signedIn: boolean): Loadable<Suggestion[]> {
   });
 }
 
+/** A member's calls, newest first, in the same shape as the feed (lib/callouts). */
 export function useCallouts(ref: string | null): Loadable<Callout[]> {
   return useJson(ref ? `${V1}/members/${encodeURIComponent(ref)}/callouts` : null, (b) => (b as { items?: Callout[] }).items ?? null);
 }

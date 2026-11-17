@@ -17,7 +17,6 @@ import {
   usePnlHistory,
   useWalletPnl,
   useWalletTrades,
-  type Callout,
   type PnlRange,
   type PnlSummary,
   type Position,
@@ -26,6 +25,8 @@ import {
   type WalletTrade,
 } from '@/lib/profile';
 import { PnlChart } from './pnl-chart';
+import { CallCard } from '../calls-feed';
+import type { Callout } from '@/lib/callouts';
 import { MemberAvatar } from '../member-avatar';
 import { iconSrc, TokenAvatar } from '../bits';
 import { EditProfile } from './edit-profile';
@@ -464,7 +465,7 @@ function heldTokens(p: Position): number {
 /* ------------------------------------------------------------------ activity */
 
 function Activity({ handle, wallet }: { handle: string | null; wallet: string | null }) {
-  const [tab, setTab] = useState<'feed' | 'tx'>('feed');
+  const [tab, setTab] = useState<'calls' | 'tx'>('calls');
   const [side, setSide] = useState<'all' | 'buy' | 'sell'>('all');
   const [min, setMin] = useState(0);
   const callouts = useCallouts(handle);
@@ -474,7 +475,7 @@ function Activity({ handle, wallet }: { handle: string | null; wallet: string | 
       <div className="flex flex-wrap items-center gap-1 border-b border-white/[0.05] px-3 py-2">
         {(
           [
-            ['feed', 'Feed'],
+            ['calls', callouts.state === 'ready' && callouts.data.length ? `Calls ${callouts.data.length}` : 'Calls'],
             ['tx', 'Transactions'],
           ] as const
         ).map(([id, label]) => (
@@ -482,6 +483,7 @@ function Activity({ handle, wallet }: { handle: string | null; wallet: string | 
             {label}
           </button>
         ))}
+        {tab === 'tx' && (
         <div className="ml-auto flex items-center gap-1 text-[11px]">
           <select value={side} onChange={(e) => setSide(e.target.value as typeof side)} aria-label="Filter by side" className="rounded-lg border border-white/[0.06] bg-bg px-1.5 py-1 text-muted outline-none">
             <option value="all">All</option>
@@ -496,14 +498,15 @@ function Activity({ handle, wallet }: { handle: string | null; wallet: string | 
             ))}
           </select>
         </div>
+        )}
       </div>
-      {tab === 'feed' ? (
+      {tab === 'calls' ? (
         callouts.state === 'loading' && handle ? (
           <Rows />
         ) : callouts.state !== 'ready' ? (
-          <Empty text="Calls and trades show up here." sub="Callouts open with the beta's social features." />
+          <Empty text="Calls show up here." sub="Each call with its stance, the market cap when it was posted, and the move since." />
         ) : (
-          <CalloutList items={callouts.data.filter((c) => (side === 'all' || c.side === side) && (c.entry?.usd ?? 0) >= min)} />
+          <CalloutList items={callouts.data} />
         )
       ) : trades.state === 'loading' ? (
         <Rows />
@@ -549,38 +552,14 @@ function TradeList({ items }: { items: WalletTrade[] }) {
   );
 }
 
+/** The member's calls, as cards like the feed's: stance, take, market cap at the call, move since, likes and comments. */
 function CalloutList({ items }: { items: Callout[] }) {
   const now = useNow(Date.now());
-  if (!items.length) return <Empty text="No calls yet." />;
+  if (!items.length) return <Empty text="No calls yet." sub="Calls are posted from a token page: your take, timestamped and tracked from the market cap at the time." />;
   return (
-    <ul>
+    <ul className="space-y-2 p-2">
       {items.map((c) => (
-        <li key={c.id} className="flex items-start gap-3 border-t border-white/[0.03] px-3 py-2.5 first:border-0">
-          {c.side && (
-            <span className={`mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-semibold ${c.side === 'buy' ? 'bg-brand/15 text-brand' : 'bg-risk-high/15 text-risk-high'}`}>{c.side === 'buy' ? 'Buy' : 'Sell'}</span>
-          )}
-          <div className="min-w-0 flex-1 text-sm">
-            {c.token && (
-              <Link href={`/token/${c.token.address}`} className="font-semibold hover:text-brand">
-                ${c.token.symbol}
-              </Link>
-            )}
-            {c.entry?.usd != null && (
-              <span className="ml-2 font-mono text-xs text-muted">
-                {usd(c.entry.usd)}
-                {c.entry.marketCapUsd != null ? ` at ${usd(c.entry.marketCapUsd)} MC` : ''}
-              </span>
-            )}
-            {c.text && <p className="mt-0.5 text-ink/85">{c.text}</p>}
-            {c.resultPct != null && (
-              <span className={`font-mono text-xs ${c.resultPct >= 0 ? 'text-brand' : 'text-risk-high'}`}>
-                {c.resultPct >= 0 ? '+' : ''}
-                {c.resultPct.toFixed(1)}% since
-              </span>
-            )}
-          </div>
-          <span className="shrink-0 font-mono text-[11px] text-muted">{age(new Date(c.createdAt).getTime(), now)}</span>
-        </li>
+        <CallCard key={c.id} c={c} nowMs={now} showToken />
       ))}
     </ul>
   );
