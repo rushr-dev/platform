@@ -10,6 +10,7 @@ import { usd } from '@/lib/format';
 import { TokenAvatar, RiskDot } from './bits';
 import { AccountMenu } from './auth/account-menu';
 import { FeedbackButton } from './feedback';
+import { RushrPill } from './rushr-pill';
 
 const NAV = [
   { href: '/trenches', label: 'Trenches' },
@@ -43,6 +44,7 @@ export function TopBar() {
       </nav>
       <Search />
       <div className="ml-auto flex items-center gap-2">
+        <RushrPill />
         <FeedbackButton />
         <AccountMenu />
       </div>
