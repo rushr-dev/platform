@@ -275,16 +275,23 @@ app.post('/admin/tokens/supply', async (c) => {
  * (reprice.ts). ?tokens=a,b,c, or ?scan=1 for tokens whose stored prices the guard now rejects (swaps of the
  * last ?days=, default 14, at most ?limit=, default 20). Dry run unless ?write=1: the reply lists each
  * token's swaps priced/unpriced, candles changed, and the 1m high and ATH before and after.
+ * ?scan=1&list=1 only lists the flagged tokens (up to ?limit=, max 2000), to repair via ?tokens= in batches:
+ * the scan is a heuristic and keeps listing tokens that are already repaired (repricing them is a no-op).
  */
 app.post('/admin/tokens/reprice', async (c) => {
   const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
   try {
     if ((await readPause(sql, { fresh: true })).paused) return c.json({ error: 'indexer is paused' }, 409);
     const write = c.req.query('write') === '1';
+    const days = Math.min(Math.max(Number(c.req.query('days') ?? 14), 1), 90);
+    if (c.req.query('scan') === '1' && c.req.query('list') === '1') {
+      const all = await outlierTokens(sql, days, Math.min(Math.max(Number(c.req.query('limit') ?? 2000), 1), 2000));
+      return c.json({ count: all.length, tokens: all.map((t) => t.token), scanned: all });
+    }
     const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 20), 1), 100);
     const listed = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter((t) => /^0x[0-9a-f]{40}$/.test(t));
     const scanned = !listed.length && c.req.query('scan') === '1'
-      ? await outlierTokens(sql, Math.min(Math.max(Number(c.req.query('days') ?? 14), 1), 90), limit)
+      ? await outlierTokens(sql, days, limit)
       : [];
     const tokens = listed.length ? listed.slice(0, limit) : scanned.map((t) => t.token);
     const results = [];

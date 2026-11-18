@@ -21,6 +21,12 @@ export const TRUSTED_USD = 50;
 /** ...if the pool they imply holds at least this share of the market cap in liquidity. */
 export const MIN_POOL_SHARE = 0.01;
 /**
+ * Any trade, whatever its size, this far from the reference must pass the same pool-share check. Small
+ * arbitrage legs land inside MAX_DEVIATION: IDLEX tx 0x7ba9edc7… bought on the curve for $1.71 and
+ * sold the same tokens into a side pool for $3.68 (2.2x the curve), drawing an $82K high on a $37K token.
+ */
+export const POOL_CHECK_DEVIATION = 1.5;
+/**
  * This many outliers in a row that agree with each other (across 2+ transactions, TRUSTED_USD+ between
  * them) re-anchor the price. A few cents of side-pool dust can't.
  */
@@ -62,9 +68,10 @@ export function acceptsPrice(c: PriceCandidate): boolean {
   if (isDust(c)) return false;
   if (!c.reference || !(c.reference > 0)) return true;
   const ratio = c.price / c.reference;
-  if (ratio <= MAX_DEVIATION && ratio >= 1 / MAX_DEVIATION) return true;
-  if (c.usd < TRUSTED_USD) return false;
-  // A big trade far from the reference: real only if it moved a pool that matters.
+  if (ratio <= POOL_CHECK_DEVIATION && ratio >= 1 / POOL_CHECK_DEVIATION) return true;
+  // Past MAX_DEVIATION only big trades may count...
+  if ((ratio > MAX_DEVIATION || ratio < 1 / MAX_DEVIATION) && c.usd < TRUSTED_USD) return false;
+  // ...and past POOL_CHECK_DEVIATION any trade must have moved a pool that matters.
   return !c.supply || !(c.supply > 0) || poolShare(c.usd, c.price, c.reference, c.supply) >= MIN_POOL_SHARE;
 }
 
@@ -97,7 +104,13 @@ export class PriceReference {
       this.streak = { price: c.price, n: 1, usd: c.usd, txs: new Set([c.tx]) };
     }
     const cur = this.streak!;
-    if (cur.n >= REANCHOR_TRADES && cur.txs.size >= 2 && cur.usd >= TRUSTED_USD) {
+    // Re-anchoring up must be backed like a single big trade: the streak's USD together has to move a
+    // pool that matters. Otherwise a bot paying $0.45 a time into a junk pool reaches TRUSTED_USD after
+    // ~110 trades and the token jumps to its price (ENDAI: $1.07 vs $0.00003, a 35,000x peak). Down
+    // stays easy, so a reference stuck on a wick recovers.
+    const backed = !(this.price != null && c.price > this.price) || !c.supply || !(c.supply > 0)
+      || poolShare(cur.usd, c.price, this.price, c.supply) >= MIN_POOL_SHARE;
+    if (cur.n >= REANCHOR_TRADES && cur.txs.size >= 2 && cur.usd >= TRUSTED_USD && backed) {
       this.price = c.price;
       this.streak = null;
       return true;

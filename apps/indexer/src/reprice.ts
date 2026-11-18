@@ -8,7 +8,7 @@
  * check existed. USD values (trade sizes, volumes, PnL) don't change; only which trades set a price.
  */
 import type { Sql } from 'postgres';
-import { MAX_DEVIATION, MIN_POOL_SHARE, PriceReference, TRUSTED_USD } from '@rushr/core';
+import { MAX_DEVIATION, MIN_POOL_SHARE, POOL_CHECK_DEVIATION, PriceReference, TRUSTED_USD } from '@rushr/core';
 
 /** Buckets this recent are left to the live pipeline (it may be writing them right now). */
 const LIVE_S = 120;
@@ -46,7 +46,10 @@ export async function repriceToken(sql: Sql, token: string, opts: { write: boole
         usd::float8 as usd, price_usd::float8 as price_usd
       from swaps where token = ${token} order by block, log_index`;
 
-    const ref = new PriceReference();
+    // Seed with the first price the pipeline stored: older swaps may be gone (retention), and with no
+    // reference the first trade left would set the price, even a junk pool's (ENDAI: $1.07 vs $0.00003).
+    // A wrong seed doesn't stick: PriceReference re-anchors on agreeing trades.
+    const ref = new PriceReference(swaps.find((s) => s.price_usd != null)?.price_usd ?? null);
     const changed: { tx: string; li: number; price: number | null }[] = [];
     const candles = new Map<number, Candle>();
     let unpriced = 0;
@@ -133,9 +136,11 @@ export async function repriceToken(sql: Sql, token: string, opts: { write: boole
 }
 
 /**
- * Tokens with a stored price the current guard would reject: a trade of TRUSTED_USD+ that moved the
- * price more than MAX_DEVIATION from the previous priced trade while implying a pool under
- * MIN_POOL_SHARE of the market cap. Swaps since `days` ago; most offending trades first.
+ * Tokens with a stored price the current guard would likely reject: a priced trade more than
+ * POOL_CHECK_DEVIATION from the previous priced trade that implies a pool under MIN_POOL_SHARE of the
+ * market cap, or a trade under TRUSTED_USD past MAX_DEVIATION. Swaps since `days` ago; most flagged
+ * trades first. A heuristic (it compares with the previous priced trade, not the guard's re-anchoring
+ * reference), so repaired tokens can stay listed: repriceToken on them is a no-op.
  */
 export async function outlierTokens(sql: Sql, days: number, limit: number): Promise<{ token: string; symbol: string; trades: number; worst: number }[]> {
   return sql<{ token: string; symbol: string; trades: number; worst: number }[]>`
@@ -146,8 +151,10 @@ export async function outlierTokens(sql: Sql, days: number, limit: number): Prom
     )
     select p.token, t.symbol, count(*)::int as trades, max(greatest(p.px / p.ref, p.ref / p.px))::float8 as worst
     from p join tokens t on t.address = p.token
-    where p.ref > 0 and p.usd >= ${TRUSTED_USD} and (p.px > ${MAX_DEVIATION} * p.ref or p.px * ${MAX_DEVIATION} < p.ref)
-      and t.total_supply > 0
-      and p.usd / (abs(p.px / p.ref - 1) * p.ref * t.total_supply::float8 / power(10, t.decimals)) < ${MIN_POOL_SHARE}
+    where p.ref > 0 and t.total_supply > 0 and (p.px > ${POOL_CHECK_DEVIATION} * p.ref or p.px * ${POOL_CHECK_DEVIATION} < p.ref)
+      and (
+        p.usd / (abs(p.px / p.ref - 1) * p.ref * t.total_supply::float8 / power(10, t.decimals)) < ${MIN_POOL_SHARE}
+        or (p.usd < ${TRUSTED_USD} and (p.px > ${MAX_DEVIATION} * p.ref or p.px * ${MAX_DEVIATION} < p.ref))
+      )
     group by p.token, t.symbol order by trades desc limit ${limit}`;
 }

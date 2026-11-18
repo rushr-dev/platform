@@ -72,6 +72,26 @@ describe('IDLEX side-pool arbitrage', () => {
     expect(high).toBeLessThan(0.00004);
   });
 
+  it('rejects the small arbitrage leg inside 3x: $3.68 sold into the side pool at 2.2x the curve', () => {
+    // tx 0x7ba9edc7…: log 7 buys 44,876 IDLEX on the curve for $1.71, log 9 sells them into 0x5abf0ef7… for $3.68.
+    const curve = trade(1.7079648290582623, 44876849067013037301258n, 949556716553334n, '0x7ba9edc7');
+    const leg = trade(3.678146, 44876849067013037301258n, 3678146n, '0x7ba9edc7');
+    expect(leg.price / curve.price).toBeGreaterThan(2);
+    expect(leg.price / curve.price).toBeLessThan(3);
+    expect(acceptsPrice({ ...leg, reference: curve.price })).toBe(false);
+    // The next curve trade still prices.
+    const r = new PriceReference(curve.price);
+    expect(r.accept(leg)).toBe(false);
+    expect(r.accept(block[5]!.t)).toBe(true);
+  });
+
+  it('accepts small trades that drift up to 1.5x, and deep-pool moves past it', () => {
+    const ref = 0.000037;
+    expect(acceptsPrice({ usd: 1, price: ref * 1.4, quoteRaw: 1n, reference: ref, supply: SUPPLY })).toBe(true);
+    // $500 that moved a $37K-cap token 2x implies a pool of 1.4% of the cap: real.
+    expect(acceptsPrice({ usd: 500, price: ref * 2, quoteRaw: 1n, reference: ref, supply: SUPPLY })).toBe(true);
+  });
+
   it('still lets a big buy pump a real pool far past the reference', () => {
     // A fresh curve holding most of the supply: $3,000 into ~$1,000 of quote reserve fills at ~4x.
     expect(acceptsPrice({ usd: 3_000, price: 4e-6, quoteRaw: 1n, reference: 1e-6, supply: SUPPLY })).toBe(true);
@@ -94,14 +114,30 @@ describe('PriceReference', () => {
   it('does not re-anchor on one transaction, or when a trade near the reference interrupts', () => {
     const r = new PriceReference(1.0);
     const t = (tx: string, price: number) => ({ usd: 20, price, quoteRaw: 20_000_000n, supply: 1e6, tx });
-    for (let i = 0; i < 5; i++) expect(r.accept(t('arb', 40))).toBe(false);
-    expect(r.accept(t('x', 40))).toBe(true); // a second transaction agrees: 6 outliers from 2 txs
+    for (let i = 0; i < 5; i++) expect(r.accept(t('arb', 0.02))).toBe(false);
+    expect(r.accept(t('x', 0.02))).toBe(true); // a second transaction agrees: 6 outliers from 2 txs
     const q = new PriceReference(1.0);
-    expect(q.accept(t('a', 40))).toBe(false);
-    expect(q.accept(t('b', 40))).toBe(false);
+    expect(q.accept(t('a', 0.02))).toBe(false);
+    expect(q.accept(t('b', 0.02))).toBe(false);
     expect(q.accept(t('c', 1.1))).toBe(true); // back on the main pool: streak resets
-    expect(q.accept(t('d', 40))).toBe(false);
+    expect(q.accept(t('d', 0.02))).toBe(false);
     expect(q.price).toBe(1.1);
+  });
+
+  it('re-anchors up only when the streak could move a pool that matters', () => {
+    // ENDAI 2026-11-11: a bot bought ~$0.45 at a time in a junk pool at $1.07 (token at $0.00003, 1B
+    // supply). 1,272 of them add up to $600, which a $30K token can't be pushed 35,000x by.
+    const r = new PriceReference(0.00003);
+    const junk = (i: number) => ({ usd: 0.45, price: 1.07, quoteRaw: 450_000n, supply: 1e9, tx: `j${i}` });
+    for (let i = 0; i < 1272; i++) expect(r.accept(junk(i))).toBe(false);
+    expect(r.price).toBe(0.00003);
+    // A real repricing up: $2,000 of buys at 3.5x on a $30K token (pool share 2.2%) does re-anchor.
+    const q = new PriceReference(0.00003);
+    const buy = (tx: string) => ({ usd: 40, price: 0.000105, quoteRaw: 40_000_000n, supply: 1e9, tx });
+    let anchored = false;
+    for (let i = 0; i < 50 && !anchored; i++) anchored = q.accept(buy(`b${i}`));
+    expect(anchored).toBe(true);
+    expect(q.price).toBe(0.000105);
   });
 
   it('does not re-anchor on cents: agreeing outliers must add up to TRUSTED_USD', () => {
