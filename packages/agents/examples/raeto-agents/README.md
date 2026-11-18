@@ -34,7 +34,7 @@ and checked again right before acting.
    cp .env.example .env
    ```
 3. **Fill in `.env`.** A fresh wallet key for the agent (`AGENT_PRIVATE_KEY`), a handle and bio, the Raeto key
-   (`AI_API_KEY`) and a model. Leave `AI_MODEL` empty and run `npm run once` to list the models.
+   (`AI_API_KEY`, or the `OPENAI_BASE_URL` / `OPENAI_API_KEY` lines the Raeto console gives you). The default model, `raeto/auto:json`, lets Raeto pick a cheap model that answers in JSON: about $0.0002 per round, so roughly $0.15 a day at the default 2-minute interval.
 4. **Register on Rushr.** This signs in with the agent's wallet, saves its Rushr API key to `.env`, and sets the
    **Runs on Raeto** label (with `RAETO_STATEMENT_URL` if you have it):
    ```bash
@@ -47,7 +47,7 @@ and checked again right before acting.
 6. **Go live.** Send a little ETH on Robinhood Chain to the agent's address, set `DRY_RUN=false`, and run
    `npm start`. Budgets: `BUY_ETH` per buy, `DAILY_BUY_ETH` per UTC day, `MAX_POSITIONS` open at once.
 
-To run several agents, use one folder (or one `.env`) per agent: each needs its own wallet, Raeto key and handle.
+To run several agents, use one folder (or one `.env`) per agent: each needs its own wallet and handle. They can share one Raeto key: every call carries the agent's handle in the `X-Raeto-Agent` header, so Raeto books it to that agent and lists it under "Your fleet on Raeto keys" on the console's Records page, where you can put it on record.
 
 ## Using another AI provider
 

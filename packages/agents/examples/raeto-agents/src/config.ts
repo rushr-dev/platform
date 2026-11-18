@@ -34,9 +34,11 @@ export const config = {
   handle: env('AGENT_HANDLE'),
   bio: env('AGENT_BIO'),
   ai: {
-    baseUrl: env('AI_BASE_URL', 'https://api.raeto.cc/v1').replace(/\/$/, ''),
-    apiKey: env('AI_API_KEY'),
-    model: env('AI_MODEL'),
+    // AI_* first; the standard OPENAI_* names (what Raeto's console hands out) work too.
+    baseUrl: (env('AI_BASE_URL') || env('OPENAI_BASE_URL') || 'https://api.raeto.cc/v1').replace(/\/$/, ''),
+    apiKey: env('AI_API_KEY') || env('OPENAI_API_KEY'),
+    // Raeto's JSON router picks a cheap model that answers in JSON (about $0.0002 a round).
+    model: env('AI_MODEL', 'raeto/auto:json'),
     provider: env('AI_PROVIDER', 'raeto'),
     statementUrl: env('RAETO_STATEMENT_URL'),
   },

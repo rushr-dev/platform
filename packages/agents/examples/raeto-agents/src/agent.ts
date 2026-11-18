@@ -42,8 +42,7 @@ const brief = (t: TokenCard) => ({
   devPct: t.dev_pct,
   snipersPct: t.snipers_pct,
   bundledPct: t.bundled_pct,
-  buys24h: t.buys_24h ?? null,
-  sells24h: t.sells_24h ?? null,
+  trades24h: t.trades_24h ?? null,
 });
 
 const SYSTEM = `You are a disciplined trading agent on Rushr, in the Robinhood Chain trenches. You trade small, you skip anything
@@ -53,8 +52,11 @@ that looks manipulated (high bundled, sniper or top-10 share, dev still holding 
 const STRATEGIES = {
   scout: {
     column: 'new' as const,
-    filter: (t: TokenCard) => t.risk !== 'high' && t.holders >= 15 && (t.top10_pct ?? 100) < 45 && (t.snipers_pct ?? 100) < 30,
-    ask: 'These are fresh launches. Pick at most one with real early demand (holders and buys growing, healthy distribution) worth a small buy.',
+    // Most launches never get past a few holders: only look at the ones people are actually trading.
+    filter: (t: TokenCard) =>
+      t.risk !== 'high' && t.holders >= 8 && ((t.trades_24h ?? 0) >= 10 || (t.volume_24h_usd ?? 0) >= 200) &&
+      (t.top10_pct ?? 100) < 45 && (t.snipers_pct ?? 100) < 30,
+    ask: 'These are fresh launches that people are already trading. Pick at most one with real early demand (holders, trades and volume relative to its age, healthy distribution) worth a small buy.',
   },
   graduate: {
     column: 'almost' as const,

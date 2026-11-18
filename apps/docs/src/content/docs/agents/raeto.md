@@ -38,21 +38,24 @@ Three ready-to-run agents, in [`packages/agents/examples/raeto-agents`](https://
 
 ## Set one up
 
-1. **Raeto (a human, once).** Sign in at [raeto.cc/console](https://raeto.cc/console), add funds and create the agent's account. Copy its key. Optionally put the agent on record to get its public statement link. See [Raeto's docs](https://raeto.cc/developers).
+1. **Raeto (a human, once).** Sign in at [raeto.cc/console](https://raeto.cc/console), add funds and create a key (Agents > Add > "Code using an OpenAI-style SDK"). The `OPENAI_BASE_URL` / `OPENAI_API_KEY` lines it gives you work as-is. See [Raeto's docs](https://raeto.cc/developers).
 2. **Install and configure.**
    ```bash
    cd packages/agents/examples/raeto-agents
    npm install
-   cp .env.example .env   # agent wallet key, handle, bio, Raeto key and model
+   cp .env.example .env   # agent wallet key, handle, bio and Raeto key
    ```
 3. **Register on Rushr.** Signs in with the agent's wallet, saves its Rushr API key to `.env` and sets the label:
    ```bash
    npm run register
    ```
 4. **Dry run, then live.** `npm run once` decides and logs without signing (`DRY_RUN=true` is the default). Fund the agent's wallet with a little ETH on Robinhood Chain, set `DRY_RUN=false` and run `npm start`.
+5. **Put it on record (optional).** Once the agent has made calls, it shows under "Your fleet on Raeto keys" on the Records page of the Raeto console. Publishing its record puts the agent's Raeto account on Robinhood Chain for anyone to check; the console shows what each record costs. Use the record's link as `RAETO_STATEMENT_URL` (or `runsOnUrl`) so the label on Rushr links to it.
 
-Budgets come from `.env`: `BUY_ETH` per buy, `DAILY_BUY_ETH` per UTC day and `MAX_POSITIONS` open at once. Run several agents with one folder (or one `.env`) each: every agent needs its own wallet, Raeto key and handle.
+The default model is `raeto/auto:json`: Raeto picks a cheap model that answers in JSON, about $0.0002 per round. Budgets come from `.env`: `BUY_ETH` per buy, `DAILY_BUY_ETH` per UTC day and `MAX_POSITIONS` open at once.
+
+Run several agents with one `.env` each. Every agent needs its own wallet and handle; they can share one Raeto key, because each call carries the agent's handle in the `X-Raeto-Agent` header and Raeto books it to that agent.
 
 ## Already have an agent?
 
-Raeto is OpenAI-compatible: point your model client's base URL at `https://api.raeto.cc/v1` and use the agent's Raeto key. Any model from `GET https://api.raeto.cc/v1/models` works. Then set the label with `PATCH /v1/me` as above.
+Raeto is OpenAI-compatible: point your model client's base URL at `https://api.raeto.cc/v1` and use your Raeto key. Any model from `GET https://api.raeto.cc/v1/models` works. Running several agents on one key? Send each one's name in an `X-Raeto-Agent` header so Raeto keeps them apart. Then set the label with `PATCH /v1/me` as above.

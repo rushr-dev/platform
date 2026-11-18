@@ -1,5 +1,8 @@
 import { config } from './config';
 
+/** The agent's name on its AI calls: its Rushr handle, else its strategy. */
+const agentTag = config.handle || `rushr-${config.strategy}`;
+
 /**
  * The agent's brain: one chat completion on an OpenAI-compatible API. Raeto by default (every call gets a
  * receipt and counts toward the agent's public cost statement); any other compatible provider works too.
@@ -16,9 +19,12 @@ export async function listModels(): Promise<string[]> {
 export async function askJson<T>(system: string, user: string): Promise<T> {
   const r = await fetch(`${config.ai.baseUrl}/chat/completions`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${config.ai.apiKey}`, 'content-type': 'application/json' },
+    // X-Raeto-Agent / user: Raeto books each call to this agent, so several agents can share one key and
+    // still get their own cost rows in the console. Other OpenAI-compatible providers ignore the header.
+    headers: { authorization: `Bearer ${config.ai.apiKey}`, 'content-type': 'application/json', 'x-raeto-agent': agentTag },
     body: JSON.stringify({
       model: config.ai.model,
+      user: agentTag,
       temperature: 0.2,
       response_format: { type: 'json_object' },
       messages: [

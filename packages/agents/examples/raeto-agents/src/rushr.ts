@@ -51,8 +51,8 @@ export interface TokenCard {
   snipers_pct: number | null;
   bundled_pct: number | null;
   liquidity_usd?: number | null;
-  buys_24h?: number | null;
-  sells_24h?: number | null;
+  /** Trades in the last 24h (the trenches list sends this, not a buy/sell split). */
+  trades_24h?: number | null;
 }
 
 export interface Holding {
@@ -64,7 +64,7 @@ export interface Holding {
   unrealized_usd: number | null;
 }
 
-export const trenches = (column: 'new' | 'almost' | 'migrated', limit = 25) =>
+export const trenches = (column: 'new' | 'almost' | 'migrated', limit = 50) =>
   api<{ tokens: TokenCard[] }>('GET', `/tokens?column=${column}&limit=${limit}&hideHighRisk=1`, undefined, false).then((r) => r.tokens);
 
 export const safety = (token: string) =>
