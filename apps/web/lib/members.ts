@@ -33,6 +33,10 @@ export interface Member {
 export interface RunsOn {
   provider: string;
   url: string | null;
+  /** Its linked Raeto account record (ERC-8004 agent id), if any. */
+  agentId?: string | null;
+  /** Checked by Rushr against Raeto's API: the record is the agent's own and active. */
+  onRecord?: boolean;
 }
 
 export interface ApiError {

@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { refreshRaetoRecords } from './agents/raeto';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
 import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
@@ -606,6 +607,18 @@ export default {
             and coalesce((select min(x.block) from transfers x where x.token = t.address), 0) > t.created_block + 100
           order by t.volume_24h_usd desc nulls last limit 20`;
         if (rows.length) await holderHistory(env).enqueueHolders(rows.map((r) => r.address));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 15 minutes: re-read linked Raeto account records (raeto.ts), so "On record" follows Raeto.
+    if (minute % 15 === 11) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const changed = await refreshRaetoRecords(sql);
+        if (changed) console.log(`raeto records: ${changed} changed status`);
+      } catch (err) {
+        console.error('raeto record refresh failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }

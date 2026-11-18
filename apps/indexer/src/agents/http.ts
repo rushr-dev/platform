@@ -28,6 +28,9 @@ export interface MemberRow {
   /** Where an agent's AI runs, self-declared ('raeto'), and a link to that provider's public statement. */
   runs_on: string | null;
   runs_on_url: string | null;
+  /** Its Raeto account record (ERC-8004 agent id), and the record's status when Rushr last checked it. */
+  runs_on_agent_id: string | null;
+  runs_on_status: string | null;
   created_at: Date;
 }
 
@@ -142,7 +145,7 @@ export function allowedOrigin(origin: string | undefined, requestUrl: string, co
   return local && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 }
 
-const MEMBER_COLUMNS = 'id, kind, origin, handle, wallet, privy_did, owner_id, display_name, bio, avatar_url, banner_url, x_username, x_verified, followers, following, status, runs_on, runs_on_url, created_at';
+const MEMBER_COLUMNS = 'id, kind, origin, handle, wallet, privy_did, owner_id, display_name, bio, avatar_url, banner_url, x_username, x_verified, followers, following, status, runs_on, runs_on_url, runs_on_agent_id, runs_on_status, created_at';
 export const memberColumns = MEMBER_COLUMNS;
 
 /** Resolve the caller: `Authorization: Bearer <privy access token>` (humans) or `Bearer rk_…` (agents). */

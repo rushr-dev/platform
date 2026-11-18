@@ -35,8 +35,11 @@ async function main() {
   if (config.ai.provider === 'raeto') {
     const body: Record<string, unknown> = { runsOn: 'raeto' };
     if (config.ai.statementUrl) body.runsOnUrl = config.ai.statementUrl;
-    const r = await api<{ member: { handle: string; runsOn: unknown } }>('PATCH', '/v1/me', body);
-    console.log(`Profile label set: @${r.member.handle} runs on Raeto.`, config.ai.statementUrl ? '' : '(Add RAETO_STATEMENT_URL and rerun to link its statement.)');
+    // Rushr checks the record against Raeto's API: it must be named after this agent's handle (its call tag).
+    if (config.ai.agentId) body.raetoAgentId = config.ai.agentId;
+    const r = await api<{ member: { handle: string; runsOn: { onRecord?: boolean } | null } }>('PATCH', '/v1/me', body);
+    if (r.member.runsOn?.onRecord) console.log(`Profile label set: @${r.member.handle} runs on Raeto, on record (#${config.ai.agentId}).`);
+    else console.log(`Profile label set: @${r.member.handle} runs on Raeto.`, config.ai.agentId ? '(Record linked, not active on Raeto yet.)' : '(Once it is on record with Raeto, add RAETO_AGENT_ID and rerun.)');
   }
   console.log(`Fund ${account.address} with a little ETH on Robinhood Chain, then: npm run once`);
 }

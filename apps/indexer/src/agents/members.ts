@@ -6,6 +6,7 @@ import { IP_LIMITS } from '@rushr/agents/limits';
 import { newMemberId } from '@rushr/agents/crypto';
 import { on } from './env';
 import { recordReferral, referrerByCode } from './referrals';
+import { fetchRaetoRecord, recordIsAgents, runsOnOf } from './raeto';
 import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, httpsUrl, isAddr, limit, memberColumns, privyProfile, publicCache, PRIVATE, requireMember, str, type Ctx, type MemberRow } from './http';
 
 export function publicMember(m: MemberRow, owner?: { id: string; handle: string } | null) {
@@ -23,8 +24,11 @@ export function publicMember(m: MemberRow, owner?: { id: string; handle: string 
     owner: owner ?? null,
     followers: m.followers,
     following: m.following,
-    /** Self-declared by the agent: where its AI runs (e.g. Raeto), with its public statement link. */
-    runsOn: m.runs_on ? { provider: m.runs_on, url: m.runs_on_url } : null,
+    /**
+     * Where the agent's AI runs (e.g. Raeto), self-declared, with a link. `onRecord` is checked: the agent linked
+     * its Raeto account record and Raeto reports it active.
+     */
+    runsOn: runsOnOf(m),
     createdAt: m.created_at,
     joinedAt: m.created_at,
   };
@@ -172,8 +176,8 @@ const RUNS_ON_HOSTS: Record<(typeof RUNS_ON)[number], string> = { raeto: 'raeto.
  */
 export function runsOnFields(m: MemberRow, b: Record<string, unknown>): Record<string, string | null> {
   if (m.kind !== 'agent') throw fail(422, 'agents_only', 'Only agents can set runsOn.', { field: 'runsOn' });
-  const provider = 'runsOn' in b ? b.runsOn : m.runs_on;
-  if (provider === null || provider === '') return { runs_on: null, runs_on_url: null };
+  const provider = 'runsOn' in b ? b.runsOn : m.runs_on ?? ('raetoAgentId' in b ? 'raeto' : null);
+  if (provider === null || provider === '') return { runs_on: null, runs_on_url: null, runs_on_agent_id: null, runs_on_status: null };
   if (typeof provider !== 'string' || !(RUNS_ON as readonly string[]).includes(provider.toLowerCase())) {
     throw fail(422, 'invalid_field', `runsOn must be one of: ${RUNS_ON.join(', ')} (or null).`, { field: 'runsOn' });
   }
@@ -193,7 +197,31 @@ export function runsOnFields(m: MemberRow, b: Record<string, unknown>): Record<s
   return out;
 }
 
-/** Edit your profile: `{ handle?, displayName?, bio? (one line, 160), avatarUrl?, bannerUrl?, runsOn?, runsOnUrl? }`. */
+/**
+ * `raetoAgentId`: the agent's Raeto account record (its ERC-8004 agent id), or null to unlink. Read from Raeto's
+ * API right away: the record must exist and be the agent's own (named after its handle, or owned by its wallet).
+ * Linking also sets `runsOn: 'raeto'`.
+ */
+async function raetoRecordFields(m: MemberRow, b: Record<string, unknown>): Promise<Record<string, unknown>> {
+  if (m.kind !== 'agent') throw fail(422, 'agents_only', 'Only agents can link a Raeto record.', { field: 'raetoAgentId' });
+  const v = b.raetoAgentId;
+  if (v === null || v === '') return { runs_on_agent_id: null, runs_on_status: null, runs_on_checked_at: null };
+  const id = typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? String(v) : typeof v === 'string' ? v.trim() : '';
+  if (!/^[0-9]{1,20}$/.test(id)) throw fail(422, 'invalid_field', 'raetoAgentId must be an ERC-8004 agent id (a number), or null.', { field: 'raetoAgentId' });
+  let rec;
+  try {
+    rec = await fetchRaetoRecord(id);
+  } catch {
+    throw fail(503, 'raeto_unavailable', "Couldn't reach Raeto to check the record. Try again in a minute.", { field: 'raetoAgentId' });
+  }
+  if (!rec) throw fail(422, 'raeto_record_not_found', `Raeto has no account record for agent ${id}. Publish it on the Records page of the Raeto console first.`, { field: 'raetoAgentId' });
+  if (!recordIsAgents(rec, m)) {
+    throw fail(422, 'raeto_record_mismatch', `Raeto record ${id} is named "${rec.name ?? ''}". Link a record named after this agent's handle (${m.handle}, the X-Raeto-Agent tag on its calls) or owned by its wallet.`, { field: 'raetoAgentId' });
+  }
+  return { runs_on: 'raeto', runs_on_agent_id: id, runs_on_status: rec.status, runs_on_checked_at: new Date() };
+}
+
+/** Edit your profile: `{ handle?, displayName?, bio? (one line, 160), avatarUrl?, bannerUrl?, runsOn?, runsOnUrl?, raetoAgentId? }`. */
 members.patch('/me', async (c) => {
   const m = requireMember(c, { scope: 'profile' });
   await limit(c, 'write');
@@ -211,6 +239,13 @@ members.patch('/me', async (c) => {
   if ('avatarUrl' in b) set.avatar_url = httpsUrl(b.avatarUrl, 'avatarUrl');
   if ('bannerUrl' in b) set.banner_url = httpsUrl(b.bannerUrl, 'bannerUrl');
   if ('runsOn' in b || 'runsOnUrl' in b) Object.assign(set, runsOnFields(m, b));
+  if ('raetoAgentId' in b && !('runsOn' in b && (b.runsOn === null || b.runsOn === ''))) {
+    const linked = await raetoRecordFields(m, b);
+    if (linked.runs_on_agent_id && (await sql`select 1 from members where runs_on_agent_id = ${linked.runs_on_agent_id as string} and id <> ${m.id}`).length) {
+      throw fail(409, 'raeto_record_taken', 'Another Rushr agent already linked that Raeto record.', { field: 'raetoAgentId' });
+    }
+    Object.assign(set, linked);
+  }
   if (Object.keys(set).length === 0) throw fail(422, 'nothing_to_update', 'Send at least one field.');
   const [row] = await sql.unsafe<MemberRow[]>(
     `update members set ${Object.keys(set).map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning ${memberColumns}`,

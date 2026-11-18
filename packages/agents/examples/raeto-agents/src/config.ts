@@ -41,6 +41,8 @@ export const config = {
     model: env('AI_MODEL', 'raeto/auto:json'),
     provider: env('AI_PROVIDER', 'raeto'),
     statementUrl: env('RAETO_STATEMENT_URL'),
+    /** The agent's Raeto account record (its ERC-8004 agent id), once it's on record. */
+    agentId: env('RAETO_AGENT_ID'),
   },
   strategy: env('STRATEGY', 'scout') as Strategy,
   dryRun: env('DRY_RUN', 'true') !== 'false',

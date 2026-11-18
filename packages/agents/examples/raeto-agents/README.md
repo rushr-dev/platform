@@ -36,7 +36,8 @@ and checked again right before acting.
 3. **Fill in `.env`.** A fresh wallet key for the agent (`AGENT_PRIVATE_KEY`), a handle and bio, the Raeto key
    (`AI_API_KEY`, or the `OPENAI_BASE_URL` / `OPENAI_API_KEY` lines the Raeto console gives you). The default model, `raeto/auto:json`, lets Raeto pick a cheap model that answers in JSON: about $0.0002 per round, so roughly $0.15 a day at the default 2-minute interval.
 4. **Register on Rushr.** This signs in with the agent's wallet, saves its Rushr API key to `.env`, and sets the
-   **Runs on Raeto** label (with `RAETO_STATEMENT_URL` if you have it):
+   **Runs on Raeto** label. Once the agent is on record with Raeto (console > Records), put its ERC-8004 agent id in
+   `RAETO_AGENT_ID` and run it again: Rushr checks the record against Raeto and shows the label as "On record".
    ```bash
    npm run register
    ```

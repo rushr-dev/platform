@@ -127,8 +127,9 @@ describe.skipIf(!pg)('independent agents', () => {
   it('declares where its AI runs (Raeto) and shows it on the public profile', async () => {
     const set = await t.call('PATCH', '/me', { auth: apiKey, body: { runsOn: 'Raeto', runsOnUrl: 'https://raeto.cc/statements/42' } });
     expect(set.status).toBe(200);
-    expect(set.json.member.runsOn).toEqual({ provider: 'raeto', url: 'https://raeto.cc/statements/42' });
-    expect((await t.call('GET', '/members/alphabot')).json.member.runsOn).toEqual({ provider: 'raeto', url: 'https://raeto.cc/statements/42' });
+    const declared = { provider: 'raeto', url: 'https://raeto.cc/statements/42', agentId: null, onRecord: false };
+    expect(set.json.member.runsOn).toEqual(declared);
+    expect((await t.call('GET', '/members/alphabot')).json.member.runsOn).toEqual(declared);
     // Only known providers, and the link must be on the provider's own site.
     expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOn: 'skynet' } })).json.error.code).toBe('invalid_field');
     expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOnUrl: 'https://evil.example/raeto.cc' } })).json.error.code).toBe('invalid_field');
@@ -141,6 +142,43 @@ describe.skipIf(!pg)('independent agents', () => {
     await t.sql`insert into members (id, kind, origin, handle, wallet, privy_did) values ('m_humanrunson', 'human', null, 'humanrunson', '0x00000000000000000000000000000000000000ee', 'did:privy:runson')`;
     const human = await t.token('did:privy:runson');
     expect((await t.call('PATCH', '/me', { auth: human, body: { runsOn: 'raeto' } })).json.error.code).toBe('agents_only');
+  });
+
+  it('links its Raeto account record, checked against Raeto, and shows "on record" while it is active', async () => {
+    // Raeto's public API, faked: 101 is alphabot's record, 102 belongs to someone else, 103 doesn't exist.
+    const records: Record<string, object> = {
+      '101': { agent_id: '101', name: 'alphabot', status: 'active', account: '0x90d8f649ac6725dace16e6c7de1233fba99d63d5', owner: '0x459e4d1bd31f3b22af3ff9fde1a5e56d5bddfa5b' },
+      '102': { agent_id: '102', name: 'someone_else', status: 'active', account: '0x1111111111111111111111111111111111111111', owner: '0x2222222222222222222222222222222222222222' },
+    };
+    const realFetch = globalThis.fetch;
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const m = url.match(/^https:\/\/api\.raeto\.cc\/v1\/statements\/agents\/(\d+)$/);
+      if (!m) return realFetch(input, init);
+      const rec = records[m[1]!];
+      return rec ? Response.json(rec) : Response.json({ error: { type: 'not_found' } }, { status: 404 });
+    });
+    try {
+      const linked = await t.call('PATCH', '/me', { auth: apiKey, body: { raetoAgentId: 101 } });
+      expect(linked.status).toBe(200);
+      expect(linked.json.member.runsOn).toEqual({ provider: 'raeto', url: 'https://raeto.cc/a/101', agentId: '101', onRecord: true });
+      expect((await t.call('GET', '/members/alphabot')).json.member.runsOn.onRecord).toBe(true);
+      // Someone else's record, a missing one and a non-number are refused.
+      expect((await t.call('PATCH', '/me', { auth: apiKey, body: { raetoAgentId: '102' } })).json.error.code).toBe('raeto_record_mismatch');
+      expect((await t.call('PATCH', '/me', { auth: apiKey, body: { raetoAgentId: '103' } })).json.error.code).toBe('raeto_record_not_found');
+      expect((await t.call('PATCH', '/me', { auth: apiKey, body: { raetoAgentId: 'abc' } })).json.error.code).toBe('invalid_field');
+      // The cron follows Raeto: a record that stops being active drops "on record".
+      records['101'] = { ...records['101'], status: 'lapsed' };
+      await t.sql`update members set runs_on_checked_at = now() - interval '1 hour' where handle = 'alphabot'`;
+      const { refreshRaetoRecords } = await import('../src/agents/raeto');
+      expect(await refreshRaetoRecords(t.sql)).toBe(1);
+      expect((await t.call('GET', '/members/alphabot')).json.member.runsOn).toEqual({ provider: 'raeto', url: 'https://raeto.cc/a/101', agentId: '101', onRecord: false });
+      // Unlinking keeps the label, and clearing runsOn clears everything.
+      expect((await t.call('PATCH', '/me', { auth: apiKey, body: { raetoAgentId: null } })).json.member.runsOn).toEqual({ provider: 'raeto', url: null, agentId: null, onRecord: false });
+      expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOn: null } })).json.member.runsOn).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('posts callouts and follows through the API like any member', async () => {
