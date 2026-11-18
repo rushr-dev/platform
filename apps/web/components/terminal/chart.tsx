@@ -67,6 +67,7 @@ export function PriceChart({
   selectedCall = null,
   onSelectCall,
   avgBuy = null,
+  athMcap = null,
 }: {
   address: string;
   /** 1m candles for the last 24h; null while they load. */
@@ -89,6 +90,8 @@ export function PriceChart({
   onSelectCall?: (id: string | null) => void;
   /** The signed-in wallet's average buy price (USD) while it holds the token: a dashed line on the axis. */
   avgBuy?: number | null;
+  /** The token's all-time-high market cap (USD): a dotted line, shown when it is in view. */
+  athMcap?: number | null;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -348,6 +351,23 @@ export function PriceChart({
     });
     return () => series.removePriceLine(line);
   }, [avgBuy, scale]);
+
+  // All-time high: same kind of line, in market cap or price units. Like the average buy it stays out of
+  // autoscale, so a far-off ATH never squashes the candles; it appears once the chart reaches it.
+  useEffect(() => {
+    const series = candles.current;
+    if (!series || athMcap == null || !(athMcap > 0) || !(supply > 0)) return;
+    const value = scale > 1 ? athMcap : athMcap / supply;
+    const line = series.createPriceLine({
+      price: value,
+      color: 'rgba(255,255,255,0.45)',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      axisLabelVisible: true,
+      title: `ATH ${scale > 1 ? `${usd(athMcap)} MC` : usdPrecise(value)}`,
+    });
+    return () => series.removePriceLine(line);
+  }, [athMcap, scale, supply]);
 
   // Call markers: the most recent calls, at the candle of each call and the price (or market cap)
   // when it was posted.

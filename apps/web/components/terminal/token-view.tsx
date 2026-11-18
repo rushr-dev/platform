@@ -103,6 +103,8 @@ export function TokenView({
   }, []);
 
   const priceNow = trades?.[0]?.priceUsd ?? t.price_usd ?? null;
+  const mcapNow = priceNow && supply ? priceNow * supply : t.market_cap_usd;
+  useMcapTitle(t.symbol, mcapNow);
   // The signed-in wallet's position in this token: live with every price tick and own trade, and
   // drawn on the chart as B/S markers.
   const session = useAuth();
@@ -228,6 +230,7 @@ export function TokenView({
               marks={myWallet ? position.trades : null}
               calls={calls.items}
               avgBuy={myWallet && position.loaded && position.holding && position.boughtTokens > 0 ? position.boughtUsd / position.boughtTokens : null}
+              athMcap={Math.max(t.ath_market_cap_usd ?? 0, mcapNow ?? 0) || null}
               selectedCall={selectedCall}
               onSelectCall={(id) => {
                 setSelectedCall(id);
@@ -319,6 +322,23 @@ function About({
 }
 
 /** Desktop breakpoint, read after mount (false during server render). */
+/**
+ * The browser tab shows the live market cap ("$RUSHR $86.2K | Rushr"), so traders with many tokens open can
+ * glance at the tabs instead of switching. Put back as it was when the page closes.
+ */
+function useMcapTitle(symbol: string, mcap: number | null | undefined) {
+  const label = mcap != null && Number.isFinite(mcap) && mcap > 0 ? usd(mcap) : null;
+  useEffect(() => {
+    const before = document.title;
+    return () => {
+      document.title = before;
+    };
+  }, []);
+  useEffect(() => {
+    document.title = `$${symbol}${label ? ` ${label}` : ''} | Rushr`;
+  }, [symbol, label]);
+}
+
 function useMediaQuery(query: string) {
   const [match, setMatch] = useState(false);
   useEffect(() => {
