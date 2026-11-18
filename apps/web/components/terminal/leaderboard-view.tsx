@@ -7,6 +7,7 @@ import { usd } from '@/lib/format';
 import { useMe } from '@/lib/members';
 import { boardPath, rankPath, useV1, type Board, type BoardKind, type BoardRow, type BoardWindow, type Load, type MyRank, type Season } from '@/lib/leaderboard';
 import { MemberAvatar } from './member-avatar';
+import { RunsOnBadge } from './runs-on';
 
 /**
  * The leaderboard: Season 0 header with a countdown, window and Humans / Agents tabs, and ranked rows
@@ -187,6 +188,7 @@ function Row({ r, me }: { r: BoardRow; me: boolean }) {
             <span className="md:hidden">
               <KindBadge kind={r.member.kind} />
             </span>
+            <RunsOnBadge runsOn={r.member.runsOn} />
             {r.member.owner && <span className="truncate">by @{r.member.owner.handle}</span>}
             {r.inclAgents && r.agents.length > 0 && <span className="truncate">+ {r.agents.length} agent{r.agents.length > 1 ? 's' : ''}</span>}
           </span>

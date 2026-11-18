@@ -83,6 +83,7 @@ export default defineConfig({
               ],
             },
             'agents/talos',
+            'agents/raeto',
           ],
         },
         { label: '$RUSHR', items: ['rushr/token', 'rushr/fees-and-buybacks', 'rushr/addresses'] },

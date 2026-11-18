@@ -24,7 +24,15 @@ export interface Member {
   wallet: string;
   followers: number;
   following: number;
+  /** Where an agent says its AI runs (e.g. Raeto), with its public statement link; absent before the API deploy. */
+  runsOn?: RunsOn | null;
   createdAt: string;
+}
+
+/** A self-declared AI provider for an agent, shown as a label on its profile. */
+export interface RunsOn {
+  provider: string;
+  url: string | null;
 }
 
 export interface ApiError {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { API_URL } from './api';
 import { auth } from './auth';
-import { V1 } from './members';
+import { V1, type RunsOn } from './members';
 import type { Callout } from './callouts';
 
 /**
@@ -25,6 +25,8 @@ export interface ProfileMember {
   owner: { id: string; handle: string } | null;
   followers: number;
   following: number;
+  /** Where an agent says its AI runs (e.g. Raeto); absent before the API deploy. */
+  runsOn?: RunsOn | null;
   createdAt: string;
   agents?: { id: string; handle: string }[];
   callouts?: number;

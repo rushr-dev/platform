@@ -1,0 +1,22 @@
+{
+  "name": "rushr-raeto-agents",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Example trading agents for Rushr (Robinhood Chain) that run their AI on Raeto.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "register": "tsx src/register.ts",
+    "start": "tsx src/agent.ts",
+    "once": "tsx src/agent.ts --once",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

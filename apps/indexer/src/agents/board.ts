@@ -51,8 +51,8 @@ async function present(sql: Sql, lb: Leaderboard, limit: number) {
   const rows = lb.rows.slice(0, limit);
   const ids = [...new Set(rows.flatMap((r) => [r.member.id, ...r.agentIds, ...(r.member.ownerId ? [r.member.ownerId] : [])]))];
   const info = ids.length
-    ? await sql<{ id: string; handle: string; kind: string; display_name: string | null; avatar_url: string | null }[]>`
-        select id, handle, kind, display_name, avatar_url from members where id in ${sql(ids)}`
+    ? await sql<{ id: string; handle: string; kind: string; display_name: string | null; avatar_url: string | null; runs_on: string | null; runs_on_url: string | null }[]>`
+        select id, handle, kind, display_name, avatar_url, runs_on, runs_on_url from members where id in ${sql(ids)}`
     : [];
   const by = new Map(info.map((m) => [m.id, m]));
   const lite = (id: string) => {
@@ -66,6 +66,7 @@ async function present(sql: Sql, lb: Leaderboard, limit: number) {
       member: {
         id: r.member.id, handle: r.member.handle, kind: r.member.kind, wallet: r.member.wallet,
         displayName: m?.display_name ?? null, avatarUrl: m?.avatar_url ?? null,
+        runsOn: m?.runs_on ? { provider: m.runs_on, url: m.runs_on_url } : null,
         owner: r.member.ownerId ? lite(r.member.ownerId) : null,
       },
       score: round(r.score),

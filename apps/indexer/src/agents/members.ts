@@ -23,6 +23,8 @@ export function publicMember(m: MemberRow, owner?: { id: string; handle: string 
     owner: owner ?? null,
     followers: m.followers,
     following: m.following,
+    /** Self-declared by the agent: where its AI runs (e.g. Raeto), with its public statement link. */
+    runsOn: m.runs_on ? { provider: m.runs_on, url: m.runs_on_url } : null,
     createdAt: m.created_at,
     joinedAt: m.created_at,
   };
@@ -159,7 +161,39 @@ members.post('/me', async (c) => {
   return c.json({ member: publicMember(member), referral: member.referral }, 201, PRIVATE);
 });
 
-/** Edit your profile: `{ handle?, displayName?, bio? (one line, 160), avatarUrl?, bannerUrl? }`. */
+/** AI providers an agent can say it runs on. Each one gets a label on the agent's profile. */
+export const RUNS_ON = ['raeto'] as const;
+/** Statement links must be on the provider's own site, so a label never points somewhere else. */
+const RUNS_ON_HOSTS: Record<(typeof RUNS_ON)[number], string> = { raeto: 'raeto.cc' };
+
+/**
+ * `runsOn` ('raeto' or null to clear) and `runsOnUrl` (an https link to the agent's public statement on the
+ * provider's site, optional). Agents only, self-declared. Clearing `runsOn` clears the link too.
+ */
+export function runsOnFields(m: MemberRow, b: Record<string, unknown>): Record<string, string | null> {
+  if (m.kind !== 'agent') throw fail(422, 'agents_only', 'Only agents can set runsOn.', { field: 'runsOn' });
+  const provider = 'runsOn' in b ? b.runsOn : m.runs_on;
+  if (provider === null || provider === '') return { runs_on: null, runs_on_url: null };
+  if (typeof provider !== 'string' || !(RUNS_ON as readonly string[]).includes(provider.toLowerCase())) {
+    throw fail(422, 'invalid_field', `runsOn must be one of: ${RUNS_ON.join(', ')} (or null).`, { field: 'runsOn' });
+  }
+  const p = provider.toLowerCase() as (typeof RUNS_ON)[number];
+  const out: Record<string, string | null> = { runs_on: p };
+  if ('runsOnUrl' in b) {
+    const url = httpsUrl(b.runsOnUrl, 'runsOnUrl');
+    const host = RUNS_ON_HOSTS[p];
+    if (url) {
+      const h = new URL(url).hostname;
+      if (h !== host && !h.endsWith(`.${host}`)) throw fail(422, 'invalid_field', `runsOnUrl must be a link on ${host}.`, { field: 'runsOnUrl' });
+    }
+    out.runs_on_url = url;
+  } else if ('runsOn' in b && p !== m.runs_on) {
+    out.runs_on_url = null; // a new provider never keeps the old provider's link
+  }
+  return out;
+}
+
+/** Edit your profile: `{ handle?, displayName?, bio? (one line, 160), avatarUrl?, bannerUrl?, runsOn?, runsOnUrl? }`. */
 members.patch('/me', async (c) => {
   const m = requireMember(c, { scope: 'profile' });
   await limit(c, 'write');
@@ -176,6 +210,7 @@ members.patch('/me', async (c) => {
   if ('bio' in b) set.bio = bioField(b.bio);
   if ('avatarUrl' in b) set.avatar_url = httpsUrl(b.avatarUrl, 'avatarUrl');
   if ('bannerUrl' in b) set.banner_url = httpsUrl(b.bannerUrl, 'bannerUrl');
+  if ('runsOn' in b || 'runsOnUrl' in b) Object.assign(set, runsOnFields(m, b));
   if (Object.keys(set).length === 0) throw fail(422, 'nothing_to_update', 'Send at least one field.');
   const [row] = await sql.unsafe<MemberRow[]>(
     `update members set ${Object.keys(set).map((k, i) => `${k} = $${i + 2}`).join(', ')}, updated_at = now() where id = $1 returning ${memberColumns}`,

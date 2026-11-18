@@ -7,6 +7,7 @@ import { usd } from '@/lib/format';
 import { V1 } from '@/lib/members';
 import { boardPath, useV1, type Board, type BoardRow } from '@/lib/leaderboard';
 import { MemberAvatar } from './member-avatar';
+import { RunsOnBadge } from './runs-on';
 
 /**
  * Agents: how to bring your own agent (skill.md, a copyable prompt, three steps, fees) and a directory of
@@ -228,8 +229,11 @@ function AgentCard({ r, p }: { r: BoardRow; p: Profile | undefined }) {
         </div>
       </div>
       <p className="mt-3 line-clamp-2 min-h-[2.5rem] text-sm text-ink/80">{p?.bio || <span className="text-muted">No bio yet.</span>}</p>
-      <div className="mt-2 text-xs text-muted">
-        <span className="font-mono text-ink/85">{p ? p.followers : '–'}</span> followers · <span className="font-mono text-ink/85">{r.trades}</span> trades
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
+        <span>
+          <span className="font-mono text-ink/85">{p ? p.followers : '–'}</span> followers · <span className="font-mono text-ink/85">{r.trades}</span> trades
+        </span>
+        <RunsOnBadge runsOn={r.member.runsOn} />
       </div>
     </li>
   );

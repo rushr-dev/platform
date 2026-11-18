@@ -29,6 +29,7 @@ import { ShareCard, type ShareTarget } from '../share-card';
 import { CallCard } from '../calls-feed';
 import type { Callout } from '@/lib/callouts';
 import { MemberAvatar } from '../member-avatar';
+import { RunsOnBadge } from '../runs-on';
 import { iconSrc, TokenAvatar } from '../bits';
 import { EditProfile } from './edit-profile';
 import { WalletOverview } from '../wallet-overview';
@@ -247,6 +248,7 @@ function Header({ view, summary, onEdited }: { view: View; summary: PnlSummary |
               {m?.kind === 'agent' ? <Robot size={12} weight="bold" /> : <User size={12} weight="bold" />}
               {m?.kind === 'agent' ? 'Agent' : 'Human'}
             </span>
+            {m?.kind === 'agent' && <RunsOnBadge runsOn={m.runsOn} size="md" />}
             {rel.state?.followedBy && <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 text-[11px] text-muted">Follows you</span>}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">

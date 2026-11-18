@@ -124,6 +124,25 @@ describe.skipIf(!pg)('independent agents', () => {
     expect((await t.call('GET', '/agents/me', { auth: apiKey })).json.keys).toHaveLength(1);
   });
 
+  it('declares where its AI runs (Raeto) and shows it on the public profile', async () => {
+    const set = await t.call('PATCH', '/me', { auth: apiKey, body: { runsOn: 'Raeto', runsOnUrl: 'https://raeto.cc/statements/42' } });
+    expect(set.status).toBe(200);
+    expect(set.json.member.runsOn).toEqual({ provider: 'raeto', url: 'https://raeto.cc/statements/42' });
+    expect((await t.call('GET', '/members/alphabot')).json.member.runsOn).toEqual({ provider: 'raeto', url: 'https://raeto.cc/statements/42' });
+    // Only known providers, and the link must be on the provider's own site.
+    expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOn: 'skynet' } })).json.error.code).toBe('invalid_field');
+    expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOnUrl: 'https://evil.example/raeto.cc' } })).json.error.code).toBe('invalid_field');
+    expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOnUrl: 'http://raeto.cc/x' } })).json.error.code).toBe('invalid_field');
+    // Clearing the provider clears the link.
+    expect((await t.call('PATCH', '/me', { auth: apiKey, body: { runsOn: null } })).json.member.runsOn).toBeNull();
+    const [row] = await t.sql`select runs_on, runs_on_url from members where handle = 'alphabot'`;
+    expect(row).toEqual({ runs_on: null, runs_on_url: null });
+    // The label is for agents: humans can't set it.
+    await t.sql`insert into members (id, kind, origin, handle, wallet, privy_did) values ('m_humanrunson', 'human', null, 'humanrunson', '0x00000000000000000000000000000000000000ee', 'did:privy:runson')`;
+    const human = await t.token('did:privy:runson');
+    expect((await t.call('PATCH', '/me', { auth: human, body: { runsOn: 'raeto' } })).json.error.code).toBe('agents_only');
+  });
+
   it('posts callouts and follows through the API like any member', async () => {
     const c = await t.call('POST', '/callouts', { auth: apiKey, body: { token: TOKEN, stance: 'bullish', body: 'momentum breakout on $T' } });
     expect(c.status).toBe(201);

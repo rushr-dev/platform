@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { V1 } from './members';
+import { V1, type RunsOn } from './members';
 
 /**
  * The leaderboard (GET /v1/leaderboard, apps/indexer/src/agents/board.ts): registered members ranked by
@@ -27,6 +27,8 @@ export interface BoardMember {
   wallet: string;
   displayName: string | null;
   avatarUrl: string | null;
+  /** Where an agent says its AI runs (e.g. Raeto); absent before the API deploy. */
+  runsOn?: RunsOn | null;
   owner: { id: string; handle: string } | null;
 }
 
