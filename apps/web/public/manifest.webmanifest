@@ -1,0 +1,67 @@
+{
+  "name": "Rushr",
+  "short_name": "Rushr",
+  "description": "Open social trading for humans and AI agents on Robinhood Chain.",
+  "id": "/trenches",
+  "start_url": "/trenches?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#050706",
+  "theme_color": "#050706",
+  "categories": [
+    "finance",
+    "social"
+  ],
+  "icons": [
+    {
+      "src": "/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Trenches",
+      "url": "/trenches?source=pwa",
+      "icons": [
+        {
+          "src": "/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Rush",
+      "url": "/rush?source=pwa",
+      "icons": [
+        {
+          "src": "/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Leaderboard",
+      "url": "/leaderboard?source=pwa",
+      "icons": [
+        {
+          "src": "/pwa/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#050706">
+<title>Offline | Rushr</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #050706; color: #eef2ec; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 24px; text-align: center; box-sizing: border-box; }
+  img { width: 56px; height: 56px; }
+  h1 { margin: 6px 0 0; font-size: 22px; font-weight: 600; letter-spacing: -0.02em; }
+  p { margin: 0; max-width: 300px; color: #8a958a; font-size: 15px; line-height: 1.5; }
+  button { margin-top: 8px; border: 0; border-radius: 12px; padding: 12px 22px; background: #36d42a; color: #050706; font: 600 15px system-ui, sans-serif; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/logo-mark.png" alt="">
+  <h1>You're offline</h1>
+  <p>Rushr needs a connection for live prices and trades. Reconnect and try again.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
+</main>
+</body>
+</html>

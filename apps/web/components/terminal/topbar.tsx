@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { MagnifyingGlass } from '@phosphor-icons/react';
+import { ArrowLeft, ChatCircleText, Fire, Lightning, MagnifyingGlass, Robot, Trophy, type Icon } from '@phosphor-icons/react';
 import { useTokenSearch } from '@/lib/search';
 import { usd } from '@/lib/format';
 import { TokenAvatar, RiskDot } from './bits';
@@ -24,12 +24,13 @@ const NAV = [
 export function TopBar() {
   const path = usePathname();
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-6 border-b border-white/[0.06] bg-bg/90 px-4 backdrop-blur-md">
+    <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-bg/90 px-3 backdrop-blur-md md:gap-6 md:px-4">
+      {path.startsWith('/token/') && <BackButton />}
       <Link href="/" className="flex items-center gap-2">
         <Image src="/logo-mark.png" alt="" width={22} height={22} priority />
         <span className="text-lg font-semibold tracking-[-0.04em]">rushr</span>
         {/* Same dashed chip as the landing's, in the dark theme. */}
-        <span className="rounded-full border border-dashed border-white/20 px-1.5 py-px font-mono text-[9px] uppercase tracking-wider text-muted">Beta</span>
+        <span className="hidden rounded-full border border-dashed border-white/20 px-1.5 py-px font-mono text-[9px] uppercase tracking-wider text-muted min-[380px]:inline">Beta</span>
       </Link>
       <nav className="hidden items-center gap-1 text-sm md:flex">
         {NAV.map((n) => (
@@ -52,29 +53,56 @@ export function TopBar() {
   );
 }
 
+/** Phone tab icons, by route. */
+const NAV_ICONS: Record<string, Icon> = { '/trenches': Fire, '/feed': ChatCircleText, '/agents': Robot, '/leaderboard': Trophy, '/rush': Lightning };
+
 /**
- * The same four sections as a tab row under the top bar on phones, where the bar has no room for them. A row
- * rather than a bottom tab bar: the token page already pins its trade bar to the bottom of the screen.
+ * Phones: the sections as a floating tab bar at the bottom, where thumbs reach (and how the installed app
+ * feels native). It's the last row of the app column rather than position: fixed, so pages end above it with no
+ * padding to manage. Token pages hide it: they pin their own Buy/Sell bar to the bottom and get a back arrow in
+ * the top bar instead.
  */
 export function MobileNav() {
   const path = usePathname();
+  if (path.startsWith('/token/')) return null;
   return (
-    <nav aria-label="Sections" className="grid shrink-0 grid-cols-5 border-b border-white/[0.06] bg-bg/90 text-[12px] backdrop-blur-md md:hidden">
-      {NAV.map((n) => {
-        const on = path.startsWith(n.href);
-        return (
-          <Link
-            key={n.label}
-            href={n.href}
-            aria-current={on ? 'page' : undefined}
-            className={`relative py-2.5 text-center transition ${on ? 'font-medium text-ink' : 'text-muted active:text-ink'}`}
-          >
-            {n.label}
-            {on && <span className="absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-brand" />}
-          </Link>
-        );
-      })}
-    </nav>
+    <div className="shrink-0 px-3 pt-1.5 [padding-bottom:max(0.5rem,env(safe-area-inset-bottom))] md:hidden">
+      <nav
+        aria-label="Sections"
+        className="grid grid-cols-5 rounded-2xl border border-white/[0.08] bg-surface-2/95 px-1 py-1 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.8)] backdrop-blur-md"
+      >
+        {NAV.map((n) => {
+          const on = path.startsWith(n.href);
+          const Ico = NAV_ICONS[n.href] ?? Fire;
+          return (
+            <Link
+              key={n.label}
+              href={n.href}
+              aria-current={on ? 'page' : undefined}
+              className={`flex flex-col items-center gap-0.5 rounded-xl py-1.5 text-[10.5px] transition active:scale-[0.96] ${on ? 'bg-white/[0.07] font-medium text-ink' : 'text-muted'}`}
+            >
+              <Ico size={20} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
+              {n.label}
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
+/** Phones, on a token page (no tab bar there): back to wherever the token was opened from, else the trenches. */
+function BackButton() {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      aria-label="Back"
+      onClick={() => (window.history.length > 1 ? router.back() : router.push('/trenches'))}
+      className="-ml-1 rounded-lg p-1.5 text-muted active:text-ink md:hidden"
+    >
+      <ArrowLeft size={20} />
+    </button>
   );
 }
 
