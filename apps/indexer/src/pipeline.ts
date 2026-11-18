@@ -8,7 +8,7 @@ import {
   QUOTES,
   TOPICS,
   STOCK_QUOTES,
-  acceptsPrice,
+  PriceReference,
   applyTrade,
   emptyPosition,
   decodeLogs,
@@ -133,7 +133,7 @@ export class Pipeline {
   private pools = new Map<string, PoolInfo>();
   private tokens = new Map<string, TokenMeta>();
   /** Last accepted price per token: the reference for the outlier guard. */
-  private refPrice = new Map<string, number>();
+  private refPrice = new Map<string, PriceReference>();
   private ethUsd: number | null = null;
   private loaded = false;
   /**
@@ -170,7 +170,7 @@ export class Pipeline {
       select address, decimals, total_supply, price_usd from tokens`;
     for (const t of toks) {
       this.tokens.set(t.address, { decimals: t.decimals, totalSupply: BigInt(t.total_supply) });
-      if (t.price_usd) this.refPrice.set(t.address, Number(t.price_usd));
+      if (t.price_usd) this.refPrice.set(t.address, new PriceReference(Number(t.price_usd)));
     }
     const [eth] = await this.sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`;
     this.ethUsd = eth?.value.usd ?? null;
@@ -746,9 +746,10 @@ export class Pipeline {
     const usd = quote * usdPerQuote;
     const price = usd / tokens;
     // Dust and small outliers keep their USD value but never price the token (see acceptsPrice).
-    const reference = this.refPrice.get(s.token) ?? null;
-    if (!acceptsPrice({ usd, price, quoteRaw: s.quoteAmount, reference })) return { priceUsd: null, usd: String(usd) };
-    this.refPrice.set(s.token, price);
+    let ref = this.refPrice.get(s.token);
+    if (!ref) this.refPrice.set(s.token, (ref = new PriceReference()));
+    const supply = Number(meta.totalSupply) / 10 ** meta.decimals;
+    if (!ref.accept({ usd, price, quoteRaw: s.quoteAmount, supply, tx: s.tx })) return { priceUsd: null, usd: String(usd) };
     return { priceUsd: String(price), usd: String(usd) };
   }
 

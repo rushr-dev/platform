@@ -16,6 +16,7 @@ import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledg
 import { PAUSED_REQUEUE_S, isPaused, readPause, writePause } from './pause';
 import { pendingSupply, pendingSupplyCount, refreshSupply } from './supply';
 import { reattributeSwaps } from './attribution';
+import { outlierTokens, repriceToken } from './reprice';
 import { Pipeline } from './pipeline';
 
 export { ChainPoller } from './poller';
@@ -264,6 +265,31 @@ app.post('/admin/tokens/supply', async (c) => {
       pending: listed.length ? null : await pendingSupplyCount(sql),
       changes: changed.slice(0, 200),
     });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+});
+
+/**
+ * Re-price tokens' stored swaps with the current outlier guard and repair their 1m candles, ATH and price
+ * (reprice.ts). ?tokens=a,b,c, or ?scan=1 for tokens whose stored prices the guard now rejects (swaps of the
+ * last ?days=, default 14, at most ?limit=, default 20). Dry run unless ?write=1: the reply lists each
+ * token's swaps priced/unpriced, candles changed, and the 1m high and ATH before and after.
+ */
+app.post('/admin/tokens/reprice', async (c) => {
+  const sql = postgres(dbUrl(c.env), { max: 1, fetch_types: false, prepare: false });
+  try {
+    if ((await readPause(sql, { fresh: true })).paused) return c.json({ error: 'indexer is paused' }, 409);
+    const write = c.req.query('write') === '1';
+    const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 20), 1), 100);
+    const listed = (c.req.query('tokens') ?? '').split(',').map((t) => t.trim().toLowerCase()).filter((t) => /^0x[0-9a-f]{40}$/.test(t));
+    const scanned = !listed.length && c.req.query('scan') === '1'
+      ? await outlierTokens(sql, Math.min(Math.max(Number(c.req.query('days') ?? 14), 1), 90), limit)
+      : [];
+    const tokens = listed.length ? listed.slice(0, limit) : scanned.map((t) => t.token);
+    const results = [];
+    for (const token of tokens) results.push(await repriceToken(sql, token, { write }));
+    return c.json({ write, scanned: scanned.length ? scanned : undefined, results: results.filter(Boolean) });
   } finally {
     await sql.end({ timeout: 5 });
   }
