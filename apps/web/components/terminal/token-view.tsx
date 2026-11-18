@@ -28,6 +28,7 @@ import { useEthUsd } from '@/lib/profile';
 
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
+import { WatchStar } from './watch-bar';
 import { SHOW_RISK } from '@/lib/risk-labels';
 
 /** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
@@ -410,6 +411,7 @@ function Header({ t, pools, priceNow, serverNow }: { t: TokenDetail; pools: Pool
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold tracking-[-0.02em]">{t.symbol}</h1>
+            <WatchStar address={t.address} />
             <span className="max-w-[16ch] truncate text-sm text-muted">{t.name}</span>
             <RiskTag risk={t.risk} />
           </div>
