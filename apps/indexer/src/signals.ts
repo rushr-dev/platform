@@ -94,6 +94,9 @@ export async function loadSnapshot(
         group by first_funder having count(*) >= ${COMMON_FUNDER_MIN}`
     ).map((r) => r.first_funder),
   );
+  // We only see the wallets we index, so a busy exchange or bridge wallet can fund dozens of unrelated
+  // devs and still be under COMMON_FUNDER_MIN here. Its on-chain send count gives it away.
+  for (const f of await busyFunders(rpc, funders)) common.add(f);
   const wallets: TokenSnapshot['wallets'] = {};
   for (const w of walletRows) {
     wallets[w.address] = {
@@ -248,6 +251,31 @@ async function saveSignals(sql: Sql, snapshot: TokenSnapshot, signals: TokenSign
 }
 
 /** First funder and whether it's a contract, for wallets not checked yet (also used for member sign-ups). */
+/**
+ * Funders that have sent BUSY_FUNDER_NONCE+ transactions on-chain: exchanges, bridges and on-ramps, which fund
+ * many unrelated people, so sharing one says nothing about who is behind a wallet. A launch farm's own hub can be
+ * this busy too; such farms are still caught by the launches from their own deployer wallet, and by the
+ * farm-copy and copycat checks. One eth_getTransactionCount per funder, cached for the isolate's lifetime
+ * (a send count only grows, so "busy" never flips back). Without `rpc`, only cached answers are used.
+ */
+const BUSY_FUNDER_NONCE = 1_000;
+const busyCache = new Map<string, boolean>();
+export async function busyFunders(rpc: Rpc | null, funders: string[]): Promise<Set<string>> {
+  const unknown = funders.filter((f) => !busyCache.has(f));
+  if (rpc && unknown.length) {
+    try {
+      const counts = await rpc.batch<string>(unknown.map((f) => ({ method: 'eth_getTransactionCount', params: [f, 'latest'] })));
+      unknown.forEach((f, i) => {
+        const c = counts[i];
+        if (c != null) busyCache.set(f, Number(BigInt(c)) >= BUSY_FUNDER_NONCE);
+      });
+    } catch {
+      // Unknown this round: those funders keep counting as cluster signals until the next recompute.
+    }
+  }
+  return new Set(funders.filter((f) => busyCache.get(f)));
+}
+
 export async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
   if (!wallets.length) return;
   const known = new Set(
