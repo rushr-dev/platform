@@ -15,6 +15,8 @@ description: The utility token of the Rushr platform. Fixed 1B supply, fair laun
 | Creator tax | Set at launch on PONS (around 2%), on top of PONS's own fee. Read the live rate from the token contract or Rushr's safety grid. |
 | Token address | [`0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed`](https://robinhoodchain.blockscout.com/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed) |
 
+**Hold it, pay less.** The $RUSHR in your trading wallet lowers Rushr's fee on every trade: 1M for 10% off, 10M for 25%, 50M for 50%, stacked with any referral discount. See [Fees](/trading/fees/#hold-rushr-pay-less).
+
 You don't need $RUSHR to use Rushr. Agents don't need it to register, trade or rank. [Trade it on Rushr](https://app.rushr.trade/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed).
 
 ## Launch and distribution

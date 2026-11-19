@@ -7,7 +7,8 @@ import { TradeError, isTradeError, sanitizeRpcMessage } from './errors';
 import { readAllowances } from './permit2';
 import { discoverPools, type DiscoverOptions } from './pools';
 import { quotePool, rankQuotes, withSlippage } from './quote';
-import { draftTradeRecord, effectiveFeeBps, referralDiscount, referrerAccrual, type TradeRecord } from './referral';
+import { draftTradeRecord, effectiveFeeBps, referrerAccrual, savedBetween, type TradeRecord } from './referral';
+import { readHolderDiscountBps } from './holder';
 import { feeOf } from './fees';
 import { CURVE_FEE_GAS, curveFeeCall, type CurveFeeFollowUp } from './curve-fee';
 import { simulateCalls, type SimCall } from './simulate';
@@ -201,6 +202,8 @@ export interface QuickTradeRequest {
   amountIn: bigint;
   trader: Address;
   referral?: Referral | null;
+  /** $RUSHR holder discount (bps of the fee). Read from the chain when unset (`readHolderDiscountBps`). */
+  holderDiscountBps?: number;
 }
 
 export interface QuickTradeOptions {
@@ -259,8 +262,10 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   });
   if (req.amountIn <= 0n) throw new TradeError('INVALID_AMOUNT', 'amount must be > 0');
 
-  // 1. Pools (ETH-quoted), curve detection.
+  // 1. Pools (ETH-quoted), curve detection. The $RUSHR holder tier is read alongside (cached per wallet).
+  const holder = req.holderDiscountBps != null ? Promise.resolve(req.holderDiscountBps) : readHolderDiscountBps(client, req.trader, cfg);
   const pools = opts.discover?.pools ?? (await discoverPools(client, req.token, { ...opts.discover, quoteAsset: 'ETH', trader: req.trader }));
+  req = { ...req, holderDiscountBps: await holder };
   // A token still on its PONS curve trades ONLY there; any other pool is not its real market (could be
   // a trap, e.g. a stray 89%-fee v4 pool seen live on a curve token).
   const curve = pools.find((p): p is PonsPool => p.venue === 'pons-curve' && !p.graduated);
@@ -290,7 +295,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   ] as const);
 
   // 2. Quote every pool once, pick the best, then apply the final slippage locally (no re-quote).
-  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, source: { kind: 'web' as const } };
+  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, holderDiscountBps: req.holderDiscountBps ?? 0, source: { kind: 'web' as const } };
   const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, { ...base, slippageBps: 500 }, cfg)));
   const quotes = rankQuotes(settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : [])));
   if (!quotes.length) {
@@ -388,7 +393,8 @@ export function feeLine(q: Quote): string {
   const pct = (q.fee.feeBps / 100).toFixed(2).replace(/0$/, '');
   const notes = [
     ...(q.fee.baseFeeBps === BETA_FEE_BPS && BETA_FEE_BPS * 2 === STANDARD_FEE_BPS ? ['beta, half price'] : []),
-    ...(q.fee.feeBps < q.fee.baseFeeBps ? ['referral discount'] : []),
+    ...(q.fee.holderDiscountBps ? [`$RUSHR holder, ${q.fee.holderDiscountBps / 100}% off`] : []),
+    ...(q.fee.referralDiscountAmount > 0n || (q.request.referral && q.fee.feeBps < q.fee.baseFeeBps) ? ['referral discount'] : []),
   ];
   return `Rushr fee ${pct}%${notes.length ? ` (${notes.join(', ')})` : ''}`;
 }
@@ -433,7 +439,9 @@ async function prepareCurveTrade(
   if (curve.nativeQuote === false) return empty([{ code: 'NON_ETH_QUOTE', message: 'This bonding curve is priced in another token, not ETH; not supported yet.' }]);
   if (req.side === 'buy' && curve.snipeTaxBps > 0)
     return empty([{ code: 'SNIPE_TAX_ACTIVE', message: `Launch snipe tax is ${(curve.snipeTaxBps / 100).toFixed(0)}% right now; it drops to 0 within seconds of launch. Try again in a moment.` }]);
-  const feeBps = effectiveFeeBps(cfg, req.referral);
+  const holderBps = req.holderDiscountBps ?? 0;
+  const feeBps = effectiveFeeBps(cfg, req.referral, holderBps);
+  const holderOnlyBps = effectiveFeeBps(cfg, null, holderBps);
   // Buys are quoted without a fee (the whole amount goes into the curve; the fee is added on top
   // below). Sells are quoted with it, so "you receive" and the shown fee match what the user ends with.
   const quoteCfg: TradeConfig = req.side === 'buy' ? { ...cfg, feeBps: 0 } : cfg;
@@ -444,7 +452,7 @@ async function prepareCurveTrade(
     opts.assume ? Promise.resolve(0n) : client.readContract({ address: req.token, abi: erc20Abi, functionName: 'allowance', args: [req.trader, curve.curve] }).catch(() => null),
   ] as const);
 
-  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, source: { kind: 'web' as const } };
+  const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, holderDiscountBps: req.holderDiscountBps ?? 0, source: { kind: 'web' as const } };
   let quote0: Quote;
   try {
     quote0 = await quotePool(client, curve, { ...base, slippageBps: 500 }, quoteCfg); // pure math, no RPC
@@ -466,7 +474,9 @@ async function prepareCurveTrade(
         feeBps,
         baseFeeBps: cfg.feeBps,
         feeAmount: fee,
-        referralDiscountAmount: req.referral ? referralDiscount(quote.swapAmountIn, cfg, feeBps) : 0n,
+        holderDiscountBps: holderBps,
+        holderDiscountAmount: holderBps ? savedBetween(quote.swapAmountIn, cfg.feeBps, holderOnlyBps) : 0n,
+        referralDiscountAmount: req.referral ? savedBetween(quote.swapAmountIn, holderOnlyBps, feeBps) : 0n,
         referrerAccrual: referrerAccrual(fee, cfg, req.referral),
       },
     };

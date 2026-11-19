@@ -29,6 +29,8 @@ import { useEthUsd } from '@/lib/profile';
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
 import { TradesTable } from './trades-table';
 import { WatchStar } from './watch-bar';
+import { HolderTiers } from './holder-tiers';
+import { RUSHR_TOKEN } from './rushr-pill';
 import { SHOW_RISK } from '@/lib/risk-labels';
 
 /** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
@@ -248,6 +250,7 @@ export function TokenView({
               <ModeSwitch />
               <div className="hidden lg:block">{stats}</div>
               {trading ? <TradePanel priceUsd={priceNow} position={position} token={tradeToken} /> : <TradeSoon symbol={t.symbol} />}
+              {t.address.toLowerCase() === RUSHR_TOKEN && <HolderTiers />}
               <PoolPanel t={t} pools={pools} supply={supply} serverNow={serverNow} />
               <Safety t={t} />
               <DevRecord t={t} />
@@ -257,6 +260,7 @@ export function TokenView({
               {/* On phones the trade card opens from the sticky Buy/Sell bar instead. */}
               {trading ? desktop && <SimpleTrade token={tradeToken} priceUsd={priceNow} position={position} /> : <TradeSoon symbol={t.symbol} />}
               <PositionCard t={t} position={position} supply={supply} />
+              {t.address.toLowerCase() === RUSHR_TOKEN && <HolderTiers />}
               <ThesisBox t={t} position={position} />
               <About
                 t={t}

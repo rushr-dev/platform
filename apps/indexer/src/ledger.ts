@@ -16,7 +16,7 @@
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, LEGACY_TREASURIES, type FeeTxInfo } from '@rushr/trade';
+import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, type FeeTxInfo } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -251,7 +251,11 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
   }
   const cfg = DEFAULT_TRADE_CONFIG;
   const ref = await referralFor(sql, from);
-  const expectedBps = effectiveFeeBps(cfg, ref ? { referrer: ref.referrer as `0x${string}` } : null);
+  // $RUSHR holder tier as the trade was quoted: the trader's balance at the block before it.
+  const holderBps = await holderBpsAt(rpc, from, block - 1n);
+  const expectedBps = effectiveFeeBps(cfg, ref ? { referrer: ref.referrer as `0x${string}` } : null, holderBps);
+  /** The rate with only the holder discount: referral accounting counts what the referral took off on top. */
+  const holderOnlyBps = effectiveFeeBps(cfg, null, holderBps);
 
   // Direct curve trade: the fee is the follow-up transfer, checked against the curve's own fill.
   const fill = String(tx.to ?? '').toLowerCase() !== cfg.universalRouter.toLowerCase() ? curveFillFromLogs(logs, from) : null;
@@ -275,7 +279,7 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
       hash: txHash as `0x${string}`, from: from as `0x${string}`, nonce: Number(BigInt(tx.nonce as string)), value: BigInt((tx.value as string) ?? '0x0'),
       status: 'success', logs, trace, feeTx,
       // Audit against the treasury the fee went to, when it's the current one or a legacy one.
-      treasury: feeTx?.to && treasuries.includes(feeTx.to.toLowerCase()) ? feeTx.to : cfg.feeRecipient, feeBps: cfg.feeBps, referredFeeBps: expectedBps, referred: !!ref,
+      treasury: feeTx?.to && treasuries.includes(feeTx.to.toLowerCase()) ? feeTx.to : cfg.feeRecipient, feeBps: holderOnlyBps, referredFeeBps: expectedBps, referred: !!ref,
     });
     flags.push(...audit.flags);
     // A fee transfer that doesn't check out (wrong nonce, recipient, sender, reverted) counts as missed.
@@ -294,7 +298,7 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     if (fee === 0n) flags.push('no_fee');
     else if (feeBps != null && Math.abs(feeBps - expectedBps) > 1) flags.push(`fee_bps_${feeBps.toFixed(1)}_expected_${expectedBps}`);
   }
-  const baseFee = (notional * BigInt(cfg.feeBps)) / 10_000n;
+  const baseFee = (notional * BigInt(holderOnlyBps)) / 10_000n;
   const discount = ref && baseFee > fee ? baseFee - fee : 0n;
   const accrual = ref ? (fee * BigInt(cfg.referrerShareBps)) / 10_000n : 0n;
 
@@ -306,4 +310,21 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     referrer_share_bps = ${ref ? cfg.referrerShareBps : 0}, referrer_accrual = ${accrual.toString()}, flags = ${flags}, updated_at = now()
     where id = ${row.id}`;
   return 'done';
+}
+
+/**
+ * The $RUSHR holder discount (bps of the fee) a wallet had at a block, from its balance there. 0 when the read
+ * fails: the audit then expects the full rate, and a holder's discounted fee shows up as a flag to look at,
+ * never as a missed fee.
+ */
+async function holderBpsAt(rpc: Rpc, wallet: string, block: bigint): Promise<number> {
+  const cfg = DEFAULT_TRADE_CONFIG;
+  if (!cfg.holderTiers.length || block < 0n) return 0;
+  const data = `0x70a08231${wallet.toLowerCase().replace(/^0x/, '').padStart(64, '0')}`; // balanceOf(wallet)
+  try {
+    const out = await rpc.call<string>('eth_call', [{ to: cfg.rushrToken, data }, `0x${block.toString(16)}`]);
+    return holderDiscountBps(cfg, BigInt(out && out !== '0x' ? out : '0x0'));
+  } catch {
+    return 0;
+  }
 }

@@ -396,9 +396,15 @@ export function SwapPanel({ initialToken }: { initialToken: string }) {
                 value={`${fmt(quote.fee.feeAmount, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`}
                 strong
               />
-              {quote.fee.feeBps < quote.fee.baseFeeBps && (
+              {quote.fee.holderDiscountBps > 0 && (
                 <Row
-                  label={`Referral discount (${bps(quote.fee.baseFeeBps)} → ${bps(quote.fee.feeBps)})`}
+                  label={`$RUSHR holder discount (${quote.fee.holderDiscountBps / 100}% off)`}
+                  value={`−${fmt(quote.fee.holderDiscountAmount, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`}
+                />
+              )}
+              {quote.fee.referralDiscountAmount > 0n && (
+                <Row
+                  label="Referral discount"
                   value={`−${fmt(quote.fee.referralDiscountAmount, QUOTE_DECIMALS[quoteAsset])} ${quoteAsset}`}
                 />
               )}

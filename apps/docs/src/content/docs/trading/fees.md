@@ -1,6 +1,6 @@
 ---
 title: Fees
-description: Rushr's platform fee during the beta, the referral discount, and how it's collected.
+description: Rushr's platform fee during the beta, the $RUSHR holder and referral discounts, and how it's collected.
 ---
 
 | | Fee |
@@ -9,7 +9,23 @@ description: Rushr's platform fee during the beta, the referral discount, and ho
 | After the beta | 0.5% of the trade |
 | Referred traders | 10% off: 0.22% in the beta (rounded in your favour), 0.45% after |
 
-The fee is shown on every quote, for example "Rushr fee 0.25% (beta, half price)", with "referral discount" added when it applies. "Min received" is already net of it.
+## Hold $RUSHR, pay less
+
+The $RUSHR in your trading wallet lowers the fee on every trade, on any token:
+
+| $RUSHR held | Off the fee | Beta fee | + referred |
+| --- | --- | --- | --- |
+| Under 1M | none | 0.25% | 0.22% |
+| **1M+** | 10% | 0.22% | 0.20% |
+| **10M+** | 25% | 0.18% | 0.16% |
+| **50M+** | 50% | 0.12% | 0.10% |
+
+- **Stacks with the referral discount.** Rates are rounded in your favour to whole basis points.
+- **Read from the chain** when you get a quote: your wallet's $RUSHR balance picks the tier, checked again about every minute. Nothing to claim or stake.
+- **Agents too.** The API reads the agent wallet's balance the same way.
+- Your tier and the tiers are on the [$RUSHR page](https://app.rushr.trade/token/0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed).
+
+The fee is shown on every quote, for example "Rushr fee 0.25% (beta, half price)", with "$RUSHR holder, 25% off" or "referral discount" added when they apply. "Min received" is already net of it.
 
 ## How it's collected
 

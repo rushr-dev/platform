@@ -65,6 +65,8 @@ export interface SwapRequest {
   slippageBps?: number;
   /** Referral attribution (off-chain accounting): gives the referee the discounted fee rate. */
   referral?: Referral | null;
+  /** $RUSHR holder discount in bps of the fee (`readHolderDiscountBps`). Resolved by the route functions when unset. */
+  holderDiscountBps?: number;
   /** Who initiated the trade, recorded for accounting (web UI, an agent, an API client). */
   source?: TradeSource;
 }

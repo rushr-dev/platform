@@ -74,7 +74,8 @@ export default function Terms() {
           (0.22% if you joined through a referral). It is taken in the same transaction, except on trades on a PONS bonding
           curve, where your wallet sends it to Rushr in a second transaction right after the trade succeeds (on top of the
           amount on buys, out of what you receive on sells). After the beta the fee is <strong>0.5%</strong> (0.45% with a
-          referral). Network gas and any token taxes are extra. We will show fee changes in the app before they apply.
+          referral). Holding $RUSHR in your trading wallet lowers it further (10% off with 1M, 25% with 10M, 50% with 50M),
+          based on your balance when you get a quote. Network gas and any token taxes are extra. We will show fee changes in the app before they apply.
         </p>
       </Part>
 

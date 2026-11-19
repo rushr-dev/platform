@@ -8,6 +8,7 @@ export * from './fees';
 export * from './math';
 export * from './permit2';
 export * from './referral';
+export * from './holder';
 export * from './agent';
 export * from './api-pools';
 export * from './rushr-router';

@@ -63,7 +63,10 @@ export interface FeeBreakdown {
   /** Platform rate before discounts. */
   baseFeeBps: number;
   feeAmount: bigint;
-  /** Referral: discount vs. the base rate, and the referrer's accrual (off-chain), both in feeToken. */
+  /** $RUSHR holder discount applied, in bps of the fee (0: none), and what it saved, in feeToken. */
+  holderDiscountBps: number;
+  holderDiscountAmount: bigint;
+  /** Referral: its share of the discount (on top of any holder discount), and the referrer's accrual (off-chain), both in feeToken. */
   referralDiscountAmount: bigint;
   referrerAccrual: bigint;
   /** Venue's own fees, informational (pool fee tier, PONS curve fee + creator tax). */

@@ -33,6 +33,27 @@ export const STANDARD_FEE_BPS = 50;
  */
 export const BETA_FEE_BPS = 25;
 
+/** $RUSHR, the platform's utility token (18 decimals). Holding it lowers the platform fee (`holderTiers`). */
+export const RUSHR_TOKEN: Address = '0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed';
+
+export interface HolderTier {
+  /** Minimum $RUSHR held by the trading wallet, in wei (18 decimals). */
+  min: bigint;
+  /** Discount in bps OF THE FEE (1000 = 10% off), stacked with the referral discount. */
+  discountBps: number;
+}
+
+const RUSHR = 10n ** 18n;
+/**
+ * $RUSHR holder discount (decided 2026-11-19): hold 1M for 10% off the platform fee, 10M for 25%, 50M for 50%.
+ * Read from the trading wallet's balance at quote time; stacks with the referral discount. Highest tier first.
+ */
+export const HOLDER_TIERS: readonly HolderTier[] = [
+  { min: 50_000_000n * RUSHR, discountBps: 5_000 },
+  { min: 10_000_000n * RUSHR, discountBps: 2_500 },
+  { min: 1_000_000n * RUSHR, discountBps: 1_000 },
+];
+
 /** Hard cap so a bad config can never take more than 3% of a trade. */
 export const MAX_FEE_BPS = 300;
 
@@ -44,6 +65,10 @@ export interface TradeConfig {
   referralDiscountBps: number;
   /** Referrer's share of the fee actually collected, in bps of the fee (2000 = 20%). Accounted off-chain. */
   referrerShareBps: number;
+  /** $RUSHR holder discount tiers, highest first (`holderDiscountBps`). Empty: no holder discount. */
+  holderTiers: readonly HolderTier[];
+  /** Token whose balance sets the holder tier. */
+  rushrToken: Address;
   /** Treasury that receives the fee. */
   feeRecipient: Address;
   /** Universal Router used for Uniswap v2/v3/v4 routes. */
@@ -64,6 +89,8 @@ export const DEFAULT_TRADE_CONFIG: TradeConfig = {
   feeBps: BETA_FEE_BPS, // beta rate; STANDARD_FEE_BPS after the beta
   referralDiscountBps: 1_000,
   referrerShareBps: 2_000,
+  holderTiers: HOLDER_TIERS,
+  rushrToken: RUSHR_TOKEN,
   feeRecipient: RUSHR_TREASURY,
   universalRouter: TRADE_ADDRESSES.universalRouter,
   ponsRouter: null,
@@ -81,6 +108,8 @@ export function resolveConfig(partial: Partial<TradeConfig> = {}): TradeConfig {
     throw new TradeError('CONFIG_INVALID', 'feeRecipient must be a real address', { feeRecipient: cfg.feeRecipient });
   for (const k of ['referralDiscountBps', 'referrerShareBps'] as const)
     if (!Number.isInteger(cfg[k]) || cfg[k] < 0 || cfg[k] > 10_000) throw new TradeError('CONFIG_INVALID', `${k} must be an integer between 0 and 10000`);
+  for (const t of cfg.holderTiers)
+    if (t.min < 0n || !Number.isInteger(t.discountBps) || t.discountBps < 0 || t.discountBps > 10_000) throw new TradeError('CONFIG_INVALID', 'holderTiers: min >= 0 and discountBps 0..10000');
   if (!Number.isInteger(cfg.defaultSlippageBps) || cfg.defaultSlippageBps < 0 || cfg.defaultSlippageBps > 5000)
     throw new TradeError('CONFIG_INVALID', 'defaultSlippageBps must be 0..5000');
   return { ...cfg, feeRecipient: getAddress(cfg.feeRecipient) };

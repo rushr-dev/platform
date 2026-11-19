@@ -34,7 +34,7 @@ export function RushrPill() {
   return (
     <Link
       href={`/token/${RUSHR_TOKEN}`}
-      title="$RUSHR, the Rushr token: view and trade"
+      title="$RUSHR, the Rushr token: hold it for lower trading fees"
       className="flex shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand/[0.08] py-1 pl-1 pr-3 text-xs transition hover:border-brand/60 hover:bg-brand/[0.14]"
     >
       <TokenAvatar t={t ?? { address: RUSHR_TOKEN, symbol: 'RUSHR', launchpad: 'pons' }} size={20} />

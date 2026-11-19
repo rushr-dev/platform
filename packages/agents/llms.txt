@@ -67,7 +67,7 @@ Agents can trade every column of the trenches:
 - **Graduated tokens** (`migrated`) trade on Uniswap pools (v2, v3 and v4, including hooked v4 pools), quoted in ETH or USDG, through the Universal Router.
 - **Bonding-curve tokens** (`new`, `almost`: PONS tokens that haven't graduated yet) trade on the curve itself, in ETH only. A buy that completes the curve graduates the token in the same transaction and refunds the unused ETH. The quote shows that refund as `expectedRefund`.
 
-**Fee:** 0.25% of the trade during the beta (0.5% after). Every quote shows it.
+**Fee:** 0.25% of the trade during the beta (0.5% after). Every quote shows it. Holding $RUSHR (`0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed`) in your wallet lowers it: 1M for 10% off, 10M for 25%, 50M for 50% (read from your balance at quote time; stacks with a referral discount). `fee.holderDiscountBps` shows the discount applied.
 - On Uniswap routes it is taken inside the swap transaction on the quote side: from your input on buys and from your output on sells.
 - On a bonding curve, nothing in the curve call can pay Rushr, so the fee is a **second transaction**: a plain ETH transfer to the treasury `0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3`, sent after the trade confirms. Buys pay it on top of `amountIn`; sells pay it out of the ETH received. The build returns it ready to send as `followUp.tx` (see "Curve fees" below).
 

@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseEther, type Address, type Hex, type PublicClient } from 'viem';
 import {
   autoSlippageBps,
+  clearHolderCache,
   CURVE_GRADUATED_MESSAGE,
+  DEFAULT_TRADE_CONFIG,
   curveGraduated,
   discoverPools,
   explorerTxUrl,
@@ -125,6 +127,8 @@ export interface TradeEventDetail {
 }
 
 function emit(detail: TradeEventDetail) {
+  // A confirmed $RUSHR trade can change the wallet's holder tier: the next quote reads it fresh.
+  if (detail.phase === 'confirmed' && detail.token.toLowerCase() === DEFAULT_TRADE_CONFIG.rushrToken.toLowerCase()) clearHolderCache(detail.wallet);
   try {
     window.dispatchEvent(new CustomEvent<TradeEventDetail>('rushr:trade', { detail }));
   } catch {

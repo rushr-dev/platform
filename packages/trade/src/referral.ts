@@ -9,10 +9,15 @@ import type { Quote, Referral, TradeSource } from './types';
  * referrer's share accrues in our database for a later payout. No payouts are built yet.
  */
 
-/** Fee rate for this trader: base rate, minus the referee discount when referred (rounded down). */
-export function effectiveFeeBps(cfg: TradeConfig, referral?: Referral | null): number {
-  if (!referral) return cfg.feeBps;
-  return cfg.feeBps - Math.ceil((cfg.feeBps * cfg.referralDiscountBps) / 10_000);
+/**
+ * Fee rate for this trader: the base rate minus the referee discount (when referred) and the $RUSHR holder
+ * discount (`holderBps`, from `holderDiscountBps`), which stack. Rounded in the trader's favour: the router
+ * takes whole bps, so 0.25% with 10% off is 0.22%.
+ */
+export function effectiveFeeBps(cfg: TradeConfig, referral?: Referral | null, holderBps = 0): number {
+  const off = Math.min(10_000, (referral ? cfg.referralDiscountBps : 0) + Math.max(0, holderBps));
+  if (off === 0) return cfg.feeBps;
+  return cfg.feeBps - Math.ceil((cfg.feeBps * off) / 10_000);
 }
 
 /** Referrer's accrual on a collected fee (rounded down). */
@@ -22,7 +27,13 @@ export function referrerAccrual(feeAmount: bigint, cfg: TradeConfig, referral?: 
 
 /** What the referee saved vs. the base rate, given the fee basis (input on buys, gross output on sells). */
 export function referralDiscount(feeBasis: bigint, cfg: TradeConfig, appliedBps: number): bigint {
-  return (feeBasis * BigInt(cfg.feeBps)) / BPS - (feeBasis * BigInt(appliedBps)) / BPS;
+  return savedBetween(feeBasis, cfg.feeBps, appliedBps);
+}
+
+/** Fee saved by paying `toBps` instead of `fromBps` on `feeBasis`. */
+export function savedBetween(feeBasis: bigint, fromBps: number, toBps: number): bigint {
+  const d = (feeBasis * BigInt(fromBps)) / BPS - (feeBasis * BigInt(toBps)) / BPS;
+  return d > 0n ? d : 0n;
 }
 
 /**

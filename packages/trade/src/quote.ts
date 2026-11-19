@@ -8,7 +8,8 @@ import { BPS, minOut, priceImpactBps, sellMinimums, splitBuyInput, splitSellOutp
 import { ponsBuyCapped, ponsSellOut, ponsSpotBuyOut, v2AmountOut, v2SpotOut } from './math';
 import { discoverPools, type DiscoverOptions } from './pools';
 import type { Pool, Quote, SwapRequest } from './types';
-import { effectiveFeeBps, referralDiscount, referrerAccrual } from './referral';
+import { effectiveFeeBps, referrerAccrual, savedBetween } from './referral';
+import { readHolderDiscountBps } from './holder';
 
 const Q192 = 1n << 192n;
 
@@ -116,7 +117,10 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
   const slippageBps = req.slippageBps ?? cfg.defaultSlippageBps;
   const warnings: string[] = [];
   const feeToken = feeTokenFor(pool);
-  const feeBps = effectiveFeeBps(cfg, req.referral);
+  const holderBps = req.holderDiscountBps ?? 0;
+  const feeBps = effectiveFeeBps(cfg, req.referral, holderBps);
+  /** The rate with only the holder discount: the referral's share is what it takes off on top. */
+  const holderOnlyBps = effectiveFeeBps(cfg, null, holderBps);
   /** `basis`: what the fee rate applies to (spent input on buys, gross output on sells). */
   const fee = (amount: bigint, basis: bigint): FeeBreakdown => ({
     side: req.side,
@@ -124,7 +128,9 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
     feeBps,
     baseFeeBps: cfg.feeBps,
     feeAmount: amount,
-    referralDiscountAmount: req.referral ? referralDiscount(basis, cfg, feeBps) : 0n,
+    holderDiscountBps: holderBps,
+    holderDiscountAmount: holderBps ? savedBetween(basis, cfg.feeBps, holderOnlyBps) : 0n,
+    referralDiscountAmount: req.referral ? savedBetween(basis, holderOnlyBps, feeBps) : 0n,
     referrerAccrual: referrerAccrual(amount, cfg, req.referral),
     venueFeeBps: pool.venueFeeBps,
     venueFeeLabel: pool.venueFeeLabel,
@@ -229,7 +235,9 @@ export async function findBestRoute(
 ): Promise<RouteResult> {
   if (req.token.toLowerCase() === TRADE_ADDRESSES.weth || req.token.toLowerCase() === TRADE_ADDRESSES.usdg || req.token === zeroAddress)
     throw new TradeError('SAME_TOKEN', 'Pick a token other than the quote asset');
+  const holder = req.holderDiscountBps != null ? Promise.resolve(req.holderDiscountBps) : readHolderDiscountBps(client, req.trader, cfg);
   const pools = discover.pools ?? (await discoverPools(client, req.token, { ...discover, quoteAsset: req.quoteAsset, trader: req.trader }));
+  req = { ...req, holderDiscountBps: await holder };
   const tradable = pools.filter((p) => !(p.venue === 'pons-curve' && p.graduated));
   if (!tradable.length) throw new TradeError('NO_ROUTE', 'No pool found for this token and quote asset', { token: req.token });
   const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, req, cfg)));

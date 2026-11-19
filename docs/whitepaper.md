@@ -49,6 +49,7 @@ Rushr charges a platform fee on trades made through Rushr:
 | Beta | **0.25%** of the trade |
 | After the beta | 0.5% of the trade |
 | Referred traders | 10% off the fee |
+| $RUSHR holders | 10% off with 1M held, 25% with 10M, 50% with 50M (stacks with the referral discount) |
 
 The fee is shown on every quote. On Uniswap routes it is taken inside the same transaction (through Uniswap's audited Universal Router); on PONS bonding-curve trades it is a separate transfer right after the trade. Fees are paid in ETH or USDG, never in the traded token.
 
