@@ -36,6 +36,23 @@ export interface Buyback {
   txHashes: string[];
 }
 
+/**
+ * Platform-fee buybacks, newest first, each from its on-chain transactions (the treasury Safe's
+ * execTransaction). Added by hand when one executes.
+ */
+export const PLATFORM_BUYBACKS: Buyback[] = [
+  {
+    // 25% of all platform fees to date (0.0543 ETH): bought on the $RUSHR v4 pool, output taken straight to 0x…dEaD.
+    date: '2026-11-19T13:53:43.000Z',
+    source: 'platform_fees',
+    spent: { token: 'ETH', raw: '13570000000000000', amount: '0.01357', usd: 24.5 },
+    tokenAmount: { raw: '1173460660358976450780371', amount: '1173460.660358976450780371' },
+    burned: { raw: '1173460660358976450780371', amount: '1173460.660358976450780371' },
+    toRewards: { raw: '0', amount: '0' },
+    txHashes: ['0xe296269a004477357262964e3e4c920c5bedf17bccce437b0e2acd108ec3bcc6'],
+  },
+];
+
 export interface TokenTotal {
   token: 'ETH' | 'USDG';
   address: string;
@@ -224,7 +241,7 @@ export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAI
     },
     /** $RUSHR creator tax: earned, claimed and unclaimed by the creator wallet (creator-tax.ts). */
     creatorTax: tax,
-    buybacks: [] as Buyback[],
+    buybacks: PLATFORM_BUYBACKS,
     updatedAt: new Date().toISOString(),
   };
 }

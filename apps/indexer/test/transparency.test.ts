@@ -1,3 +1,4 @@
+import { PLATFORM_BUYBACKS } from '../src/transparency';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('cloudflare:workers', () => ({ DurableObject: class {} }));
@@ -81,7 +82,7 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
     expect(body.fees.allTime.byRoute.uniswap.trades).toBe(2);
     expect(body.fees.season).toMatchObject({ id: 's0', trades: 2, traders: 1, usd: 4.5 });
     expect(body.treasury.balances).toBeNull(); // RPC unreachable: null, not an error
-    expect(body.buybacks).toEqual([]);
+    expect(body.buybacks).toEqual(PLATFORM_BUYBACKS);
     expect(body.creatorTax).toMatchObject({ earned: { pending: null }, claimed: { claims: [] }, asOf: null });
     expect(JSON.stringify(body)).not.toContain('1'.repeat(40));
   });

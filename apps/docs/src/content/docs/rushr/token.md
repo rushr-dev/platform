@@ -33,11 +33,12 @@ Rushr's own safety check shows the dev and team holdings on [the token's page](h
 
 ## Burned so far
 
-**100,000,000 $RUSHR (10% of supply)** as of 16 November 2026:
+**101,173,460 $RUSHR (10.1% of supply)** as of 19 November 2026:
 
 - the 50M launch burn;
 - the first creator-tax buyback, 8,787,534;
-- the team supply burn, 41,212,466.
+- the team supply burn, 41,212,466;
+- the first platform-fee buyback, 1,173,460: 25% of all platform fees to date, bought and burned by the treasury Safe.
 
 Each burn is listed with its transaction on [Transparency](https://rushr.trade/transparency#buybacks), which also has the live totals.
 

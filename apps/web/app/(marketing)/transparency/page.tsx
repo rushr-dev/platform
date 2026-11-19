@@ -39,6 +39,13 @@ const TX = (h: string) => `https://robin.etherscan.io/tx/${h}`;
 /** Every $RUSHR burn so far, newest first. Each one is a plain transfer to 0x…dEaD; amounts are from the transactions. */
 const BURNS: { date: string; title: string; amount: string; note: string; txs: [string, string][] }[] = [
   {
+    date: '19 Nov 2026',
+    title: 'Platform-fee buyback #1',
+    amount: '1,173,460',
+    note: 'The treasury Safe spent 0.01357 ETH, 25% of all platform fees to date, buying $RUSHR on Uniswap and sending it straight to 0x…dEaD in the same transaction.',
+    txs: [['Buy & burn', '0xe296269a004477357262964e3e4c920c5bedf17bccce437b0e2acd108ec3bcc6']],
+  },
+  {
     date: '16 Nov 2026',
     title: 'Team supply burn',
     amount: '41,212,466',
@@ -266,8 +273,8 @@ export default async function TransparencyPage() {
             <Section id="buybacks" title="Buybacks & burns">
               <div className="rounded-xl border border-line bg-surface p-5 md:p-6">
                 <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Total burned</div>
-                <div className="mt-2 font-mono text-3xl font-semibold tabular-nums tracking-tight text-brand-deep md:text-4xl">100,000,000 $RUSHR</div>
-                <div className="mt-1 text-sm text-muted">10% of the 1,000,000,000 supply, sent to 0x…dEaD and gone for good.</div>
+                <div className="mt-2 font-mono text-3xl font-semibold tabular-nums tracking-tight text-brand-deep md:text-4xl">101,173,460 $RUSHR</div>
+                <div className="mt-1 text-sm text-muted">10.1% of the 1,000,000,000 supply, sent to 0x…dEaD and gone for good.</div>
               </div>
               <ol className="mt-3 divide-y divide-line rounded-xl border border-line bg-surface">
                 {BURNS.map((b) => (
