@@ -5,3 +5,4 @@ export * from './ingest/price';
 export * from './pnl/position';
 export * from './signals/compute';
 export * from './ingest/metadata';
+export * from './stocks';

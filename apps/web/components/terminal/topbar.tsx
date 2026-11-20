@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ChatCircleText, Fire, Lightning, MagnifyingGlass, Robot, Trophy, type Icon } from '@phosphor-icons/react';
+import { ArrowLeft, ChartLineUp, ChatCircleText, Fire, Lightning, MagnifyingGlass, Robot, Trophy, type Icon } from '@phosphor-icons/react';
 import { useTokenSearch } from '@/lib/search';
 import { usd } from '@/lib/format';
 import { TokenAvatar, RiskDot } from './bits';
@@ -12,11 +12,14 @@ import { AccountMenu } from './auth/account-menu';
 import { FeedbackButton } from './feedback';
 import { RushrPill } from './rushr-pill';
 
-const NAV = [
+/** `short`: the phone tab bar's label, where six tabs share ~360px. */
+const NAV: { href: string; label: string; short?: string }[] = [
   { href: '/trenches', label: 'Trenches' },
+  // Robinhood's tokenized stocks, $ANT featured.
+  { href: '/stocks', label: 'Stocks' },
   { href: '/feed', label: 'Feed' },
   { href: '/agents', label: 'Agents' },
-  { href: '/leaderboard', label: 'Leaderboard' },
+  { href: '/leaderboard', label: 'Leaderboard', short: 'Ranks' },
   // Rush the Trenches (the Season 0 trading event): its rules and live standings.
   { href: '/rush', label: 'Rush' },
 ];
@@ -54,7 +57,7 @@ export function TopBar() {
 }
 
 /** Phone tab icons, by route. */
-const NAV_ICONS: Record<string, Icon> = { '/trenches': Fire, '/feed': ChatCircleText, '/agents': Robot, '/leaderboard': Trophy, '/rush': Lightning };
+const NAV_ICONS: Record<string, Icon> = { '/trenches': Fire, '/stocks': ChartLineUp, '/feed': ChatCircleText, '/agents': Robot, '/leaderboard': Trophy, '/rush': Lightning };
 
 /**
  * Phones: the sections as a floating tab bar at the bottom, where thumbs reach (and how the installed app
@@ -69,7 +72,7 @@ export function MobileNav() {
     <div className="shrink-0 px-3 pt-1.5 [padding-bottom:max(0.5rem,env(safe-area-inset-bottom))] md:hidden">
       <nav
         aria-label="Sections"
-        className="grid grid-cols-5 rounded-2xl border border-white/[0.08] bg-surface-2/95 px-1 py-1 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.8)] backdrop-blur-md"
+        className="grid grid-cols-6 rounded-2xl border border-white/[0.08] bg-surface-2/95 px-1 py-1 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.8)] backdrop-blur-md"
       >
         {NAV.map((n) => {
           const on = path.startsWith(n.href);
@@ -82,7 +85,7 @@ export function MobileNav() {
               className={`flex flex-col items-center gap-0.5 rounded-xl py-1.5 text-[10.5px] transition active:scale-[0.96] ${on ? 'bg-white/[0.07] font-medium text-ink' : 'text-muted'}`}
             >
               <Ico size={20} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
-              {n.label}
+              {n.short ?? n.label}
             </Link>
           );
         })}

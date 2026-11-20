@@ -15,6 +15,7 @@ import { refreshSignalsIfStale } from './signals-refresh';
 import { page, repairBalances, walletHoldings, walletPosition } from './wallets';
 import { PAUSED_BODY, readPause } from './pause';
 import { TRANSPARENCY_CACHE_S, transparency } from './transparency';
+import { STOCKS_CACHE_S, stocksList } from './stocks';
 import { PNL_RANGES, walletPnlHistory, walletTrades, type PnlRange } from './wallet-history';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
@@ -277,6 +278,9 @@ api.get('/dev/:address', async (c) => {
 });
 
 /** Search by contract, symbol or name. */
+/** Robinhood's tokenized stocks with 24h change and hourly sparklines, plus memecoins priced in the featured one. */
+api.get('/stocks', async (c) => c.json(await stocksList(c.var.sql), 200, cache(STOCKS_CACHE_S)));
+
 api.get('/search', async (c) => {
   const sql = c.var.sql;
   const q = (c.req.query('q') ?? '').trim();
