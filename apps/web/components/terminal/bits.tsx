@@ -31,8 +31,9 @@ export function TokenAvatar({
   const round = shape === 'square' ? 'rounded-[22%]' : 'rounded-full';
   // Load state is keyed by URL, so a new image_url starts fresh.
   const [img, setImg] = useState<{ url: string; status: 'ok' | 'failed' } | null>(null);
-  // Robinhood stock tokens without an image of their own get our hosted company logo (lib/stock-logos.ts).
-  const url = t.image_url || stockLogo(t.address);
+  // Verified Robinhood stock tokens show our hosted company logo (lib/stock-logos.ts) first: their own token
+  // image, where one exists, is Robinhood's generic token icon rather than the company's.
+  const url = stockLogo(t.address) || t.image_url || null;
   const status = url && img?.url === url ? img.status : 'loading';
   const loaded = status === 'ok';
   return (

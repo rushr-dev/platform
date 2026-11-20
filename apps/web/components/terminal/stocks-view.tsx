@@ -214,7 +214,7 @@ const isUp = (s: Pick<StockRow, 'change_24h_pct' | 'spark'>) =>
 
 /** The token's icon when it has one, else a ticker tile (most stock tokens carry no icon metadata). */
 function StockLogo({ s, size }: { s: Pick<StockRow, 'address' | 'symbol' | 'image_url'>; size: number }) {
-  const img = s.image_url || stockLogo(s.address);
+  const img = stockLogo(s.address) || s.image_url;
   if (img) return <TokenAvatar t={{ address: s.address, symbol: s.symbol, launchpad: null, image_url: img }} size={size} shape="square" />;
   const c = hue(s.address);
   const text = s.symbol.slice(0, 4);

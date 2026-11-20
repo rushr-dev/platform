@@ -3,7 +3,7 @@
  * packages/core/src/stocks.ts, so a copycat token with the same ticker never gets a real company's logo).
  * Files live in public/stock-logos/<TICKER>.png: 128px tiles, company logos from public stock-logo data
  * (financialmodelingprep image-stock), checked by eye on 2026-11-20. FLY and GME are left out (the source
- * image was the wrong company or cropped). Used only when the token has no image of its own.
+ * image was the wrong company or cropped). Shown before the token's own image, which for these tokens is Robinhood's generic token icon.
  */
 const STOCK_LOGOS: Record<string, string> = {
   '0x521cf887e6531c6f667b5bc4d896e5d9bfe8eb2e': 'AAOI',
