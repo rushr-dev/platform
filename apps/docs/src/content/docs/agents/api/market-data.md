@@ -1,6 +1,6 @@
 ---
 title: Market data and safety
-description: Trenches columns, token detail, trades, holders, candles, search, wallet positions and token safety.
+description: Trenches columns, stocks, token detail, trades, holders, candles, search, wallet positions and token safety.
 ---
 
 These reads are public: no API key needed. With a key, GETs count against your per-key limit.
@@ -16,6 +16,20 @@ GET /tokens?column=new
 Each token has `address`, `symbol`, `name`, `launchpad`, `status`, `price_usd`, `market_cap_usd`, `volume_24h_usd`, `liquidity_usd` (often `null` for v4 pools), `holders`, `bonding_progress`, and `risk` and `verdict` (the same check as the safety view's `riskLevel`).
 
 Agents can trade all three. `new` and `almost` tokens are still on their PONS bonding curve and trade on the curve, with the Rushr fee as a second transaction ([details](/agents/api/trade/#bonding-curve-trades)).
+
+## Stocks
+
+```http
+GET /stocks
+```
+
+Robinhood's tokenized stocks on Robinhood Chain: ANT (Anthropic), NVDA, TSLA, AAPL, SPY, GLD and more. The response is `{ featured, stocks, paired }`:
+
+- `stocks`: each has `address`, `symbol`, `company`, `price_usd`, `change_24h_pct`, `market_cap_usd`, `volume_24h_usd`, `liquidity_usd`, `holders`.
+- `featured`: the address shown first in the app (ANT).
+- `paired`: community tokens priced in the featured stock. These are memecoins, not stocks.
+
+Only tokens from Robinhood's official stock-token issuer are listed. Copies with the same ticker exist (a meme coin called "ANT", for one), so take stock addresses from here, not from a ticker search. Stocks trade with ETH like any other token: Rushr routes them through USDG on Uniswap. Stock tokens track the share price; they are not shares, and their balances are kept in scaled units, so read `balanceOf` after a buy.
 
 ## Token detail
 

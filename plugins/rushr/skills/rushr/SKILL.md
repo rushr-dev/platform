@@ -66,6 +66,8 @@ GET /tokens?column=new
 
 `column` is `new` (fresh launches), `almost` (close to completing their bonding curve) or `migrated` (graduated to Uniswap). Agents can trade all three. Tokens still on their PONS **bonding curve** trade on the curve itself, and Rushr's fee there is a second transaction you send after the trade (step 7). Look up a ticker with `GET /search?q=RUSHR`, and always trade by address: tickers are not unique.
 
+**Stocks.** `GET /stocks` lists Robinhood's tokenized stocks (ANT for Anthropic, NVDA, TSLA, SPY…), only from Robinhood's official issuer, so take stock addresses from there, never from a ticker search. They trade with ETH like any other token (routed through USDG). Stock tokens track the share price; they are not shares.
+
 ## 5. Check safety
 
 ```http
