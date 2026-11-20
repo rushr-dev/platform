@@ -145,6 +145,8 @@ async function discoverPons(client: PublicClient, token: Address, trader?: Addre
     ]);
     const fee = Number(feeBps);
     const tax = Number(creatorTaxBps);
+    // A curve priced in another ERC-20: record which one, so it can be reached from ETH through it.
+    const pairToken = nativeQuote === false ? await client.readContract({ address: curve, abi: ponsCurveAbi, functionName: 'pairToken' }).then(lc).catch(() => undefined) : undefined;
     return {
       venue: 'pons-curve',
       id: curve,
@@ -158,11 +160,12 @@ async function discoverPons(client: PublicClient, token: Address, trader?: Addre
       snipeTaxBps: Number(snipe),
       graduated,
       nativeQuote,
+      ...(pairToken ? { pairToken } : {}),
       realQuoteReserve,
       graduationThreshold,
       sellableTokens,
       venueFeeBps: fee + tax,
-      venueFeeLabel: `PONS curve · ${(fee / 100).toFixed(2)}% fee + ${(tax / 100).toFixed(2)}% creator tax`,
+      venueFeeLabel: `PONS curve${pairToken ? ' (priced in its pair token)' : ''} · ${(fee / 100).toFixed(2)}% fee + ${(tax / 100).toFixed(2)}% creator tax`,
     };
   } catch {
     return null;

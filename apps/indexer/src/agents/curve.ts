@@ -27,6 +27,7 @@ import { prepareQuickTrade, type QuickTrade, type WalletCall } from '@rushr/trad
 import { curveFeeCall } from '@rushr/trade/curve-fee';
 import { LEGACY_TREASURIES, resolveConfig } from '@rushr/trade/config';
 import type { PonsPool, Referral } from '@rushr/trade/types';
+import type { ApiPoolRow } from '@rushr/trade/api-pools';
 import { fail, type MemberRow } from './http';
 import { Rpc } from '../rpc';
 
@@ -55,7 +56,7 @@ export async function prepareCurve(
   client: PublicClient,
   req: CurveRequest,
   curve: PonsPool,
-  opts: { mode: 'quote' | 'build'; simulate: boolean; acceptImpact: boolean; referral: Referral | null; fundEthWei: bigint },
+  opts: { mode: 'quote' | 'build'; simulate: boolean; acceptImpact: boolean; referral: Referral | null; fundEthWei: bigint; pairApiPools?: (token: Address) => Promise<ApiPoolRow[] | null> },
 ): Promise<QuickTrade> {
   // Quotes (and dry runs) pretend the balances so they work before the wallet is funded; a plain build
   // reads the real balances and allowance.
@@ -66,6 +67,8 @@ export async function prepareCurve(
     settings: { maxTradeWei: NO_CAP, slippageBps: req.slippageBps ?? null },
     simulate: opts.mode === 'build' && opts.simulate,
     assume: dry ? { ethWei: opts.fundEthWei, tokenWei: opts.mode === 'quote' ? req.amountIn : undefined } : undefined,
+    // Curves priced in another token (e.g. ANT): the ETH route to it, with pool keys from our own index.
+    pairApiPools: opts.pairApiPools,
   });
   for (const b of t.blockers) {
     if (b.code === 'HIGH_IMPACT' || b.code === 'SIMULATION_REVERTED') continue; // the API's own impact guard; simulation reported below
@@ -74,6 +77,8 @@ export async function prepareCurve(
     if (b.code === 'SNIPE_TAX_ACTIVE') throw fail(422, 'snipe_tax_active', b.message, { retryAfter: 10 });
     if (b.code === 'CURVE_GRADUATED') throw fail(409, 'curve_graduated', 'This token just graduated to Uniswap. Quote again in a few seconds to trade it there.', { retryAfter: 10 });
     if (b.code === 'NO_ROUTE') throw fail(422, 'trade_NO_ROUTE', b.message);
+    if (b.code === 'NON_ETH_QUOTE') throw fail(422, 'trade_NO_ROUTE', b.message);
+    if (b.code === 'CURVE_COMPLETES') throw fail(422, 'curve_completes', b.message);
     throw fail(422, `trade_${b.code}`, b.message);
   }
   if (!t.quote) throw fail(422, 'trade_NO_ROUTE', 'No quote for this curve trade.');

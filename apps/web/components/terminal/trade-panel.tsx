@@ -16,6 +16,7 @@ import { useTokenBalance } from '@/lib/balances';
 import { DepositPanel } from './profile/funding';
 import { Modal } from './profile/modal';
 import { SHOW_RISK } from '@/lib/risk-labels';
+import { PairHeldNote } from '@/components/trade/pair-held';
 
 /**
  * GMGN-style trade panel for the token page: your position in this token (balance, bought, sold,
@@ -301,6 +302,7 @@ function Panel({ token, priceUsd, position }: { token: TradeToken; priceUsd: num
                   : `Sell ${token.symbol}`}
         </button>
         <Status status={q.status} />
+        <PairHeldNote q={q} />
 
         <div className="flex items-center gap-3 border-t border-white/[0.05] pt-2 font-mono text-[11px] text-muted">
           <button type="button" onClick={() => setModal('presets')} className="hover:text-ink" title="Slippage for this preset">

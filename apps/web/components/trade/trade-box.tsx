@@ -7,6 +7,7 @@ import { feeLine } from '@rushr/trade';
 import { tradingAvailable } from './flag';
 import { chainClient, useKeepWarm, useQuickTrade, type TradeStatus, type TradeToken } from './use-quick-trade';
 import { SHOW_RISK } from '@/lib/risk-labels';
+import { PairHeldNote } from '@/components/trade/pair-held';
 
 /**
  * Trade box for the token page. Beta v0: quick buy / sell from the user's Privy
@@ -175,6 +176,7 @@ function TradeBoxInner({ token }: { token: TradeToken }) {
         {!q.session.authenticated ? 'Sign in to trade' : busy ? 'Trading…' : side === 'buy' ? `Buy ${token.symbol}` : `Sell ${token.symbol}`}
       </button>
       <Status status={q.status} />
+      <PairHeldNote q={q} />
       <p className="mt-2 text-[11px] leading-snug text-muted">
         Trades are signed in your own Rushr wallet without a confirmation popup, up to your per-trade cap ({settings.maxTradeEth} ETH). Non-custodial: export your key any time.
       </p>

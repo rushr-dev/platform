@@ -14,6 +14,7 @@ import { CURVE_FEE_GAS, curveFeeCall, type CurveFeeFollowUp } from './curve-fee'
 import { simulateCalls, type SimCall } from './simulate';
 import type { PonsPool, Pool, Quote, Referral } from './types';
 import type { ApiPoolRow } from './api-pools';
+import { preparePairCurveTrade, type PairLegs, type PairTradeOptions } from './pair-trade';
 import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
 /**
@@ -67,6 +68,7 @@ export type GuardCode =
   | 'NO_ROUTE'
   | 'LIQUIDITY_REMOVED'
   | 'NON_ETH_QUOTE'
+  | 'CURVE_COMPLETES'
   | 'OVER_CAP'
   | 'RISK_ACK_REQUIRED'
   | 'HONEYPOT'
@@ -162,7 +164,8 @@ function fmtEth(wei: bigint): string {
 
 /** One transaction for the embedded wallet (send in order; wait for each receipt). */
 export interface WalletCall {
-  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'swap' | 'Rushr fee';
+  /** 'swap' is the Universal Router call (or the curve call on an ETH curve); 'curve swap' is the curve leg of a pair route. */
+  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'approve pair token for the curve' | 'swap' | 'curve swap' | 'Rushr fee';
   chainId: number;
   to: Address;
   data: Hex;
@@ -193,6 +196,12 @@ export interface QuickTrade {
    * where the fee is inside the swap.
    */
   feeFollowUp: CurveFeeFollowUp | null;
+  /**
+   * Curves priced in another ERC-20 (pair-trade.ts): two trading legs, ETH <-> pair token on Uniswap and
+   * pair token <-> token on the curve. Null on every other route. Rebuild the second leg from the first
+   * leg's receipt with `finalizePairLeg`; if it fails, the user holds the pair token (`pairHeldMessage`).
+   */
+  pairLegs: PairLegs | null;
 }
 
 export interface QuickTradeRequest {
@@ -219,6 +228,10 @@ export interface QuickTradeOptions {
   curveTrading?: boolean;
   /** SIMULATION/TESTS ONLY: pretend the trader holds these balances (and fund them in the simulation). */
   assume?: { ethWei?: bigint; tokenWei?: bigint };
+  /** Pair-route discovery (curves priced in another token): API pool rows per token (web: fetchApiPools). */
+  pairApiPools?: PairTradeOptions['pairApiPools'];
+  /** Pair-route pools known already (tests); null: no route. */
+  pairPools?: PairTradeOptions['pairPools'];
 }
 
 const FALLBACK_GAS = { approve: 80_000n, permit2: 80_000n, swap: 450_000n };
@@ -258,7 +271,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   const cfg = resolveConfig(opts.config);
   const now = opts.now?.() ?? Date.now();
   const empty = (blockers: Guard[], warnings: string[] = []): QuickTrade => ({
-    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null, feeFollowUp: null,
+    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null, feeFollowUp: null, pairLegs: null,
   });
   if (req.amountIn <= 0n) throw new TradeError('INVALID_AMOUNT', 'amount must be > 0');
 
@@ -366,6 +379,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     expiresAt: now + settings.quoteMaxAgeMs,
     record: draftTradeRecord(quote, cfg, built.tx.to, Math.floor(now / 1000)),
     feeFollowUp: null,
+    pairLegs: null,
   };
 }
 
@@ -436,7 +450,8 @@ async function prepareCurveTrade(
   now: number,
   empty: (b: Guard[], w?: string[]) => QuickTrade,
 ): Promise<QuickTrade> {
-  if (curve.nativeQuote === false) return empty([{ code: 'NON_ETH_QUOTE', message: 'This bonding curve is priced in another token, not ETH; not supported yet.' }]);
+  // Priced in another ERC-20 (e.g. ANT): reached from ETH through that token, in two trades (pair-trade.ts).
+  if (curve.nativeQuote === false) return preparePairCurveTrade(client, req, curve, opts, settings, cfg, now, empty);
   if (req.side === 'buy' && curve.snipeTaxBps > 0)
     return empty([{ code: 'SNIPE_TAX_ACTIVE', message: `Launch snipe tax is ${(curve.snipeTaxBps / 100).toFixed(0)}% right now; it drops to 0 within seconds of launch. Try again in a moment.` }]);
   const holderBps = req.holderDiscountBps ?? 0;
@@ -541,5 +556,6 @@ async function prepareCurveTrade(
     expiresAt: now + settings.quoteMaxAgeMs,
     record: draftTradeRecord(quote, cfg, curve.curve, Math.floor(now / 1000)),
     feeFollowUp,
+    pairLegs: null,
   };
 }

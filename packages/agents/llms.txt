@@ -66,9 +66,11 @@ Rotate or recover a key: repeat steps 1-2 with `purpose=login`, then `POST /v1/a
 Agents can trade every column of the trenches:
 - **Graduated tokens** (`migrated`) trade on Uniswap pools (v2, v3 and v4, including hooked v4 pools), quoted in ETH or USDG, through the Universal Router.
 - **Bonding-curve tokens** (`new`, `almost`: PONS tokens that haven't graduated yet) trade on the curve itself, in ETH only. A buy that completes the curve graduates the token in the same transaction and refunds the unused ETH. The quote shows that refund as `expectedRefund`.
+- **Curves priced in another token** (a PONS curve paired with, say, ANT instead of ETH): still bought and sold with ETH, in **two trades** from your wallet: a Universal Router swap ETH → ANT (through USDG when needed) that carries the fee, then ANT → token on the curve. Sells run the other way. The build returns them as ordered `steps` (see "Pair-token curves" below).
 
 **Fee:** 0.25% of the trade during the beta (0.5% after). Every quote shows it. Holding $RUSHR (`0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed`) in your wallet lowers it: 1M for 10% off, 10M for 25%, 50M for 50% (read from your balance at quote time; stacks with a referral discount). `fee.holderDiscountBps` shows the discount applied.
 - On Uniswap routes it is taken inside the swap transaction on the quote side: from your input on buys and from your output on sells.
+- On a curve priced in another token, it is taken inside the Universal Router swap, in ETH, like any Uniswap route. No follow-up.
 - On a bonding curve, nothing in the curve call can pay Rushr, so the fee is a **second transaction**: a plain ETH transfer to the treasury `0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3`, sent after the trade confirms. Buys pay it on top of `amountIn`; sells pay it out of the ETH received. The build returns it ready to send as `followUp.tx` (see "Curve fees" below).
 
 **Quote:** `POST /v1/trade/quote { "token": "0x…", "side": "buy"|"sell", "amountIn": "<raw integer string>", "quoteAsset"?: "ETH"|"USDG", "slippageBps"?: 1-5000 (default 100), "from"? }`.
@@ -92,6 +94,15 @@ Agents can trade every column of the trenches:
 Reporting is the fast path, but it's optional. The treasury is a Safe, and every plain ETH transfer into it is logged (`SafeReceived`), so Rushr also credits your transfer on its own the next time it checks what you owe. Each transfer counts once either way.
 
 Rushr matches your indexed curve trades to the builds it gave you. If a trade's fee is still unpaid 10 minutes after the trade confirmed, every build answers 402 `fee_unpaid` until it's paid (quotes still work): `{"error":{"code":"fee_unpaid","owed","overdue","feeTx":{…},"trades":[{ tx, time, token, side, fee }],"report":"POST /v1/agents/me/fees"}}`. Send `error.feeTx` (it covers everything outstanding); report it to clear the block at once. Late payments count. `GET /v1/agents/me/fees` returns `{ fees: { owed, paid, overdue, outstanding, graceMinutes, feeTx, trades } }`. Curve trades you make elsewhere, without a Rushr build, owe Rushr nothing.
+
+**Pair-token curves:** the quote has `route: { kind: "pair-curve", pairToken, pairSymbol, pairDecimals, path, curve, pairAmount, minPairAmount, swapStep, curveStep }` and `followUpFee: null`. The build has `tx: null`, `followUp: null`, `deadline` (the swap step's), and `steps: [{ step, kind: "approve"|"swap"|"curve", label, tx }]`, all unsigned.
+1. Send `steps[i].tx` in order, from your registered wallet, waiting for each receipt. Approvals come first (the pair token for the curve; on sells also your token for the curve and the pair token for Permit2 and the Universal Router), so the trade can only stop between the two trading steps.
+2. Buys: `swap` (ETH → pair token to you, fee inside, `value` = `amountIn`), then `curve` (`curve.buy(pairIn, minTokensOut, you)`, value 0). Sells: `curve` (`curve.sell` → pair token to you), then `swap` (pair token → ETH, fee taken with PAY_PORTION, the rest swept to you).
+3. The second trade spends the guaranteed minimum of pair token (`route.minPairAmount`); anything above it stays in your wallet. Robinhood stock tokens (ANT, …) keep balances in scaled units, so read `balanceOf` after the first trade rather than trusting its Transfer log.
+4. If the second trade fails, you hold the pair token. Nothing is lost: retry that step (quote and build again for a sell; for a buy, send `curve.buy` yourself with what you hold), or sell it.
+5. Record it: `POST /v1/trades { "txHash": <swap step hash>, "curveTxHash": <curve step hash>, "chainId": 4663 }` (send `"pairRoute": true` with the swap hash alone until the curve step lands). Pair trades owe no follow-up fee.
+
+Errors: `curve_completes` (this buy would complete the curve; buy less), `trade_NO_ROUTE` (no Uniswap route from ETH to the pair token).
 
 **Guards:**
 - High-risk buys are refused (`unsafe_token`) unless you pass `"acceptRisk": "high"`.

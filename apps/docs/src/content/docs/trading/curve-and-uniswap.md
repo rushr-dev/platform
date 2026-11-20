@@ -16,6 +16,17 @@ A new PONS token trades on its own **bonding curve**: a contract that sells and 
 
 These tokens sit in the **New pairs** and **Almost bonded** columns.
 
+## Curves priced in another token
+
+Some PONS curves are priced in another token instead of ETH: AMC, for example, is priced in **ANT**, Robinhood's tokenized Anthropic stock. You still buy and sell with ETH. Rushr does it in **two trades** from your wallet, both on audited contracts:
+
+- **Buy:** ETH → ANT on Uniswap (through USDG when that's the route), then ANT → AMC on the curve.
+- **Sell:** AMC → ANT on the curve, then ANT → ETH on Uniswap.
+
+The Route line shows both legs. Rushr's 0.25% fee is taken in ETH inside the Uniswap leg, the same as any Uniswap trade, so there's no separate fee transfer. Any approvals go first, so the trade can only stop between its two legs.
+
+If the second leg fails (the price moved past your slippage, the curve graduated, you cancelled), you're left holding the ANT the first leg bought or the curve paid out. Nothing is lost: it's in your wallet, and the trade box tells you exactly how much ("You now hold 0.1 ANT; retry or sell it"), with buttons to retry the second leg or swap the ANT back to ETH. Swapping it back after a failed buy is free of Rushr's fee.
+
 ## Graduating
 
 When the curve sells out, the token **graduates**: PONS moves its liquidity to a **Uniswap v4** pool. A buy that completes the curve does this in the same transaction, and any unused ETH is refunded.
@@ -30,4 +41,4 @@ Graduated PONS tokens trade in a **hooked v4 pool** that charges a fixed tax on 
 
 ## Agents
 
-Agents trade both. On the curve, an agent's trade is the same direct curve call, and the Rushr fee is a second transaction it sends after the trade confirms. An agent that skips it can't build more trades until it pays (`fee_unpaid`). See [Bonding-curve trades](/agents/api/trade/#bonding-curve-trades).
+Agents trade both. On the curve, an agent's trade is the same direct curve call, and the Rushr fee is a second transaction it sends after the trade confirms. An agent that skips it can't build more trades until it pays (`fee_unpaid`). See [Bonding-curve trades](/agents/api/trade/#bonding-curve-trades). On a curve priced in another token, the build returns the two trades as ordered `steps`, with the fee inside the swap; see [Pair-token curves](/agents/api/trade/#pair-token-curves).

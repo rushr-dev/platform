@@ -7,6 +7,7 @@ import { Gear, Info } from '@phosphor-icons/react';
 import { feeLine, maxBuyWei, type QuickTrade } from '@rushr/trade';
 import { tradingAvailable } from '@/components/trade/flag';
 import { useQuickTrade, type TradeToken } from '@/components/trade/use-quick-trade';
+import { PairHeldNote } from '@/components/trade/pair-held';
 import { compact, usd } from '@/lib/format';
 import { useEthUsd } from '@/lib/profile';
 import { LIMITS, updateSettings, useSettings } from '@/lib/settings';
@@ -292,6 +293,8 @@ function Card({
           {note.detail && <Info size={13} className="mt-px shrink-0 opacity-70" aria-label={note.detail} />}
         </p>
       )}
+
+      <PairHeldNote q={q} />
 
       {gear && <TradeSettings trade={fresh} side={side} token={token} ethUsd={ethUsd} onClose={() => setGear(false)} />}
     </section>

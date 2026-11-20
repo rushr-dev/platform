@@ -9,6 +9,10 @@ const CURVE_TOKEN = '0x00000000000000000000000000000000000000c1';
 const CURVE_ADDR = '0x00000000000000000000000000000000000000c9';
 const SNIPED = '0x00000000000000000000000000000000000000c3';
 const GRADUATED = '0x00000000000000000000000000000000000000c4';
+/** A curve priced in another token (PAIR): traded from ETH in two steps, the fee inside the swap. */
+const PAIRED = '0x00000000000000000000000000000000000000c5';
+const PAIR = '0x00000000000000000000000000000000000000a7';
+const UR = '0x204faca1764b154221e35c0d20abb3c525710498';
 const TREASURY = RUSHR_TREASURY.toLowerCase();
 const NOW_S = Math.floor(Date.now() / 1000);
 const probes: string[] = [];
@@ -22,8 +26,8 @@ let head = 1_000n;
 
 vi.mock('@rushr/trade/pools', () => ({
   discoverPools: async (_c: unknown, token: string) =>
-    token === CURVE_TOKEN || token === SNIPED || token === GRADUATED
-      ? [{ venue: 'pons-curve', id: CURVE_ADDR, curve: CURVE_ADDR, token, graduated: token === GRADUATED, nativeQuote: true, snipeTaxBps: token === SNIPED ? 5000 : 0 }]
+    token === CURVE_TOKEN || token === SNIPED || token === GRADUATED || token === PAIRED
+      ? [{ venue: 'pons-curve', id: CURVE_ADDR, curve: CURVE_ADDR, token, graduated: token === GRADUATED, nativeQuote: token !== PAIRED, snipeTaxBps: token === SNIPED ? 5000 : 0, ...(token === PAIRED ? { pairToken: PAIR } : {}) }]
       : [],
 }));
 
@@ -41,6 +45,16 @@ vi.mock('@rushr/trade/quick', () => ({
     };
     const swap = { label: 'swap', chainId: 4663, to: CURVE_ADDR, data: req.side === 'buy' ? '0xb0b0' : '0x5e11', value: req.side === 'buy' ? req.amountIn : 0n, gas: 250_000n };
     const approve = { label: 'approve token for the curve', chainId: 4663, to: req.token, data: `0x095ea7b3${CURVE_ADDR.slice(2).padStart(64, '0')}`, value: 0n, gas: 80_000n };
+    if (req.token === PAIRED) {
+      // What pair-trade.ts builds for a buy: approve PAIR for the curve, the Universal Router swap (fee inside), the curve buy.
+      const calls = [
+        { label: 'approve pair token for the curve', chainId: 4663, to: PAIR, data: '0x095ea7b3', value: 0n, gas: 80_000n },
+        { label: 'swap', chainId: 4663, to: UR, data: '0x3593564c', value: req.amountIn, gas: 600_000n },
+        { label: 'curve swap', chainId: 4663, to: CURVE_ADDR, data: '0xb0b1', value: 0n, gas: 250_000n },
+      ];
+      const pairLegs = { kind: 'pair-curve', side: 'buy', pairToken: PAIR, pairSymbol: 'ANT', pairDecimals: 18, path: 'Uniswap v3 · 0.05% pool fee', curve: { curve: CURVE_ADDR }, pairAmount: 1_000n, minPairAmount: 980n, firstLeg: 1, secondLeg: 2, deadline: BigInt(NOW_S + 300) };
+      return { ok: true, blockers: [], warnings: ['Two trades: ...'], quote: { ...quote, fee: { ...quote.fee, feeAmount: fee } }, alternatives: [], calls, sellApprovals: [], slippageBps: 500, gasCostWei: 0n, quotedAt: 0, expiresAt: 0, record: null, feeFollowUp: null, pairLegs };
+    }
     return { ok: !blockers.length, blockers, warnings: [], quote, alternatives: [], calls: req.side === 'sell' ? [approve, swap] : [swap], sellApprovals: [], slippageBps: 500, gasCostWei: 0n, quotedAt: 0, expiresAt: 0, record: null, feeFollowUp: null };
   },
 }));
@@ -114,7 +128,7 @@ describe.skipIf(!pg)('agent trades on PONS bonding curves', () => {
 
   beforeAll(async () => {
     t = await setup('agents_curve', { AGENT_TRADE_ENABLED: '1' });
-    for (const addr of [CURVE_TOKEN, SNIPED, GRADUATED]) {
+    for (const addr of [CURVE_TOKEN, SNIPED, GRADUATED, PAIRED]) {
       await t.sql`insert into tokens (address, name, symbol, decimals, total_supply, deployer, created_block, created_at, price_usd, launchpad, status)
         values (${addr}, 'T', 'T', 18, '1', '0xd', 1, now(), 1, 'pons', 'new')`;
       await t.sql`insert into signals (token, data, risk_level, verdict) values (${addr}, ${t.sql.json({})}, 'low', 'v')`;
@@ -151,6 +165,24 @@ describe.skipIf(!pg)('agent trades on PONS bonding curves', () => {
     expect(b.json.simulation).toEqual({ ok: true, error: null });
     const [ev] = await t.sql<{ data: Record<string, string> }[]>`select data from member_events where member_id = ${a.id} and type = 'curve_build'`;
     expect(ev!.data).toMatchObject({ token: CURVE_TOKEN, curve: CURVE_ADDR, side: 'buy', amountIn: '1000000', fee: '2500' });
+  });
+
+  it('builds a buy on a curve priced in another token as ordered steps, with no follow-up fee owed', async () => {
+    const a = await register('pairbuyer');
+    const q = await t.call('POST', '/trade/quote', { auth: a.key, body: { token: PAIRED, side: 'buy', amountIn: '1000000' } });
+    expect(q.status).toBe(200);
+    expect(q.json.route).toMatchObject({ kind: 'pair-curve', pairToken: PAIR, pairSymbol: 'ANT', swapStep: 2, curveStep: 3 });
+    expect(q.json.followUpFee).toBeNull();
+    const b = await t.call('POST', '/trade/build', { auth: a.key, body: { token: PAIRED, side: 'buy', amountIn: '1000000' } });
+    expect(b.status).toBe(200);
+    expect(b.json.tx).toBeNull();
+    expect(b.json.followUp).toBeNull();
+    expect(b.json.steps.map((x: { step: number; kind: string }) => [x.step, x.kind])).toEqual([[1, 'approve'], [2, 'swap'], [3, 'curve']]);
+    expect(b.json.steps[1].tx).toMatchObject({ to: UR, value: '1000000' });
+    expect(b.json.deadline).toBe(String(NOW_S + 300));
+    expect(b.json.note).toContain('curveTxHash');
+    // The fee is inside the swap: nothing is recorded as owed.
+    expect(await t.sql`select 1 from member_events where member_id = ${a.id} and type = 'curve_build'`).toHaveLength(0);
   });
 
   it('builds a curve sell with the curve approval first', async () => {

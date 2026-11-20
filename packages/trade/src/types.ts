@@ -49,8 +49,10 @@ export interface PonsPool extends PoolBase {
   /** Snipe tax at quote time (bps); non-zero only in the first seconds after launch. */
   snipeTaxBps: number;
   graduated: boolean;
-  /** The curve takes native ETH (false: another quote token; not tradable from ETH here). */
+  /** The curve takes native ETH (false: it is priced in `pairToken`, traded from ETH through a pair route, pair-trade.ts). */
   nativeQuote?: boolean;
+  /** Non-native curves: the ERC-20 the curve is priced in (reserves, fees and amounts are in its units). */
+  pairToken?: Address;
 }
 export type Pool = V4Pool | V3Pool | V2Pool | PonsPool;
 

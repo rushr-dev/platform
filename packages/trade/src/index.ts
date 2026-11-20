@@ -26,3 +26,5 @@ export * from './curve-fee';
 export * from './curve-fee-sim';
 export * from './fee-audit';
 export * from './fee-sim';
+export * from './pair-route';
+export * from './pair-trade';

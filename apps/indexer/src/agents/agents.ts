@@ -16,6 +16,8 @@ import { erc20Abi, permit2Abi } from '@rushr/trade/abis';
 import { TRADE_ADDRESSES } from '@rushr/trade/addresses';
 import type { Approval, PonsPool } from '@rushr/trade/types';
 import { curveFeeCall } from '@rushr/trade/curve-fee';
+import { parseApiPools } from '@rushr/trade/api-pools';
+import type { QuickTrade } from '@rushr/trade/quick';
 import { bioField, checkSuccessQuota, countSuccess, enqueueWalletFunding, fail, flag, isAddr, limit, memberColumns, publicCache, PRIVATE, requireMember, str, type C, type Ctx, type MemberRow } from './http';
 import { publicMember } from './members';
 import { recordReferral } from './referrals';
@@ -357,7 +359,9 @@ async function curveTrade(
   try {
     const t = await prepareCurve(client, { side: req.side, token: req.token, amountIn: req.amountIn, trader: req.trader, slippageBps: req.slippageBps }, curve, {
       mode, simulate: x.simulate, acceptImpact: x.acceptImpact, referral: ref, fundEthWei,
+      pairApiPools: async (token) => parseApiPools({ pools: (await tokenPools(sql, null, token.toLowerCase())) ?? [] }),
     });
+    if (t.pairLegs) return pairCurveResponse(c, t, x);
     const q = t.quote!;
     // Curve quotes are exempt from the buy→sell probe, as on the web: sells go back to the same curve.
     const honeypotCheck: HoneypotCheck | null = req.side === 'buy' ? { checked: 'exempt', buyTaxBps: null, sellTaxBps: null, roundTripBps: null } : null;
@@ -414,6 +418,72 @@ async function curveTrade(
     }
     throw e;
   }
+}
+
+/**
+ * A curve priced in another token (e.g. AMC priced in ANT): two trades from the agent's wallet, ETH ->
+ * pair token on Uniswap (the Rushr fee inside that swap, in ETH) and pair token -> token on the curve, or
+ * the reverse for sells. Returned as ordered `steps`; nothing follows them (no follow-up fee).
+ */
+function pairCurveResponse(
+  c: C,
+  t: QuickTrade,
+  x: { req: SwapReq; mode: 'quote' | 'build'; safety: Safety; acceptRisk: unknown; acceptImpact: boolean; simulate: boolean },
+) {
+  const { req, mode, safety } = x;
+  const q = t.quote!;
+  const legs = t.pairLegs!;
+  const honeypotCheck: HoneypotCheck | null = req.side === 'buy' ? { checked: 'exempt', buyTaxBps: null, sellTaxBps: null, roundTripBps: null } : null;
+  const impactBps = q.priceImpactBps;
+  const impactOk = x.acceptImpact || impactBps == null || impactBps <= MAX_IMPACT_BPS;
+  const quote = toJsonSafe({ ...q, request: { ...q.request, source: req.source } }) as Record<string, unknown>;
+  const kindOf = (i: number) => (i === legs.firstLeg || i === legs.secondLeg ? (t.calls[i]!.label === 'swap' ? 'swap' : 'curve') : 'approve');
+  const route = {
+    kind: 'pair-curve',
+    pairToken: legs.pairToken,
+    pairSymbol: legs.pairSymbol,
+    pairDecimals: legs.pairDecimals,
+    path: legs.path,
+    curve: legs.curve.curve,
+    /** Pair token expected between the two trades, and the minimum the second one spends as built. */
+    pairAmount: legs.pairAmount.toString(),
+    minPairAmount: legs.minPairAmount.toString(),
+    swapStep: (t.calls[legs.firstLeg]!.label === 'swap' ? legs.firstLeg : legs.secondLeg) + 1,
+    curveStep: (t.calls[legs.firstLeg]!.label === 'swap' ? legs.secondLeg : legs.firstLeg) + 1,
+  };
+  const twoTrades = req.side === 'buy'
+    ? `Two trades: ETH → ${legs.pairSymbol} on Uniswap (Rushr fee inside that swap), then ${legs.pairSymbol} → token on the bonding curve.`
+    : `Two trades: token → ${legs.pairSymbol} on the bonding curve, then ${legs.pairSymbol} → ETH on Uniswap (Rushr fee inside that swap).`;
+  const warnings = [...t.warnings.filter((w) => !w.startsWith('Pre-send simulation unavailable') && !w.startsWith('Two trades:')), twoTrades];
+  if (mode === 'quote') {
+    return c.json({ quote, alternatives: [], route, safety, honeypotCheck, warnings, deadlineSeconds: resolveConfig().deadlineSeconds, followUpFee: null, wouldBuild: safetyAllows(req.side, safety, x.acceptRisk) && impactOk }, 200, PRIVATE);
+  }
+  if (!impactOk) {
+    throw fail(422, 'high_price_impact', `Price impact is ${(impactBps! / 100).toFixed(1)}% (over ${MAX_IMPACT_BPS / 100}%). Check your amountIn units; pass "acceptImpact": true to build it anyway.`, { priceImpactBps: impactBps });
+  }
+  const steps = t.calls.map((k, i) => ({ step: i + 1, kind: kindOf(i), label: k.label, tx: unsigned(k) }));
+  return c.json(
+    {
+      tx: null,
+      steps,
+      approvals: [],
+      route,
+      followUp: null,
+      deadline: legs.deadline.toString(),
+      quote,
+      simulation: curveSimulation(t, x.simulate),
+      safety,
+      honeypotCheck,
+      warnings,
+      note:
+        `Unsigned. Send steps[i].tx in order from your registered wallet, waiting for each receipt; the swap step must land before the deadline. ` +
+        `The second trade spends the guaranteed minimum of ${legs.pairSymbol} (route.minPairAmount); anything above it stays in your wallet. ` +
+        `If the second trade fails you hold the ${legs.pairSymbol}: retry that step or sell it. ` +
+        `Record the trade with POST /v1/trades { txHash: <swap step hash>, curveTxHash: <curve step hash>, pairRoute: true }. Rushr never signs or sends for you.`,
+    },
+    200,
+    PRIVATE,
+  );
 }
 
 function safetyAllows(side: 'buy' | 'sell', safety: Safety, acceptRisk: unknown): boolean {

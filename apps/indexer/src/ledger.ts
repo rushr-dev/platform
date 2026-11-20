@@ -9,6 +9,13 @@
 // the same trade again with `feeTxHash` once it is sent; until the schema has a column for it, the hash
 // is kept in `flags` as `fee_tx:<hash>`. A curve trade whose fee transfer never arrives (or doesn't
 // check out) is confirmed with `fee_missed` and fee 0.
+//
+// Pair trades (a PONS curve priced in another token, e.g. AMC priced in ANT) are two transactions: a
+// Universal Router swap ETH <-> pair token, which carries the fee in ETH like any Uniswap route, and the
+// curve call pair token <-> token. `txHash` is the swap; the client marks the row `pairRoute: true` and
+// adds `curveTxHash` once the curve leg is sent (flags `pair_route`, `curve_tx:<hash>`). The row records
+// the curve token with the fee audited on the swap. If the curve leg never lands, the row records the
+// pair token the trader bought or sold, flagged `pair_leg_only`.
 //   GET  /v1/me/trades?before=&limit= the member's trades, newest first
 //   GET  /v1/me/referrals/accrued     confirmed fees and accruals of trades the member referred, per fee token
 //
@@ -16,7 +23,7 @@
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, type FeeTxInfo } from '@rushr/trade';
+import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -34,11 +41,15 @@ export const trades = new Hono<Ctx>();
 trades.post('/trades', async (c) => {
   const m = requireMember(c, { scope: 'trade' });
   await limit(c, 'write');
-  const b = (c.var.body ?? {}) as { txHash?: unknown; chainId?: unknown; source?: { kind?: unknown; id?: unknown }; feeTxHash?: unknown };
+  const b = (c.var.body ?? {}) as { txHash?: unknown; chainId?: unknown; source?: { kind?: unknown; id?: unknown }; feeTxHash?: unknown; curveTxHash?: unknown; pairRoute?: unknown };
   const txHash = typeof b.txHash === 'string' ? b.txHash.toLowerCase() : '';
   if (!TX.test(txHash)) throw fail(400, 'bad_tx_hash', 'txHash must be a 32-byte hex hash.');
   const feeTxHash = b.feeTxHash == null ? null : typeof b.feeTxHash === 'string' ? b.feeTxHash.toLowerCase() : '';
   if (feeTxHash !== null && (!TX.test(feeTxHash) || feeTxHash === txHash)) throw fail(400, 'bad_fee_tx_hash', 'feeTxHash must be a 32-byte hex hash of another transaction.');
+  const curveTxHash = b.curveTxHash == null ? null : typeof b.curveTxHash === 'string' ? b.curveTxHash.toLowerCase() : '';
+  if (curveTxHash !== null && (!TX.test(curveTxHash) || curveTxHash === txHash)) throw fail(400, 'bad_curve_tx_hash', 'curveTxHash must be a 32-byte hex hash of another transaction.');
+  if (feeTxHash && curveTxHash) throw fail(400, 'bad_curve_tx_hash', 'A trade has a feeTxHash (curve fee transfer) or a curveTxHash (pair trade), not both.');
+  const pairRoute = b.pairRoute === true || curveTxHash !== null;
   if (b.chainId !== CHAIN_ID) throw fail(400, 'bad_chain', 'Only Robinhood Chain (4663) is supported.');
   const kind = b.source?.kind ?? (m.kind === 'agent' ? 'agent' : 'web');
   if (kind !== 'web' && kind !== 'agent' && kind !== 'api') throw fail(400, 'bad_source', 'source.kind must be web, agent or api.');
@@ -47,16 +58,18 @@ trades.post('/trades', async (c) => {
   // transaction (sent or pending): a key pasted here by mistake never matches one and is never written.
   const rpc = new Rpc(c.env.RPC_URL);
   const lookup = (h: string) => rpc.call<{ from: string } | null>('eth_getTransactionByHash', [h]).catch(() => null);
-  const [onChain, feeOnChain] = await Promise.all([lookup(txHash), feeTxHash ? lookup(feeTxHash) : null]);
+  const [onChain, feeOnChain, curveOnChain] = await Promise.all([lookup(txHash), feeTxHash ? lookup(feeTxHash) : null, curveTxHash ? lookup(curveTxHash) : null]);
   if (!onChain) throw fail(404, 'tx_not_found', 'No transaction with this hash on Robinhood Chain (yet). Send it after the wallet broadcasts it.');
   if (onChain.from.toLowerCase() !== m.wallet) throw fail(403, 'not_your_tx', "This transaction wasn't sent from your wallet.");
   if (feeTxHash && !feeOnChain) throw fail(404, 'tx_not_found', 'No transaction with the fee hash on Robinhood Chain (yet).');
   if (feeTxHash && feeOnChain!.from.toLowerCase() !== m.wallet) throw fail(403, 'not_your_tx', "The fee transaction wasn't sent from your wallet.");
+  if (curveTxHash && !curveOnChain) throw fail(404, 'tx_not_found', 'No transaction with the curve hash on Robinhood Chain (yet).');
+  if (curveTxHash && curveOnChain!.from.toLowerCase() !== m.wallet) throw fail(403, 'not_your_tx', "The curve transaction wasn't sent from your wallet.");
   const sql = c.var.sql;
   const id = crypto.randomUUID();
   const [row] = await sql<{ id: string; status: string; trader: string }[]>`
-    insert into trades_ledger (id, chain_id, status, tx_hash, ts, trader, source_kind, source_id)
-    values (${id}, ${CHAIN_ID}, 'submitted', ${txHash}, now(), ${m.wallet}, ${kind}, ${sourceId})
+    insert into trades_ledger (id, chain_id, status, tx_hash, ts, trader, source_kind, source_id, flags)
+    values (${id}, ${CHAIN_ID}, 'submitted', ${txHash}, now(), ${m.wallet}, ${kind}, ${sourceId}, ${pairRoute ? ['pair_route'] : []})
     on conflict (tx_hash) do update set tx_hash = excluded.tx_hash
     returning id, status, trader`;
   if (row!.trader !== m.wallet) throw fail(409, 'tx_claimed', 'This transaction is already recorded for another member.');
@@ -73,6 +86,18 @@ trades.post('/trades', async (c) => {
     // The fee transfer is what a curve trade's confirmation waits for: confirm now, whatever happened
     // to the job queued with the trade (confirming twice is harmless). The cron sweep is the backstop.
     if (u && row!.id !== id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
+  }
+  if (curveTxHash) {
+    // Same rules as the fee hash: the first curve hash wins, and a confirmed row is confirmed again with it.
+    const [u] = await sql<{ status: string }[]>`
+      update trades_ledger set flags = array_append(array_remove(array_remove(flags, 'pair_leg_only'), 'pair_route'), 'pair_route') || ${[`curve_tx:${curveTxHash}`]}::text[],
+        status = case when status = 'confirmed' then 'submitted' else status end, updated_at = now()
+      where id = ${row!.id} and not exists (select 1 from unnest(flags) f where f like 'curve_tx:%' or f like 'fee_tx:%')
+      returning status`;
+    if (u) status = u.status;
+    if (u && row!.id !== id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
+  } else if (pairRoute && row!.id !== id) {
+    await sql`update trades_ledger set flags = array_append(flags, 'pair_route'), updated_at = now() where id = ${row!.id} and not ('pair_route' = any(flags))`;
   }
   if (row!.id === id) await c.env.ENRICH_QUEUE.send({ kind: 'trade-confirm', tx: txHash }, { delaySeconds: CONFIRM_DELAYS_S[0] });
   return c.json({ id: row!.id, status }, 202, PRIVATE);
@@ -174,9 +199,12 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     return finalAttempt ? 'done' : 'retry';
   }
   const from = String(tx.from).toLowerCase();
-  // Kept across confirmations: the fee transfer reported by the client (curve trades).
+  // Kept across confirmations: the fee transfer reported by the client (curve trades), and a pair trade's
+  // marker and curve leg.
   const feeTxFlag = (row.flags ?? []).find((f) => f.startsWith('fee_tx:')) ?? null;
-  const flags: string[] = feeTxFlag ? [feeTxFlag] : [];
+  const curveTxFlag = (row.flags ?? []).find((f) => f.startsWith('curve_tx:')) ?? null;
+  const pairRoute = (row.flags ?? []).includes('pair_route');
+  const flags: string[] = [...(feeTxFlag ? [feeTxFlag] : []), ...(pairRoute ? ['pair_route'] : []), ...(curveTxFlag ? [curveTxFlag] : [])];
   if (from !== row.trader) flags.push('trader_mismatch');
   const block = BigInt(receipt.blockNumber as string);
   const blk = await rpc.call<{ timestamp: string }>('eth_getBlockByNumber', [`0x${block.toString(16)}`, false]);
@@ -187,12 +215,32 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     return 'done';
   }
 
+  // Pair trade: the swap is this tx (fee in ETH); the token, side and token amount come from the curve leg.
+  let pairFill: PairCurveFill | null = null;
+  if (pairRoute) {
+    if (!curveTxFlag && !finalAttempt) return 'retry';
+    if (curveTxFlag) {
+      const curveTx = curveTxFlag.slice('curve_tx:'.length);
+      const [cr, ct] = await rpc.batch<Record<string, unknown> | null>([
+        { method: 'eth_getTransactionReceipt', params: [curveTx] },
+        { method: 'eth_getTransactionByHash', params: [curveTx] },
+      ]);
+      if (!cr || !ct) {
+        if (!finalAttempt) return 'retry';
+      } else if (cr.status === '0x1' && String(ct.from).toLowerCase() === from) {
+        const curveLogs = cr.logs as { address: string; topics: string[]; data: string }[];
+        pairFill = pairCurveFillFromLogs(curveLogs, from as `0x${string}`, curveFillFromLogs(curveLogs, from));
+      }
+    }
+    if (!pairFill) flags.push('pair_leg_only');
+  }
+
   // Which token, side and pool: our own decoded swap rows for this tx (any venue we index).
-  const swaps = await sql<{ token: string; side: 'buy' | 'sell'; pool: string; quote: string; venue: string | null; dex: string | null }[]>`
+  const swaps = pairRoute ? [] : await sql<{ token: string; side: 'buy' | 'sell'; pool: string; quote: string; venue: string | null; dex: string | null }[]>`
     select s.token, s.side, s.pool, s.quote, p.venue, p.dex from swaps s left join pools p on p.id = s.pool
     where s.tx = ${txHash} and s.trader = ${from} order by s.usd desc nulls last`;
-  if (!swaps.length && !finalAttempt) return 'retry';
-  if (!swaps.length) {
+  if (!swaps.length && !finalAttempt && !pairRoute) return 'retry';
+  if (!swaps.length && !pairRoute) {
     // Even on the last attempt: if the poller hasn't indexed this block yet (catching up after a pause or
     // an outage), wait for it rather than settle as swap_not_indexed. The 2-minute sweep comes back.
     const [cur] = await sql<{ value: { block: string } }[]>`select value from indexer_state where key = 'cursor'`;
@@ -204,7 +252,24 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
   const treasuries = [DEFAULT_TRADE_CONFIG.feeRecipient, ...LEGACY_TREASURIES].map((a) => a.toLowerCase());
   const toTreasuries = (f: (t: string) => bigint) => treasuries.reduce((sum, t) => sum + f(t), 0n);
   let s = swaps[0];
-  if (!s) {
+  if (pairRoute) {
+    // The fee leg is a Universal Router swap paid in ETH. With its curve leg: the curve token. Without (the
+    // curve leg failed or never came): the pair token the trader bought or sold with ETH.
+    if (pairFill) s = { token: pairFill.token, side: pairFill.side, pool: pairFill.curve, quote: NATIVE_ETH, venue: 'pons-curve', dex: 'pons' };
+    else {
+      const moved = [...new Set(logs.filter((l) => l.topics[0] === TRANSFER).map((l) => l.address.toLowerCase()))]
+        .filter((a) => a !== QUOTES.WETH)
+        .map((a) => ({ token: a, net: tokenFlow(logs, a, from) }))
+        .filter((x) => x.net !== 0n);
+      const t = moved[0];
+      if (!t) {
+        await sql`update trades_ledger set status = 'confirmed', block_number = ${block.toString()}, ts = ${ts}, flags = ${[...flags, 'no_token_moved']},
+          router = ${String(tx.to ?? '').toLowerCase()}, updated_at = now() where id = ${row.id}`;
+        return 'done';
+      }
+      s = { token: t.token, side: t.net > 0n ? 'buy' : 'sell', pool: '', quote: NATIVE_ETH, venue: null, dex: null };
+    }
+  } else if (!s) {
     // Not indexed (a token we don't track): the token is what moved to or from the trader.
     flags.push('swap_not_indexed');
     const moved = [...new Set(logs.filter((l) => l.topics[0] === TRANSFER).map((l) => l.address.toLowerCase()))]
@@ -238,8 +303,8 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     fee = toTreasuries((t) => tokenFlow(logs, QUOTES.USDG, t));
   }
 
-  // Amounts from the trader's side of the chain.
-  const tokenNet = tokenFlow(logs, s.token, from);
+  // Amounts from the trader's side of the chain (a pair trade's token side: what its curve leg moved).
+  const tokenNet = pairFill ? (pairFill.side === 'buy' ? pairFill.tokenAmount : -pairFill.tokenAmount) : tokenFlow(logs, s.token, from);
   let amountIn: bigint;
   let amountOut: bigint;
   if (s.side === 'buy') {

@@ -47,6 +47,8 @@ export const ponsCurveAbi = parseAbi([
   'function token() view returns (address)',
   'function factory() view returns (address)',
   'function isNativeQuote() view returns (bool)',
+  /** The ERC-20 a non-native curve is priced in (e.g. ANT); pulled with transferFrom on buy, paid out on sell. */
+  'function pairToken() view returns (address)',
   'function realQuoteReserve() view returns (uint256)',
   'function graduationThreshold() view returns (uint256)',
   'function sellableTokens() view returns (uint256)',

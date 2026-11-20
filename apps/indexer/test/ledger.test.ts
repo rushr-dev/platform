@@ -58,6 +58,16 @@ const fill = (side: 'buy' | 'sell', who: string, quote: bigint, tokens: bigint) 
   topics: [side === 'buy' ? CURVE_BUY_TOPIC : CURVE_SELL_TOPIC, topic(who), topic(who)],
   data: `0x${side === 'buy' ? word(quote) + word(tokens) : word(tokens) + word(quote)}${word(quote / 100n)}${word(quote / 50n)}`,
 });
+// Pair trades (a curve priced in another token, here PAIR): a Universal Router swap ETH <-> PAIR with the fee
+// in ETH, and the curve leg PAIR <-> PTOKEN.
+const PAIR = '0xa171000000000000000000000000000000000a17';
+const PTOKEN = '0x7272000000000000000000000000000000000072';
+const PBUY_TX = `0x${'d1'.repeat(32)}`;
+const PBUY_CURVE_TX = `0x${'d2'.repeat(32)}`;
+const PSELL_TX = `0x${'d5'.repeat(32)}`;
+const PSELL_CURVE_TX = `0x${'d6'.repeat(32)}`;
+const PONLY_TX = `0x${'d9'.repeat(32)}`;
+const PFEE = (E18 * BASE_BPS) / 10_000n; // Carol isn't referred
 const feeTx = (from: string, nonce: number, v: bigint) => ({
   tx: { from, to: TREASURY, value: hex(v), input: '0x', nonce: hex(BigInt(nonce)) },
   receipt: { status: '0x1', blockNumber: '0x70', logs: [] },
@@ -137,6 +147,37 @@ const chain: Record<string, { tx: object; receipt: object; trace: object }> = {
   [CLEGACY_FEE_TX]: { ...feeTx(CAROL, 81, (E18 * BASE_BPS) / 10_000n), tx: { from: CAROL, to: LEGACY, value: hex((E18 * BASE_BPS) / 10_000n), input: '0x', nonce: hex(81n) } },
   // Not the next nonce: some other transfer to the treasury, not this trade's fee.
   [CBAD_FEE_TX]: feeTx(CAROL, 40, (E18 * BASE_BPS) / 10_000n),
+  // Pair buy: 1 ETH in (fee TRANSFERred to the treasury), 10 PAIR to Carol; then 10 PAIR into the curve for 5,000 PTOKEN.
+  [PBUY_TX]: {
+    tx: { from: CAROL, to: ROUTER, value: hex(E18) },
+    receipt: { status: '0x1', blockNumber: '0x71', logs: [transfer(PAIR, POOL, CAROL, 10n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: ROUTER, value: hex(E18), calls: [{ type: 'CALL', from: ROUTER, to: TREASURY, value: hex(PFEE) }] },
+  },
+  [PBUY_CURVE_TX]: {
+    tx: { from: CAROL, to: CURVE, value: '0x0' },
+    receipt: { status: '0x1', blockNumber: '0x72', logs: [transfer(PAIR, CAROL, CURVE, 10n * E18), transfer(PTOKEN, CURVE, CAROL, 5000n * E18), fill('buy', CAROL, 10n * E18, 5000n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: CURVE, value: '0x0' },
+  },
+  // Pair sell: 5,000 PTOKEN into the curve for 9 PAIR; then 9 PAIR to 2 ETH gross (PAY_PORTION to the treasury, the rest to Carol).
+  [PSELL_CURVE_TX]: {
+    tx: { from: CAROL, to: CURVE, value: '0x0' },
+    receipt: { status: '0x1', blockNumber: '0x73', logs: [transfer(PTOKEN, CAROL, CURVE, 5000n * E18), transfer(PAIR, CURVE, CAROL, 9n * E18), fill('sell', CAROL, 9n * E18, 5000n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: CURVE, value: '0x0' },
+  },
+  [PSELL_TX]: {
+    tx: { from: CAROL, to: ROUTER, value: '0x0' },
+    receipt: { status: '0x1', blockNumber: '0x74', logs: [transfer(PAIR, CAROL, POOL, 9n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: ROUTER, value: '0x0', calls: [
+      { type: 'CALL', from: ROUTER, to: TREASURY, value: hex(SELL_FEE) },
+      { type: 'CALL', from: ROUTER, to: CAROL, value: hex(SELL_GROSS - SELL_FEE) },
+    ] },
+  },
+  // A pair buy whose curve leg never landed: Carol ends with the PAIR.
+  [PONLY_TX]: {
+    tx: { from: CAROL, to: ROUTER, value: hex(E18) },
+    receipt: { status: '0x1', blockNumber: '0x75', logs: [transfer(PAIR, POOL, CAROL, 10n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: ROUTER, value: hex(E18), calls: [{ type: 'CALL', from: ROUTER, to: TREASURY, value: hex(PFEE) }] },
+  },
 };
 
 function rpc(method: string, params: unknown[]): unknown {
@@ -328,6 +369,41 @@ describe.skipIf(!pg)('trade ledger', () => {
       expect(await rowOf(CSTUCK_TX)).toMatchObject({ status: 'confirmed', venue: 'pons-curve', side: 'buy', fee_amount: ((E18 * BASE_BPS) / 10_000n).toString(), flags: [`fee_tx:${CSTUCK_FEE_TX}`] });
       // Fresh rows are left to their own job.
       expect((await sweepStuckTrades(t.sql, t.env as never)).map((x) => x.tx)).not.toContain(CSTUCK_TX);
+    });
+  });
+
+  describe('pair trades: the fee is in the Universal Router swap, the token comes from the curve leg', () => {
+    const post = (auth: string, body: object) => t.call('POST', '/trades', { auth, body: { chainId: 4663, source: { kind: 'web' }, ...body } });
+    const rowOf = async (h: string) => (await t.sql`select * from trades_ledger where tx_hash = ${h}`)[0]!;
+
+    it('a buy waits for its curve leg, then records the curve token with the ETH fee of the swap', async () => {
+      expect((await post(carol, { txHash: PBUY_TX, pairRoute: true })).status).toBe(202);
+      expect(await confirmTrade(t.sql, t.env as never, PBUY_TX, false)).toBe('retry');
+      // The curve leg must be Carol's own transaction (CBUY_TX is Bob's).
+      expect((await post(carol, { txHash: PBUY_TX, curveTxHash: CBUY_TX })).json.error.code).toBe('not_your_tx');
+      expect((await post(carol, { txHash: PBUY_TX, curveTxHash: PBUY_CURVE_TX })).status).toBe(202);
+      expect(await confirmTrade(t.sql, t.env as never, PBUY_TX, false)).toBe('done');
+      const row = await rowOf(PBUY_TX);
+      expect(row).toMatchObject({
+        status: 'confirmed', side: 'buy', token: PTOKEN, venue: 'pons-curve', pool_id: CURVE, router: ROUTER, quote_asset: 'ETH',
+        amount_in: E18.toString(), amount_out: (5000n * E18).toString(), fee_token: '0x0000000000000000000000000000000000000000', fee_amount: PFEE.toString(),
+        flags: ['pair_route', `curve_tx:${PBUY_CURVE_TX}`],
+      });
+      expect(Number(row.fee_bps)).toBeCloseTo(Number(BASE_BPS));
+    });
+
+    it('a sell posted with both legs: tokens into the curve, ETH out of the swap net of the PAY_PORTION fee', async () => {
+      expect((await post(carol, { txHash: PSELL_TX, curveTxHash: PSELL_CURVE_TX })).status).toBe(202);
+      expect(await confirmTrade(t.sql, t.env as never, PSELL_TX, false)).toBe('done');
+      const row = await rowOf(PSELL_TX);
+      expect(row).toMatchObject({ status: 'confirmed', side: 'sell', token: PTOKEN, amount_in: (5000n * E18).toString(), amount_out: (SELL_GROSS - SELL_FEE).toString(), fee_amount: SELL_FEE.toString() });
+      expect(Number(row.fee_bps)).toBeCloseTo(Number(BASE_BPS));
+    });
+
+    it('no curve leg by the last attempt: the pair token is what was bought, flagged pair_leg_only', async () => {
+      await post(carol, { txHash: PONLY_TX, pairRoute: true });
+      expect(await confirmTrade(t.sql, t.env as never, PONLY_TX, true)).toBe('done');
+      expect(await rowOf(PONLY_TX)).toMatchObject({ status: 'confirmed', side: 'buy', token: PAIR, amount_out: (10n * E18).toString(), fee_amount: PFEE.toString(), flags: ['pair_route', 'pair_leg_only'] });
     });
   });
 });

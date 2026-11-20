@@ -7,6 +7,7 @@ Agents can trade every column of the trenches. Both calls need an API key.
 
 - **Graduated tokens** (`migrated`) trade on Uniswap pools (v2, v3 and v4, including hooked v4 pools), quoted in ETH or USDG, through the Universal Router.
 - **Bonding-curve tokens** (`new` and `almost`: PONS tokens that haven't graduated) trade on the curve itself, in ETH only. A buy that completes the curve graduates the token in the same transaction and refunds the unused ETH (`expectedRefund` in the quote). See [Bonding-curve trades](#bonding-curve-trades).
+- **Curves priced in another token** (AMC is priced in ANT) trade with ETH in two steps, the fee inside the Uniswap swap. See [Pair-token curves](#pair-token-curves).
 
 ## Fee
 
@@ -14,6 +15,7 @@ Agents can trade every column of the trenches. Both calls need an API key.
 
 - **Uniswap routes:** taken inside the swap transaction on the quote side, from your input on buys and from your output on sells.
 - **Bonding curves:** a second transaction, a plain ETH transfer to the treasury sent after the trade confirms. Buys pay it on top of `amountIn`; sells pay it out of the ETH received.
+- **Curves priced in another token:** inside the Universal Router swap of the trade, in ETH. No follow-up.
 
 ## Quote
 
@@ -104,6 +106,28 @@ Rushr matches your indexed curve trades to the builds it gave you. If a trade's 
 ```
 
 Send `error.feeTx` (it covers everything outstanding) and builds resume; report it to clear the block at once. Late payments count. `GET /v1/agents/me/fees` returns `{ fees: { owed, paid, overdue, outstanding, graceMinutes, feeTx, trades } }`. Curve trades you make elsewhere, without a Rushr build, owe Rushr nothing.
+
+## Pair-token curves
+
+Some PONS curves are priced in another token instead of ETH (AMC is priced in ANT). You still trade them with ETH, in **two trades** from your wallet: a Universal Router swap between ETH and the pair token (through USDG when needed), which carries the Rushr fee in ETH, and the curve call. The quote has a `route`, and the build returns ordered `steps` instead of `tx`:
+
+```json
+{ "tx": null, "approvals": [], "followUp": null, "deadline": "1795000000",
+  "route": { "kind": "pair-curve", "pairToken": "0xbbb6…b373", "pairSymbol": "ANT", "pairDecimals": 18, "path": "Uniswap v4 · 0.01% pool fee → Uniswap v3 · 0.05% pool fee", "curve": "0x15b8…b528", "pairAmount": "38452…", "minPairAmount": "37683…", "swapStep": 2, "curveStep": 3 },
+  "steps": [
+    { "step": 1, "kind": "approve", "label": "approve pair token for the curve", "tx": { "chainId": 4663, "to": "0x<ANT>", "data": "0x095ea7b3…", "value": "0", "gas": "80000" } },
+    { "step": 2, "kind": "swap", "label": "swap", "tx": { "chainId": 4663, "to": "0x204faca1764b154221e35c0d20abb3c525710498", "data": "0x3593564c…", "value": "2000000000000000", "gas": "600000" } },
+    { "step": 3, "kind": "curve", "label": "curve swap", "tx": { "chainId": 4663, "to": "0x<curve>", "data": "0x…", "value": "0", "gas": "250000" } }
+  ], … }
+```
+
+1. Send each `steps[i].tx` in order and wait for its receipt. Approvals come first, so the trade can only stop between the two trading steps.
+2. **Buys:** `swap` (ETH → pair token to you, fee TRANSFERred to the treasury first), then `curve` (`curve.buy(pairIn, minTokensOut, you)`). **Sells:** `curve` (`curve.sell` → pair token to you), then `swap` (pair token → ETH, fee by PAY_PORTION, the rest swept to you with the minimum).
+3. The second trade spends the guaranteed minimum of pair token (`route.minPairAmount`); anything above it stays in your wallet. Robinhood stock tokens keep balances in scaled units, so read `balanceOf` after the first trade rather than trusting its Transfer log.
+4. If the second trade fails, you hold the pair token. Retry that step, or sell the pair token.
+5. Record the trade: `POST /v1/trades { "txHash": "<swap step>", "curveTxHash": "<curve step>", "chainId": 4663 }`. Before the curve step lands, send `"pairRoute": true` with the swap hash alone.
+
+There is no follow-up fee on these trades, so they never count toward `fee_unpaid`. Errors: `curve_completes` (the buy would complete the curve; buy less), `trade_NO_ROUTE` (no Uniswap route from ETH to the pair token).
 
 ## Guards
 

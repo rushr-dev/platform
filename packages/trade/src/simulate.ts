@@ -67,7 +67,7 @@ function lc(a: string): Address {
 }
 
 /** Runs calls in one simulated block. `fund` gives addresses an ETH balance via state override. */
-export async function simulateCalls(client: PublicClient, calls: SimCall[], opts: { fund?: Record<Address, bigint>; blockTag?: 'latest' | 'pending' } = {}): Promise<SimulationResult> {
+export async function simulateCalls(client: PublicClient, calls: SimCall[], opts: { fund?: Record<Address, bigint>; /** A block number (hex) pins the simulation to that block's state. */ blockTag?: 'latest' | 'pending' | Hex } = {}): Promise<SimulationResult> {
   const stateOverrides: Record<string, { balance: Hex }> = {};
   for (const [a, wei] of Object.entries(opts.fund ?? {})) stateOverrides[a] = { balance: toHex(wei) };
   let raw: { calls: RawSimCall[] }[];

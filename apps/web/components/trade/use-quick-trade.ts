@@ -9,8 +9,13 @@ import {
   DEFAULT_TRADE_CONFIG,
   curveGraduated,
   discoverPools,
+  erc20Abi,
   explorerTxUrl,
   fetchApiPools,
+  finalizePairLeg,
+  pairHeldMessage,
+  pairReceived,
+  preparePairRetry,
   isFresh,
   probeTokenSafety,
   quickBuy,
@@ -20,6 +25,7 @@ import {
   tradeFollowUpFee,
   TxPipeline,
   type ApiPoolRow,
+  type PairLegs,
   type Pool,
   type QuickTrade,
   type SendResult,
@@ -53,6 +59,11 @@ import { SHOW_RISK } from '@/lib/risk-labels';
  * transfer to the treasury, signed the same way right after the trade confirms (the next nonce). It is
  * built from the trade's receipt, so a reverted trade pays nothing, and it never delays or fails the
  * trade in the UI: if it can't be sent, the ledger flags the trade `fee_missed`.
+ *
+ * Curves priced in another token (AMC priced in ANT) are two trades: ETH -> ANT on Uniswap, then ANT -> AMC
+ * on the curve (sells the reverse). The second is rebuilt from what the first delivered (its receipt and the
+ * wallet's ANT balance right after), so nothing is left over. If the second fails, the user holds the ANT:
+ * `pairHeld` says how much, and `resumePair` either finishes the trade or swaps the ANT back to ETH.
  */
 
 export const chainClient = publicClient as unknown as () => PublicClient;
@@ -155,7 +166,7 @@ function logTimings(t: TradeTimings) {
  * the member's signup attribution, so only the hash goes up. 404 tx_not_found right after broadcast is
  * retried once. Idempotent per hash. Errors are ignored: it never blocks or fails a trade.
  */
-export async function recordTrade(txHash: Hex, feeTxHash?: Hex): Promise<void> {
+export async function recordTrade(txHash: Hex, extra: { feeTxHash?: Hex; curveTxHash?: Hex; pairRoute?: boolean } = {}): Promise<void> {
   try {
     const token = await auth.getAccessToken();
     if (!token) return;
@@ -163,8 +174,14 @@ export async function recordTrade(txHash: Hex, feeTxHash?: Hex): Promise<void> {
       const res = await fetch(`${API_URL}/v1/trades`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        // `feeTxHash`: the follow-up fee transfer of a curve trade (same endpoint, same trade).
-        body: JSON.stringify({ txHash, chainId: 4663, source: { kind: 'web' }, ...(feeTxHash ? { feeTxHash } : {}) }),
+        // `feeTxHash`: the follow-up fee transfer of a curve trade (same endpoint, same trade). Pair trades:
+        // `txHash` is the Universal Router leg (the fee), `curveTxHash` the curve leg.
+        body: JSON.stringify({
+          txHash, chainId: 4663, source: { kind: 'web' },
+          ...(extra.feeTxHash ? { feeTxHash: extra.feeTxHash } : {}),
+          ...(extra.curveTxHash ? { curveTxHash: extra.curveTxHash } : {}),
+          ...(extra.pairRoute ? { pairRoute: true } : {}),
+        }),
         keepalive: true,
       });
       const body = res.status === 404 ? await res.text().catch(() => '') : (await res.body?.cancel().catch(() => undefined), '');
@@ -233,6 +250,18 @@ function dropPools(token: Address) {
   poolCache.delete(token.toLowerCase());
 }
 
+const pairApiPools = (t: Address) => fetchApiPools(t, { apiUrl: API_URL });
+
+/** Pair token left in the wallet by a pair trade that stopped between its two legs. */
+export interface PairHeld {
+  legs: PairLegs;
+  amount: bigint;
+  message: string;
+  /** Hashes of the legs that landed: the swap (buys) or the curve trade (sells), for the trade ledger. */
+  urHash: Hex | null;
+  curveHash: Hex | null;
+}
+
 let lastActivity = Date.now();
 if (typeof window !== 'undefined') {
   const bump = () => (lastActivity = Date.now());
@@ -259,6 +288,7 @@ export function useQuickTrade(tokenArg: TradeToken) {
   const [status, setStatus] = useState<TradeStatus>({ kind: 'idle' });
   const [safety, setSafety] = useState<TokenSafety | null>(null);
   const [timings, setTimings] = useState<TradeTimings | null>(null);
+  const [pairHeld, setPairHeld] = useState<PairHeld | null>(null);
   const safetyRef = useRef<TokenSafety | null>(null);
   const cache = useRef(new Map<string, QuickTrade>());
   const inflight = useRef(new Map<string, Promise<QuickTrade | null>>());
@@ -280,6 +310,7 @@ export function useQuickTrade(tokenArg: TradeToken) {
     setSafety(null);
     safetyRef.current = null;
     setStatus({ kind: 'idle' });
+    setPairHeld(null);
     cache.current.clear();
     inflight.current.clear();
   }, [token.address]);
@@ -315,6 +346,8 @@ export function useQuickTrade(tokenArg: TradeToken) {
         acknowledgedHighRisk: ack,
         discover: { pools, apiPools: rows },
         simulate: trader !== GUEST,
+        // Curves priced in another token: the ETH route to that token (pool keys from the Rushr API).
+        pairApiPools: pairApiPools,
       };
       let t = side === 'buy' ? await quickBuy(client, { token: token.address, ethWei: amount, trader }, opts) : await quickSell(client, { token: token.address, trader, amount }, opts);
       // The bonding curve completed since the pools were read, or the token migrated after this page cached an
@@ -428,6 +461,8 @@ export function useQuickTrade(tokenArg: TradeToken) {
       const base = { token: token.address, symbol: token.symbol, decimals: token.decimals, side: r.side, amountIn: r.amount.toString(), wallet } as const;
       let t: QuickTrade | null = prebuilt ? pre! : null;
       let lastHash: Hex | undefined;
+      /** Pair trades: pair token the first leg delivered (what the user holds if the second fails). */
+      let held = 0n;
       try {
         if (!t) {
           cache.current.delete(k);
@@ -450,23 +485,60 @@ export function useQuickTrade(tokenArg: TradeToken) {
         let signMs = 0;
         let confirmMs = 0;
         let swap: { hash: Hex; receipt: SendResult['receipt'] } | null = null;
-        for (const [i, c] of t.calls.entries()) {
-          setStatus({ kind: 'sending', step: i + 1, total, label: c.label === 'swap' ? r.side : c.label });
-          res = await sendWithRetry(pipe, c, (hash) => {
-            lastHash = hash;
-            setStatus({ kind: 'pending', hash, step: i + 1, total });
-            if (c.label === 'swap') {
-              submittedAt = performance.now();
-              void recordTrade(hash);
-              emit({ ...base, phase: 'submitted', hash, expectedOut: t!.quote?.amountOut.toString() ?? null });
-            }
-          });
+        // Pair trades: the two legs' hashes (the ledger records the swap, with the curve leg attached).
+        const legs = t.pairLegs;
+        const calls = [...t.calls];
+        let urHash: Hex | null = null;
+        let curveHash: Hex | null = null;
+        for (let i = 0; i < calls.length; i++) {
+          const c = calls[i]!;
+          const trading = c.label === 'swap' || c.label === 'curve swap';
+          setStatus({ kind: 'sending', step: i + 1, total, label: trading ? r.side : c.label });
+          try {
+            res = await sendWithRetry(pipe, c, (hash) => {
+              lastHash = hash;
+              setStatus({ kind: 'pending', hash, step: i + 1, total });
+              if (legs) {
+                if (c.label === 'swap') {
+                  urHash = hash;
+                  void recordTrade(hash, curveHash ? { curveTxHash: curveHash } : { pairRoute: true });
+                } else if (c.label === 'curve swap') {
+                  curveHash = hash;
+                  if (urHash) void recordTrade(urHash, { curveTxHash: hash });
+                }
+                if (i === legs.firstLeg) {
+                  submittedAt = performance.now();
+                  emit({ ...base, phase: 'submitted', hash, expectedOut: t!.quote?.amountOut.toString() ?? null });
+                }
+              } else if (c.label === 'swap') {
+                submittedAt = performance.now();
+                void recordTrade(hash);
+                emit({ ...base, phase: 'submitted', hash, expectedOut: t!.quote?.amountOut.toString() ?? null });
+              }
+            });
+          } catch (e) {
+            if (legs && i === legs.secondLeg && held > 0n) throw new PairStopped(legs, held, friendly(e), urHash, curveHash);
+            throw e;
+          }
           prepMs += res.timings.prepMs;
           signMs += res.timings.signMs;
           confirmMs = res.timings.confirmMs;
-          if (res.receipt.status !== 'success') throw new Error(`${c.label} reverted on-chain`);
+          if (res.receipt.status !== 'success') {
+            if (legs && i === legs.secondLeg && held > 0n) throw new PairStopped(legs, held, `${c.label === 'swap' ? 'The swap to ETH' : 'The curve trade'} reverted on-chain`, urHash, curveHash);
+            throw new Error(`${c.label} reverted on-chain`);
+          }
           if (c.label === 'swap') swap = { hash: res.hash, receipt: res.receipt };
+          if (legs && i === legs.firstLeg) {
+            // What actually arrived: the receipt, capped by the balance right after (stock tokens log scaled amounts).
+            const after = await chainClient()
+              .readContract({ address: legs.pairToken, abi: erc20Abi, functionName: 'balanceOf', args: [wallet], blockNumber: res.receipt.blockNumber })
+              .catch(() => null);
+            held = pairReceived(legs, res.receipt, after);
+            const next = finalizePairLeg({ calls, pairLegs: legs }, res.receipt, { balanceAfter: after, deadlineSeconds: cfg.deadlineSeconds });
+            if (next) calls[legs.secondLeg] = next;
+          }
         }
+        if (legs) setPairHeld(null);
         // Curve trades: the fee transfer, from the confirmed trade's receipt. Queued now so it takes the
         // next nonce (before any pre-approval below); it runs in the background.
         const feeCall = swap ? tradeFollowUpFee(t, swap.receipt) : null;
@@ -492,6 +564,15 @@ export function useQuickTrade(tokenArg: TradeToken) {
         // After a buy: approve the token for selling now, in the background, so the sell is one tx.
         if (r.side === 'buy' && t.sellApprovals.length) void preApprove(pipe, t.sellApprovals);
       } catch (e) {
+        if (e instanceof PairStopped) {
+          // Never a silent loss: the first leg landed, so the user now holds the pair token. Say so and keep it
+          // actionable (retry the second leg, or swap the pair token back to ETH).
+          const message = pairHeldMessage(e.legs, e.held);
+          setPairHeld({ legs: e.legs, amount: e.held, message, urHash: e.urHash, curveHash: e.curveHash });
+          setStatus({ kind: 'failed', message: `${e.reason}. ${message}`, hash: lastHash, url: lastHash ? explorerTxUrl(lastHash) : undefined });
+          emit({ ...base, phase: 'failed', hash: lastHash, expectedOut: null, message });
+          return;
+        }
         // A curve trade that reverted because the curve graduated in the meantime: say so; the pools
         // cache is dropped below, so the next attempt routes to the new Uniswap pool.
         const pool = t?.quote?.pool;
@@ -509,7 +590,66 @@ export function useQuickTrade(tokenArg: TradeToken) {
     [session.authenticated, wallet, token, get, warm],
   );
 
-  return { session, wallet, trade, status, prepare, warm, execute, ack, setAck, safety, settings, timings };
+  /**
+   * After a pair trade stopped between its legs: 'finish' retries the second leg with the pair token held
+   * (buys: into the curve; sells: to ETH with the fee), 'unwind' (buys) swaps it back to ETH with no Rushr fee.
+   */
+  const resumePair = useCallback(
+    async (action: 'finish' | 'unwind') => {
+      const h = pairHeld;
+      if (!h || !wallet || sending.current) return;
+      sending.current = true;
+      const click = performance.now();
+      let lastHash: Hex | undefined;
+      try {
+        setStatus({ kind: 'quoting' });
+        const client = chainClient();
+        // Never more than the wallet holds now (the user may have moved some).
+        const bal = await client.readContract({ address: h.legs.pairToken, abi: erc20Abi, functionName: 'balanceOf', args: [wallet] }).catch(() => h.amount);
+        const amount = bal < h.amount ? bal : h.amount;
+        const r = await preparePairRetry(client, h.legs, amount, { action, pairApiPools });
+        if (!r.ok || !r.call) {
+          setStatus({ kind: 'failed', message: `${r.message ?? 'Could not build the retry'}. ${h.message}` });
+          return;
+        }
+        const pipe = pipelineFor(wallet);
+        setStatus({ kind: 'sending', step: 1, total: 1, label: action === 'unwind' ? 'sell' : h.legs.side });
+        const res = await sendWithRetry(pipe, r.call, (hash) => {
+          lastHash = hash;
+          setStatus({ kind: 'pending', hash, step: 1, total: 1 });
+          // Finishing completes the ledger's pair trade: a buy's curve leg joins its swap; a sell's swap is its fee leg.
+          if (action === 'finish' && h.legs.side === 'buy' && h.urHash) void recordTrade(h.urHash, { curveTxHash: hash });
+          if (action === 'finish' && h.legs.side === 'sell') void recordTrade(hash, h.curveHash ? { curveTxHash: h.curveHash } : { pairRoute: true });
+        });
+        if (res.receipt.status !== 'success') throw new Error('reverted on-chain');
+        setPairHeld(null);
+        setStatus({ kind: 'success', hash: res.hash, url: explorerTxUrl(res.hash), ms: performance.now() - click });
+      } catch (e) {
+        setStatus({ kind: 'failed', message: `${friendly(e)}. ${h.message}`, hash: lastHash, url: lastHash ? explorerTxUrl(lastHash) : undefined });
+      } finally {
+        sending.current = false;
+        cache.current.clear();
+        dropPools(token.address);
+      }
+    },
+    [pairHeld, wallet, token.address],
+  );
+  const dismissPair = useCallback(() => setPairHeld(null), []);
+
+  return { session, wallet, trade, status, prepare, warm, execute, ack, setAck, safety, settings, timings, pairHeld, resumePair, dismissPair };
+}
+
+/** A pair trade stopped after its first leg: the user holds `held` of the pair token. */
+class PairStopped extends Error {
+  constructor(
+    readonly legs: PairLegs,
+    readonly held: bigint,
+    readonly reason: string,
+    readonly urHash: Hex | null,
+    readonly curveHash: Hex | null,
+  ) {
+    super(reason);
+  }
 }
 
 /** Set when the wallet can't sign without sending: later trades use the wallet's own send directly. */
@@ -547,7 +687,7 @@ async function sendWithRetry(pipe: TxPipeline, call: WalletCall, onSubmitted: (h
 /** Sends a curve trade's fee transfer and tells the ledger its hash. Failures never surface as a failed trade. */
 async function sendFollowUpFee(pipe: TxPipeline, call: WalletCall, tradeHash: Hex) {
   try {
-    const r = await sendWithRetry(pipe, call, (hash) => void recordTrade(tradeHash, hash));
+    const r = await sendWithRetry(pipe, call, (hash) => void recordTrade(tradeHash, { feeTxHash: hash }));
     if (r.receipt.status !== 'success') console.warn('[rushr trade] fee transfer reverted:', r.hash);
   } catch (e) {
     console.warn('[rushr trade] fee transfer not sent:', friendly(e));
