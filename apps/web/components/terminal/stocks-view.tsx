@@ -1,5 +1,6 @@
 'use client';
 
+import { stockLogo } from '@/lib/stock-logos';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, MagnifyingGlass } from '@phosphor-icons/react';
@@ -213,7 +214,8 @@ const isUp = (s: Pick<StockRow, 'change_24h_pct' | 'spark'>) =>
 
 /** The token's icon when it has one, else a ticker tile (most stock tokens carry no icon metadata). */
 function StockLogo({ s, size }: { s: Pick<StockRow, 'address' | 'symbol' | 'image_url'>; size: number }) {
-  if (s.image_url) return <TokenAvatar t={{ address: s.address, symbol: s.symbol, launchpad: null, image_url: s.image_url }} size={size} shape="square" />;
+  const img = s.image_url || stockLogo(s.address);
+  if (img) return <TokenAvatar t={{ address: s.address, symbol: s.symbol, launchpad: null, image_url: img }} size={size} shape="square" />;
   const c = hue(s.address);
   const text = s.symbol.slice(0, 4);
   return (
