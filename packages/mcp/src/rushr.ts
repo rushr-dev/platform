@@ -1,10 +1,10 @@
-import { createPublicClient, createWalletClient, erc20Abi, formatEther, http, parseEther, zeroAddress, type Address, type Hex } from 'viem';
-import { ponsFactoryAbi } from '@rushr/trade/abis';
+import { createPublicClient, createWalletClient, decodeFunctionData, encodeFunctionData, erc20Abi, formatEther, formatUnits, http, parseEther, zeroAddress, type Address, type Hex } from 'viem';
+import { ponsCurveAbi, ponsFactoryAbi } from '@rushr/trade/abis';
 import { TRADE_ADDRESSES } from '@rushr/trade/addresses';
 import { robinhoodChain } from '@rushr/trade/chain';
 import { ApiError, type Api } from './api.ts';
 import type { Config } from './config.ts';
-import { checkBuyCaps, checkFeeUnpaid, checkImpact, checkSafety, GuardError, isCurve, probeAmount, splitImpact, vetBuild, type Built, type FeeUnpaid, type ImpactSplit, type Quote, type Safety, type SpendLedger, type UnsignedTx } from './guards.ts';
+import { checkBuyCaps, checkFeeUnpaid, checkImpact, checkSafety, GuardError, isCurve, isPairCurve, probeAmount, splitImpact, vetBuild, type Built, type FeeUnpaid, type ImpactSplit, type PairRoute, type Quote, type Safety, type SpendLedger, type UnsignedTx } from './guards.ts';
 import { usdToWei, weiToUsd } from './price.ts';
 import { createWalletFile, type AgentWallet } from './wallet.ts';
 
@@ -85,6 +85,8 @@ interface QuoteResponse {
   /** Curve quotes: Rushr's fee in wei, paid as a follow-up transfer after the trade. */
   followUpFee?: string | null;
   deadlineSeconds?: number | null;
+  /** Curves priced in another token: the two-trade route (llms.txt "Pair-token curves"). */
+  route?: PairRoute | null;
 }
 
 /** What happened to a curve trade's fee transfer. Never silent: anything but `paid` says what to do. */
@@ -311,6 +313,7 @@ export class Rushr {
       ...(q.followUpFee
         ? { curveFee: { amountWei: q.followUpFee, amountEth: formatEther(curveFee), paidAs: i.side === 'buy' ? 'a separate transfer to the Rushr treasury after the trade, on top of amountIn' : 'a separate transfer to the Rushr treasury after the trade, out of the ETH received' } }
         : {}),
+      ...(q.route?.kind === 'pair-curve' ? { pairRoute: { pairToken: q.route.pairToken, pairSymbol: q.route.pairSymbol, curve: q.route.curve, path: q.route.path ?? null, minPairAmount: q.route.minPairAmount, trades: i.side === 'buy' ? `ETH → ${q.route.pairSymbol} on Uniswap (fee inside), then ${q.route.pairSymbol} → token on the curve` : `token → ${q.route.pairSymbol} on the curve, then ${q.route.pairSymbol} → ETH on Uniswap (fee inside)` } } : {}),
       safety: q.safety ? { riskLevel: q.safety.riskLevel, blocked: q.safety.blocked } : null,
       warnings: q.warnings,
       wouldTrade: i.side === 'sell' ? true : refusals.length === 0,
@@ -354,8 +357,14 @@ export class Rushr {
     // A curve buy pays Rushr's fee on top of the buy: check the caps and balance on the total.
     const fee = b.followUp ? BigInt(b.followUp.amount) : 0n;
     if (fee > 0n) warnings.push(...checkBuyCaps({ usd: usd + weiToUsd(fee, ethUsd), amountWei: wei + fee, maxTradeUsd: this.d.cfg.maxTradeUsd, dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free, dryRun: this.d.cfg.dryRun }));
-    const summary = { token, side: 'buy' as const, amountInEth: formatEther(wei), usd: round2(usd), expectedOut: b.quote.amountOut, minOut: b.quote.minAmountOut, feeBps: b.quote.fee.feeBps, impact, venue: b.quote.pool.venue, riskLevel: safety.riskLevel, ...this.curveFeeView(b) };
-    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: [...warnings, ...b.warnings], note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${b.followUp ? ' Live, the fee transfer would follow the trade.' : ''}` };
+    const summary = { token, side: 'buy' as const, amountInEth: formatEther(wei), usd: round2(usd), expectedOut: b.quote.amountOut, minOut: b.quote.minAmountOut, feeBps: b.quote.fee.feeBps, impact, venue: b.quote.pool.venue, riskLevel: safety.riskLevel, ...this.curveFeeView(b), ...pairView(b) };
+    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: [...warnings, ...b.warnings], note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${dryRunTail(b)}` };
+    if (isPairCurve(b)) {
+      const p = await this.sendPairSteps(b, 'buy');
+      // The ETH went out with the swap step: it counts toward the cap even if the curve step failed.
+      if (p.swapHash) this.d.ledger.record(usd, p.swapHash, this.now());
+      return { ...summary, ...p, ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings };
+    }
     const sent = await this.sendBuilt(b);
     this.d.ledger.record(usd, sent.hash, this.now());
     return this.result(summary, sent, b, feePaidFirst, ethUsd);
@@ -377,8 +386,9 @@ export class Rushr {
     const { b, feePaidFirst } = r;
     const curveOnChain = isCurve(b.quote) ? await this.d.chain.ponsCurve(token).catch(() => null) : undefined;
     vetBuild(b, 'sell', token, amount, { trader: w.address, curveOnChain });
-    const summary = { token, side: 'sell' as const, amount: amount.toString(), heldBefore: held.toString(), expectedEthOut: formatEther(BigInt(b.quote.amountOut)), minEthOut: formatEther(BigInt(b.quote.minAmountOut)), feeBps: b.quote.fee.feeBps, impactBps: b.quote.priceImpactBps, venue: b.quote.pool.venue, approvalsNeeded: b.approvals.map((a) => a.kind), ...this.curveFeeView(b) };
-    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: b.warnings, note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${b.followUp ? ' Live, the fee transfer would follow the trade.' : ''}` };
+    const summary = { token, side: 'sell' as const, amount: amount.toString(), heldBefore: held.toString(), expectedEthOut: formatEther(BigInt(b.quote.amountOut)), minEthOut: formatEther(BigInt(b.quote.minAmountOut)), feeBps: b.quote.fee.feeBps, impactBps: b.quote.priceImpactBps, venue: b.quote.pool.venue, approvalsNeeded: isPairCurve(b) ? (b.steps ?? []).filter((s) => s.kind === 'approve').map((s) => s.label) : b.approvals.map((a) => a.kind), ...this.curveFeeView(b), ...pairView(b) };
+    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: b.warnings, note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${dryRunTail(b)}` };
+    if (isPairCurve(b)) return { ...summary, ...(await this.sendPairSteps(b, 'sell')), ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings };
     const sent = await this.sendBuilt(b);
     return this.result(summary, sent, b, feePaidFirst, await this.d.ethUsd().catch(() => null));
   }
@@ -447,10 +457,106 @@ export class Rushr {
       await this.d.chain.confirm(h);
       approvals.push({ kind: a.kind, hash: h, explorer: this.explorerTx(h) });
     }
-    const hash = await this.d.chain.send(toSend(b.tx));
+    const hash = await this.d.chain.send(toSend(b.tx!));
     await this.d.chain.confirm(hash);
     const fee = b.followUp ? await this.payFee(b.followUp.tx, BigInt(b.followUp.amount)) : null;
     return { hash, explorer: this.explorerTx(hash), approvals, fee };
+  }
+
+  /**
+   * A pair-token curve build (vetted by vetPairCurveBuild): every step in order, each confirmed before the
+   * next. Approvals come first, so the trade can only stop between its two trading steps:
+   * - a failure up to and including the first trading step throws, as any trade does (nothing is held);
+   * - before the second, the wallet's `balanceOf(pairToken)` is read (Robinhood stock tokens log scaled
+   *   Transfer amounts that overstate it, so receipts aren't trusted). Under `route.minPairAmount` the
+   *   second step would revert and isn't sent. On buys, the curve step spends what actually arrived
+   *   (capped by the balance) instead of the minimum, with the built minimum out unchanged;
+   * - if the second step fails or can't be sent, the result is `pair_token_held`, saying how much of the
+   *   pair token the wallet now holds and what to do with it.
+   * The trade is then recorded with POST /v1/trades (swap hash, curve hash, pairRoute: true).
+   */
+  private async sendPairSteps(b: Built, side: 'buy' | 'sell') {
+    const route = b.route!;
+    const steps = b.steps!;
+    const me = this.wallet().address;
+    const deadline = Number(b.deadline);
+    const tooLate = () => this.now() / 1000 > deadline - 30;
+    if (tooLate()) throw new GuardError('refused_deadline', 'build is too close to its deadline; quote again');
+    const minPair = BigInt(route.minPairAmount);
+    const pairBalance = () => this.d.chain.tokenBalance(route.pairToken, me);
+    const before = await pairBalance().catch(() => null);
+    const sentSteps: { step: number; kind: string; label: string; hash: string; explorer: string }[] = [];
+    const hashOf = (kind: 'swap' | 'curve') => sentSteps.find((s) => s.kind === kind)?.hash as Hex | undefined;
+    const second = steps[steps.length - 1]!;
+    let held: { reason: string; error?: string } | null = null;
+
+    for (const s of steps) {
+      let tx = toSend(s.tx);
+      if (s === second) {
+        let bal: bigint;
+        try {
+          bal = await pairBalance();
+        } catch (e) {
+          held = { reason: `couldn't read the wallet's ${route.pairSymbol} balance before the second trade`, error: errText(e) };
+          break;
+        }
+        if (bal < minPair) {
+          held = { reason: `the wallet holds ${bal} ${route.pairSymbol} base units, under the ${minPair} the second trade spends` };
+          break;
+        }
+        if (side === 'sell' && tooLate()) {
+          held = { reason: 'the swap step is past its deadline' };
+          break;
+        }
+        if (side === 'buy') tx = { ...tx, data: curveBuyWith(tx.data, before === null ? minPair : maxBig(minPair, minBig(bal - before, bal))) };
+      }
+      try {
+        const h = await this.d.chain.send(tx);
+        await this.d.chain.confirm(h);
+        sentSteps.push({ step: s.step, kind: s.kind, label: s.label, hash: h, explorer: this.explorerTx(h) });
+      } catch (e) {
+        if (s !== second) throw e;
+        held = { reason: `the ${s.kind} step failed`, error: errText(e) };
+      }
+    }
+
+    const swapHash = hashOf('swap');
+    const curveHash = hashOf('curve');
+    const recorded = swapHash ? await this.recordPairTrade(swapHash, curveHash) : { ok: false, error: 'no swap step landed, so there is nothing to record' };
+    const out = { route: { pairToken: route.pairToken, pairSymbol: route.pairSymbol, curve: route.curve }, steps: sentSteps, swapHash: swapHash ?? null, curveHash: curveHash ?? null, hash: sentSteps.at(-1)?.hash ?? null, recorded };
+    if (!held) return { status: 'confirmed', ...out };
+    const amount = await pairBalance().catch(() => null);
+    const ui = amount !== null && route.pairDecimals !== undefined ? `${formatUnits(amount, route.pairDecimals)} ${route.pairSymbol}` : `${route.pairSymbol}`;
+    const action =
+      side === 'buy'
+        ? `Finish the buy by calling buy(${amount ?? 'the amount held'}, minTokensOut, ${me}) on the curve ${route.curve} yourself, or sell the ${route.pairSymbol} with the sell tool (token ${route.pairToken}).`
+        : `Sell the ${route.pairSymbol} for ETH with the sell tool (token ${route.pairToken}).`;
+    return {
+      status: 'pair_token_held',
+      ...out,
+      pairTokenHeld: { token: route.pairToken, symbol: route.pairSymbol, amount: amount?.toString() ?? null },
+      error: held.error,
+      message: `The trade stopped between its two steps (${held.reason}). The first trade landed, so this wallet now holds ${ui}${amount === null ? ' (balance unknown)' : ''}. Nothing is lost.`,
+      action,
+    };
+  }
+
+  /** POST /v1/trades for a pair trade; retried while the API hasn't seen the transaction yet. Never throws. */
+  private async recordPairTrade(txHash: Hex, curveTxHash: Hex | undefined): Promise<{ ok: boolean; error?: string }> {
+    const sleep = this.d.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+    const body = { txHash, ...(curveTxHash ? { curveTxHash } : {}), pairRoute: true, chainId: CHAIN_ID_4663 };
+    let lastError = '';
+    for (let r = 0; r < 3; r++) {
+      try {
+        await this.d.api('POST', '/v1/trades', { body });
+        return { ok: true };
+      } catch (e) {
+        lastError = errText(e);
+        if (!(e instanceof ApiError && (e.code === 'tx_not_found' || e.code === 'rate_limited' || e.status >= 500))) break;
+        await sleep(3_000);
+      }
+    }
+    return { ok: false, error: lastError };
   }
 
   /**
@@ -589,6 +695,28 @@ export function tradeVia(status: string | null | undefined, launchpad: string | 
   if (status === 'migrated') return 'uniswap';
   if (launchpad === 'pons') return 'pons-curve';
   return null;
+}
+
+const CHAIN_ID_4663 = 4663;
+const maxBig = (a: bigint, b: bigint) => (a > b ? a : b);
+const minBig = (a: bigint, b: bigint) => (a < b ? a : b);
+
+/** The vetted curve-buy calldata with `pairIn` raised to what arrived; minimum out and recipient unchanged. */
+function curveBuyWith(data: Hex, pairIn: bigint): Hex {
+  const [, minOut, recipient] = decodeFunctionData({ abi: ponsCurveAbi, data }).args as readonly [bigint, bigint, Address];
+  return encodeFunctionData({ abi: ponsCurveAbi, functionName: 'buy', args: [pairIn, minOut, recipient] });
+}
+
+/** The pair route as the tools show it (nothing for other builds). */
+function pairView(b: Built): { pairRoute?: Pick<PairRoute, 'pairToken' | 'pairSymbol' | 'curve' | 'minPairAmount'> & { path: string | null; steps: { step: number; kind: string; label: string }[] } } {
+  if (!isPairCurve(b)) return {};
+  const r = b.route!;
+  return { pairRoute: { pairToken: r.pairToken, pairSymbol: r.pairSymbol, curve: r.curve, minPairAmount: r.minPairAmount, path: r.path ?? null, steps: (b.steps ?? []).map((s) => ({ step: s.step, kind: s.kind, label: s.label })) } };
+}
+
+function dryRunTail(b: Built): string {
+  if (isPairCurve(b)) return ` Live, the steps are sent in order (two trades through ${b.route!.pairSymbol}); if the second fails, the wallet keeps the ${b.route!.pairSymbol}.`;
+  return b.followUp ? ' Live, the fee transfer would follow the trade.' : '';
 }
 
 const toSend = (tx: UnsignedTx): SendTx => ({ to: tx.to, data: tx.data || '0x', value: BigInt(tx.value), gas: tx.gas ? BigInt(tx.gas) : undefined });

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { decodeFunctionData, erc20Abi, parseEther, type Address, type Hex } from 'viem';
-import { ponsCurveAbi } from '@rushr/trade/abis';
+import { decodeFunctionData, erc20Abi, parseAbi, parseEther, type Address, type Hex } from 'viem';
+import { permit2Abi, ponsCurveAbi } from '@rushr/trade/abis';
 import { TRADE_ADDRESSES } from '@rushr/trade/addresses';
 import { RUSHR_TREASURY } from '@rushr/trade/config';
 
@@ -41,9 +41,40 @@ export interface FollowUp {
   report: string;
 }
 
-/** Shape of `POST /v1/trade/build` (llms.txt "Build"). Uniswap builds have `followUp: null`. */
+/** One step of a pair-token curve build, sent in order (llms.txt "Pair-token curves"). */
+export interface PairStep {
+  step: number;
+  kind: 'approve' | 'swap' | 'curve';
+  label: string;
+  tx: UnsignedTx;
+}
+
+/**
+ * A PONS curve priced in another ERC-20 (e.g. AMC priced in ANT): ETH <-> pair token on the Universal
+ * Router (the Rushr fee inside, in ETH), and pair token <-> token on the curve. Steps are 1-based.
+ */
+export interface PairRoute {
+  kind: 'pair-curve';
+  pairToken: Address;
+  pairSymbol: string;
+  pairDecimals?: number;
+  path?: string;
+  curve: Address;
+  pairAmount?: string;
+  /** The guaranteed minimum of pair token between the two trades: what the second one spends as built. */
+  minPairAmount: string;
+  swapStep: number;
+  curveStep: number;
+}
+
+/**
+ * Shape of `POST /v1/trade/build` (llms.txt "Build"). Uniswap builds have `followUp: null`. Pair-token
+ * curve builds have `tx: null`, `followUp: null`, and ordered `steps` with a `route`.
+ */
 export interface Built {
-  tx: UnsignedTx & { chainId: number };
+  tx: (UnsignedTx & { chainId: number }) | null;
+  steps?: PairStep[];
+  route?: PairRoute | null;
   approvals: { kind: string; token: Address; spender: Address; amount: string; tx: UnsignedTx }[];
   /** Unix seconds; null for curve builds (the curve call has no on-chain deadline). */
   deadline: string | null;
@@ -67,6 +98,8 @@ export interface Quote {
 }
 
 export const isCurve = (q: Pick<Quote, 'pool'>) => q.pool.venue === 'pons-curve';
+/** A two-trade build for a curve priced in another token (also `pons-curve` in its quote). */
+export const isPairCurve = (b: Pick<Built, 'route'>) => b.route?.kind === 'pair-curve';
 
 /** The one contract a build may send to: the Universal Router Rushr builds for (from @rushr/trade). */
 export const ROUTERS: ReadonlySet<string> = new Set([TRADE_ADDRESSES.universalRouter.toLowerCase()]);
@@ -79,6 +112,8 @@ export const MAX_FEE_BPS = 25;
 
 /** Refuses a build that doesn't look like what llms.txt describes. Throws GuardError `refused_unsafe_build`. */
 export function vetBuild(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint, opts: { requireSimulation?: boolean; trader?: Address; curveOnChain?: Address | null } = {}): void {
+  if (isPairCurve(b)) return vetPairCurveBuild(b, side, token, amountIn, { trader: opts.trader, curveOnChain: opts.curveOnChain, requireSimulation: opts.requireSimulation });
+  if (!b.tx) throw new GuardError('refused_unsafe_build', 'refusing to sign: the build has no transaction', { problems: ['tx is null'] });
   if (isCurve(b.quote)) return vetCurveBuild(b, side, token, amountIn, { trader: opts.trader, curveOnChain: opts.curveOnChain, requireSimulation: opts.requireSimulation });
   const problems: string[] = [];
   if (b.followUp) problems.push('a Uniswap build asked for a follow-up transaction');
@@ -231,6 +266,7 @@ function feeTxProblems(tx: UnsignedTx | null | undefined, value: bigint, label: 
  * - the simulation succeeded.
  */
 export function vetCurveBuild(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint, opts: { trader?: Address; curveOnChain?: Address | null; requireSimulation?: boolean } = {}): void {
+  if (!b.tx) throw new GuardError('refused_unsafe_build', 'refusing to sign: the curve build has no transaction', { problems: ['tx is null'] });
   const problems: string[] = [];
   const curve = (b.quote.pool.curve ?? b.quote.pool.id ?? '').toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(curve)) problems.push('quote names no curve address');
@@ -277,6 +313,139 @@ export function vetCurveBuild(b: Built, side: 'buy' | 'sell', token: Address, am
   }
   if (opts.requireSimulation !== false && !b.simulation?.ok) problems.push(`simulation failed: ${b.simulation?.error ?? 'missing'}`);
   if (problems.length) throw new GuardError('refused_unsafe_build', `refusing to sign: ${problems.join('; ')}`, { problems });
+}
+
+// ------------------------------------------------------------------ pair-token curves
+
+const universalRouterAbi = parseAbi(['function execute(bytes commands, bytes[] inputs, uint256 deadline) payable']);
+
+/**
+ * A curve priced in another token, built as ordered `steps` (llms.txt "Pair-token curves"). Checks before
+ * anything is signed:
+ * - the shape: `tx: null`, no follow-up, no top-level approvals, steps numbered 1..n in order, approvals
+ *   first, then exactly two trading steps (buys: swap then curve; sells: curve then swap), matching
+ *   `route.swapStep` / `route.curveStep`;
+ * - `route.curve` is the quoted curve and the token's PONS curve on-chain;
+ * - approvals are only `pairToken.approve(curve)`, `token.approve(curve)` (sells), `pairToken.approve(Permit2)`
+ *   and `Permit2.approve(pairToken, Universal Router)` (sells), with no ETH;
+ * - the swap step calls `execute` on the Universal Router with the build's deadline, value = amountIn on
+ *   buys and 0 on sells;
+ * - the curve step calls the curve with value 0: `buy(minPairAmount, min, this wallet)` or
+ *   `sell(amountIn, min, this wallet)`;
+ * - the fee is at most 25 bps and the simulation succeeded.
+ * The swap's commands (route, fee, recipient) aren't decoded here: the simulation checks what arrives.
+ */
+export function vetPairCurveBuild(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint, opts: { trader?: Address; curveOnChain?: Address | null; requireSimulation?: boolean } = {}): void {
+  const problems: string[] = [];
+  const r = b.route;
+  const steps = b.steps ?? [];
+  const fail = () => {
+    throw new GuardError('refused_unsafe_build', `refusing to sign: ${problems.join('; ')}`, { problems });
+  };
+  if (!r || r.kind !== 'pair-curve') problems.push('build has no pair-curve route');
+  if (b.tx) problems.push('a pair-curve build also has a tx');
+  if (b.followUp) problems.push('a pair-curve build asked for a follow-up transaction');
+  if (b.approvals?.length) problems.push('a pair-curve build has top-level approvals (they belong in steps)');
+  if (!steps.length) problems.push('build has no steps');
+  if (problems.length) fail();
+  const route = r!;
+  const pair = route.pairToken?.toLowerCase() ?? '';
+  const curve = route.curve?.toLowerCase() ?? '';
+  if (!/^0x[0-9a-f]{40}$/.test(pair)) problems.push('route names no pair token');
+  if (!/^0x[0-9a-f]{40}$/.test(curve)) problems.push('route names no curve');
+  if (sameAddr(pair, token)) problems.push('pair token is the traded token');
+  const quoted = b.quote.pool.curve ?? b.quote.pool.id;
+  if (!sameAddr(quoted, curve)) problems.push(`route.curve ${route.curve} is not the quoted curve ${quoted}`);
+  if (!opts.curveOnChain) problems.push("couldn't confirm the token's PONS curve on-chain");
+  else if (!sameAddr(curve, opts.curveOnChain)) problems.push(`route curve ${route.curve} is not the token's PONS curve ${opts.curveOnChain}`);
+  let minPair = 0n;
+  try {
+    minPair = BigInt(route.minPairAmount);
+  } catch {
+    problems.push('route.minPairAmount is not an amount');
+  }
+  if (minPair <= 0n) problems.push('route.minPairAmount is not positive');
+
+  // Shape: 1..n in order; approvals, then the two trades in the side's order.
+  steps.forEach((s, i) => {
+    if (s.step !== i + 1) problems.push(`step ${i + 1} is numbered ${s.step}`);
+  });
+  const trades = steps.filter((s) => s.kind !== 'approve');
+  const order = side === 'buy' ? ['swap', 'curve'] : ['curve', 'swap'];
+  if (trades.length !== 2 || trades[0]!.kind !== order[0] || trades[1]!.kind !== order[1]) problems.push(`trading steps are [${trades.map((s) => s.kind).join(', ')}], expected [${order.join(', ')}]`);
+  if (steps.length < 2 || steps.slice(0, -2).some((s) => s.kind !== 'approve')) problems.push('approvals must all come before the two trading steps');
+  const swap = steps.find((s) => s.kind === 'swap');
+  const curveStep = steps.find((s) => s.kind === 'curve');
+  if (swap && route.swapStep !== swap.step) problems.push(`route.swapStep ${route.swapStep} is not the swap step ${swap.step}`);
+  if (curveStep && route.curveStep !== curveStep.step) problems.push(`route.curveStep ${route.curveStep} is not the curve step ${curveStep.step}`);
+
+  for (const s of steps) {
+    const label = `step ${s.step} (${s.kind})`;
+    if (!s.tx) {
+      problems.push(`${label}: missing tx`);
+      continue;
+    }
+    if (s.tx.chainId !== undefined && s.tx.chainId !== CHAIN_ID) problems.push(`${label}: chainId ${s.tx.chainId}`);
+    if (s.kind === 'approve') problems.push(...pairApprovalProblems(s.tx, side, token, pair, curve, label));
+  }
+
+  if (swap?.tx) {
+    if (!ROUTERS.has(swap.tx.to.toLowerCase())) problems.push(`swap step: sends to ${swap.tx.to}, not the Universal Router`);
+    const want = side === 'buy' ? amountIn : 0n;
+    if (BigInt(swap.tx.value) !== want) problems.push(`swap step: value ${swap.tx.value} != ${want}`);
+    try {
+      const d = decodeFunctionData({ abi: universalRouterAbi, data: swap.tx.data });
+      const deadline = (d.args as readonly [Hex, readonly Hex[], bigint])[2];
+      if (b.deadline === null || deadline !== BigInt(b.deadline)) problems.push(`swap step: deadline ${deadline} != build deadline ${b.deadline}`);
+    } catch {
+      problems.push('swap step: calldata is not Universal Router execute(commands, inputs, deadline)');
+    }
+  }
+  if (curveStep?.tx) {
+    if (!sameAddr(curveStep.tx.to, curve)) problems.push(`curve step: sends to ${curveStep.tx.to}, not route.curve ${route.curve}`);
+    if (BigInt(curveStep.tx.value) !== 0n) problems.push(`curve step: value ${curveStep.tx.value}`);
+    try {
+      const call = decodeFunctionData({ abi: ponsCurveAbi, data: curveStep.tx.data });
+      if (call.functionName !== side) problems.push(`curve step: calls ${call.functionName}, expected ${side}`);
+      else {
+        const [amt, , recipient] = call.args as readonly [bigint, bigint, Address];
+        // Buys spend the guaranteed pair minimum; sells sell exactly what was asked.
+        const want = side === 'buy' ? minPair : amountIn;
+        if (amt !== want) problems.push(`curve step: amount ${amt} != ${side === 'buy' ? 'route.minPairAmount' : 'amountIn'} ${want}`);
+        if (!opts.trader || !sameAddr(recipient, opts.trader)) problems.push(`curve step: recipient ${recipient} is not this wallet`);
+      }
+    } catch {
+      problems.push('curve step: calldata is not a PONS curve buy or sell');
+    }
+  }
+
+  if (b.deadline === null) problems.push('pair-curve build has no deadline');
+  if (BigInt(b.quote.amountIn) !== amountIn) problems.push('quote.amountIn differs from the request');
+  if (b.quote.fee.feeBps > MAX_FEE_BPS) problems.push(`fee ${b.quote.fee.feeBps} bps (max ${MAX_FEE_BPS})`);
+  if (opts.requireSimulation !== false && !b.simulation?.ok) problems.push(`simulation failed: ${b.simulation?.error ?? 'missing'}`);
+  if (problems.length) fail();
+}
+
+/** An approval step of a pair build: one of the four approvals llms.txt lists, with no ETH. */
+function pairApprovalProblems(tx: UnsignedTx, side: 'buy' | 'sell', token: Address, pair: string, curve: string, label: string): string[] {
+  if (BigInt(tx.value) !== 0n) return [`${label}: approval with value`];
+  const to = tx.to.toLowerCase();
+  try {
+    if (to === PERMIT2) {
+      const d = decodeFunctionData({ abi: permit2Abi, data: tx.data });
+      const [t, spender] = d.args as readonly [Address, Address, bigint, number];
+      if (side === 'sell' && d.functionName === 'approve' && sameAddr(t, pair) && ROUTERS.has(spender.toLowerCase())) return [];
+      return [`${label}: unexpected Permit2 call ${d.functionName}`];
+    }
+    const d = decodeFunctionData({ abi: erc20Abi, data: tx.data });
+    if (d.functionName !== 'approve') return [`${label}: calls ${d.functionName}, not approve`];
+    const spender = (d.args as readonly [Address, bigint])[0].toLowerCase();
+    if (to === pair && (spender === curve || (side === 'sell' && spender === PERMIT2))) return [];
+    if (side === 'sell' && sameAddr(to, token) && spender === curve) return [];
+    return [`${label}: unexpected approval on ${tx.to} for ${spender}`];
+  } catch {
+    return [`${label}: calldata is not an approval`];
+  }
 }
 
 /** `fee_unpaid` (402): the overdue curve fee and a ready-to-send transfer for it. */

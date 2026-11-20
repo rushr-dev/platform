@@ -60,9 +60,9 @@ export interface FakeChain extends ChainIO {
 
 /**
  * A fake chain. `failSends` makes the first n sends to `failTo` throw (a network error), `curve` is what
- * PONS's factory returns for any token.
+ * PONS's factory returns for any token. `tokenBalance` answers balanceOf from the sends so far.
  */
-export function fakeChain(opts: { eth?: string; tokens?: bigint; curve?: string | null; failSends?: number; failTo?: string; failMessage?: string } = {}): FakeChain {
+export function fakeChain(opts: { eth?: string; tokens?: bigint; tokenBalance?: (token: string, log: readonly string[]) => bigint; curve?: string | null; failSends?: number; failTo?: string; failMessage?: string } = {}): FakeChain {
   const sent: SendTx[] = [];
   const log: string[] = [];
   let fails = opts.failSends ?? 0;
@@ -71,7 +71,7 @@ export function fakeChain(opts: { eth?: string; tokens?: bigint; curve?: string 
     sent,
     log,
     balance: async () => parseEther(opts.eth ?? '0.02'),
-    tokenBalance: async () => opts.tokens ?? 10n ** 21n,
+    tokenBalance: async (token) => (opts.tokenBalance ? opts.tokenBalance(token.toLowerCase(), log) : (opts.tokens ?? 10n ** 21n)),
     ponsCurve: async () => (opts.curve === undefined ? null : (opts.curve as Hex | null)),
     nonce: async () => 7,
     send: async (tx) => {
