@@ -31,7 +31,7 @@ import { TradesTable } from './trades-table';
 import { WatchStar } from './watch-bar';
 import { HolderTiers } from './holder-tiers';
 import { RUSHR_TOKEN } from './rushr-pill';
-import { SHOW_RISK } from '@/lib/risk-labels';
+import { SHOW_RISK, SHOW_SERIAL_DEV } from '@/lib/risk-labels';
 
 /** Loaded only when trading is on, so the token page doesn't carry the quoting code otherwise. */
 const SimpleTrade = dynamic(() => import('./simple-trade').then((m) => m.SimpleTrade), {
@@ -840,7 +840,7 @@ function DevRecord({ t }: { t: TokenDetail }) {
     <div className="rounded-2xl border border-white/[0.06] bg-surface p-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Dev record</h2>
-        {t.serial_launcher && <span className="rounded-md bg-risk-high/15 px-1.5 py-0.5 text-[10px] font-semibold text-risk-high">serial launcher</span>}
+        {SHOW_SERIAL_DEV && t.serial_launcher && <span className="rounded-md bg-risk-high/15 px-1.5 py-0.5 text-[10px] font-semibold text-risk-high">serial launcher</span>}
       </div>
       <a href={`${EXPLORER}/address/${t.deployer}`} target="_blank" rel="noreferrer" className="mt-1 block font-mono text-xs text-muted hover:text-ink">
         {short(t.deployer)}
