@@ -2,7 +2,10 @@ import type { Address, Hex, PublicClient } from 'viem';
 import { buildSwap, type BuildOptions } from './build';
 import { assertSignable, resolveConfig, type TradeConfig } from './config';
 import { assertOneClickAllowed } from './signer';
-import { findBestRoute } from './quote';
+import { findBestRoute, rankQuotes } from './quote';
+import { TradeError } from './errors';
+import { readHolderDiscountBps } from './holder';
+import { pathCandidates, quotePath } from './pair-route';
 import { draftTradeRecord, type TradeRecord } from './referral';
 import { simulateSwap, type SwapSimulation } from './simulate';
 import type { DiscoverOptions } from './pools';
@@ -59,7 +62,22 @@ export async function prepareSwap(client: PublicClient, req: SwapRequest, opts: 
       note = unroutableNote(hintsFromApiPools(apiPools, req.quoteAsset));
     }
   }
-  const route = await findBestRoute(client, req, cfg, discover);
+  // The token's real market may be priced in another token (NVDAc against NVDA): quote the multi-hop route
+  // ETH -> [USDG] -> pair -> token too, and keep whichever pays more.
+  let route = await findBestRoute(client, req, cfg, discover).catch((e: unknown) => {
+    if (e instanceof TradeError && e.code === 'NO_ROUTE') return e;
+    throw e;
+  });
+  const pathPools = req.quoteAsset === 'ETH' ? await pathCandidates(client, req.token, discover?.apiPools, !(route instanceof TradeError)).catch(() => []) : [];
+  if (pathPools.length) {
+    const holderDiscountBps = route instanceof TradeError ? (req.holderDiscountBps ?? (await readHolderDiscountBps(client, req.trader, cfg))) : route.best.request.holderDiscountBps;
+    const pq = await quotePath(client, { ...req, holderDiscountBps }, cfg, pathPools, { apiPools: (t) => fetchApiPools(t, { apiUrl: opts.apiUrl || undefined, fetch: opts.fetch }) }).catch(() => null);
+    if (pq) route = route instanceof TradeError ? { best: pq, quotes: [pq], failures: [] } : (() => {
+      const quotes = rankQuotes([...route.quotes, pq]);
+      return { ...route, quotes, best: quotes[0]! };
+    })();
+  }
+  if (route instanceof TradeError) throw route;
   const built = buildSwap(route.best, cfg, opts);
   const simulation = opts.simulate ? await simulateSwap(client, built, cfg, opts.simulateFundEth ? { fundEth: opts.simulateFundEth } : {}) : undefined;
   return {

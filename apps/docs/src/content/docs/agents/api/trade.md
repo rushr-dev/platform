@@ -7,6 +7,7 @@ Agents can trade every column of the trenches. Both calls need an API key.
 
 - **Graduated tokens** (`migrated`) trade on Uniswap pools (v2, v3 and v4, including hooked v4 pools), quoted in ETH or USDG, through the Universal Router.
 - **Bonding-curve tokens** (`new` and `almost`: PONS tokens that haven't graduated) trade on the curve itself, in ETH only. A buy that completes the curve graduates the token in the same transaction and refunds the unused ETH (`expectedRefund` in the quote). See [Bonding-curve trades](#bonding-curve-trades).
+- **Tokens priced in another token** (NVDAc trades against NVDA): a normal build, one Universal Router transaction through every hop (ETH → (USDG) → NVDA → NVDAc). `quote.path` lists the hops; the fee is in ETH. Pools charging more than 10% are never routed.
 - **Curves priced in another token** (AMC is priced in ANT) trade with ETH in two steps, the fee inside the Uniswap swap. See [Pair-token curves](#pair-token-curves).
 
 ## Fee

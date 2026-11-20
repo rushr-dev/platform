@@ -7,6 +7,7 @@ import type { TradeConfig } from './config';
 import { TradeError, sanitizeRpcMessage } from './errors';
 import { BPS } from './fees';
 import { buildSwap } from './build';
+import { reversePath } from './pair-route';
 import type { BuiltSwap, Pool, Quote } from './types';
 
 /**
@@ -187,7 +188,7 @@ export function analyzeSwapTransfers(q: Quote, ts: TransferEvent[], feeRecipient
     const tokenTaxBps = venueOut > 0n && received <= venueOut ? Number(((venueOut - received) * BPS) / venueOut) : null;
     return { received, feePaid, tokenTaxBps };
   }
-  const outAsset = q.pool.quote === TRADE_ADDRESSES.usdg ? lc(TRADE_ADDRESSES.usdg) : NATIVE_TRANSFER_EMITTER;
+  const outAsset = q.pool.quote === TRADE_ADDRESSES.usdg && !q.path ? lc(TRADE_ADDRESSES.usdg) : NATIVE_TRANSFER_EMITTER;
   const received = sum(ts, (t) => t.token === outAsset && t.to === trader);
   const sent = sum(ts, (t) => t.token === token && t.from === trader);
   const venueIn = sum(ts, (t) => t.token === token && venue.has(t.to));
@@ -227,6 +228,8 @@ export async function probeTokenSafety(client: PublicClient, buyQuote: Quote, cf
     minAmountOut: 0n,
     minGrossOut: 0n,
     fee: { ...buyQuote.fee, side: 'sell', feeAmount: 0n },
+    // A multi-hop buy's path, traded back the other way.
+    ...(buyQuote.path ? { path: reversePath(buyQuote.path) } : {}),
   };
   const sellBuilt = buildSwap(probeSell, cfg);
   const calls = [swapCall(buyBuilt, 'probe buy'), ...approvalCalls(sellBuilt, trader), swapCall(sellBuilt, 'probe sell')];

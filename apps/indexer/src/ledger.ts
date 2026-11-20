@@ -23,7 +23,7 @@
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
+import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, feeCommands, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -251,7 +251,9 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
   // (trades built before a switch can still land on the old one).
   const treasuries = [DEFAULT_TRADE_CONFIG.feeRecipient, ...LEGACY_TREASURIES].map((a) => a.toLowerCase());
   const toTreasuries = (f: (t: string) => bigint) => treasuries.reduce((sum, t) => sum + f(t), 0n);
-  let s = swaps[0];
+  // Multi-hop routes (ETH -> NVDA -> NVDAc) index a swap per hop: the trade is the hop whose token reached or
+  // left the trader (an intermediate token only passes through the router).
+  let s = swaps.find((x) => tokenFlow(logs, x.token, from) !== 0n) ?? swaps[0];
   if (pairRoute) {
     // The fee leg is a Universal Router swap paid in ETH. With its curve leg: the curve token. Without (the
     // curve leg failed or never came): the pair token the trader bought or sold with ETH.
@@ -285,7 +287,11 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     const usdgMoved = tokenFlow(logs, QUOTES.USDG, from) !== 0n;
     s = { token: t.token, side: t.net > 0n ? 'buy' : 'sell', pool: '', quote: usdgMoved ? QUOTES.USDG : NATIVE_ETH, venue: null, dex: null };
   }
-  const quoteAsset: 'ETH' | 'USDG' = s.quote === QUOTES.USDG ? 'USDG' : 'ETH';
+  // A Universal Router call whose fee command pays the treasury in ETH is an ETH trade, whatever its last hop
+  // is quoted in (a multi-hop route through USDG or a stock token).
+  const toRouter = String(tx.to ?? '').toLowerCase() === DEFAULT_TRADE_CONFIG.universalRouter.toLowerCase();
+  const ethFee = toRouter && treasuries.some((t) => (feeCommands(String(tx.input ?? '0x') as `0x${string}`, t as `0x${string}`) ?? []).some((c) => c.asset.toLowerCase() === NATIVE_ETH));
+  const quoteAsset: 'ETH' | 'USDG' = ethFee ? 'ETH' : s.quote === QUOTES.USDG ? 'USDG' : 'ETH';
 
   // The fee: what the treasury actually received in this tx. ETH from the call trace (internal
   // transfers aren't logs); USDG from Transfer logs.

@@ -15,6 +15,7 @@ import { simulateCalls, type SimCall } from './simulate';
 import type { PonsPool, Pool, Quote, Referral } from './types';
 import type { ApiPoolRow } from './api-pools';
 import { preparePairCurveTrade, type PairLegs, type PairTradeOptions } from './pair-trade';
+import { pathCandidates, quotePath } from './pair-route';
 import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
 /**
@@ -89,15 +90,16 @@ const QUOTE_NAMES: Record<string, string> = {
 };
 
 /**
- * The token only trades against another asset (Doppler pairs many launches with USDG or a stock token).
- * Routing ETH through that asset (multi-hop) isn't built yet, so say so instead of "no pool".
+ * The token only trades against another asset (Doppler pairs many launches with USDG or a stock token, a
+ * graduated PONS token can trade against the stock its curve was priced in) and no route from ETH through
+ * that asset quoted: say so instead of "no pool".
  */
 export function nonEthQuoteGuard(rows: ApiPoolRow[] | null | undefined): Guard | null {
   const eth = new Set([TRADE_ADDRESSES.eth.toLowerCase(), TRADE_ADDRESSES.weth.toLowerCase()]);
   const other = (rows ?? []).map((r) => r.quote?.toLowerCase()).filter((q): q is string => !!q && !eth.has(q));
   if (!other.length) return null;
   const name = QUOTE_NAMES[other[0]!] ?? 'another token';
-  return { code: 'NON_ETH_QUOTE', message: `This token trades against ${name}, not ETH. Buying with ETH through ${name} isn't supported yet.` };
+  return { code: 'NON_ETH_QUOTE', message: `This token trades against ${name}, not ETH, and no route from ETH through ${name} quoted for this amount right now.` };
 }
 
 /**
@@ -237,6 +239,8 @@ export interface QuickTradeOptions {
 const FALLBACK_GAS = { approve: 80_000n, permit2: 80_000n, swap: 450_000n };
 /** Generous fixed swap gas limits per venue (measured: a v4 buy uses ~146k; unused gas is refunded). */
 export const SWAP_GAS_FLOOR: Partial<Record<Pool['venue'], bigint>> = { 'uniswap-v2': 250_000n, 'uniswap-v3': 320_000n, 'uniswap-v4': 380_000n };
+/** Multi-hop routes (up to three pools, a hooked v4 pool among them; unused gas is refunded). */
+const PATH_SWAP_GAS = 700_000n;
 /** Buys pre-approve when the token allowance is below this (approvals are max/30 days anyway). */
 const PREAPPROVE_MIN = 1n << 128n;
 const bigMax = (a: bigint, b: bigint) => (a > b ? a : b);
@@ -288,11 +292,15 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   }
   const uniswap = pools.filter((p) => p.venue !== 'pons-curve');
   const tradable = uniswap.filter((p) => p.venueFeeBps <= MAX_VENUE_FEE_BPS);
-  if (!tradable.length)
+  // The token's real market may be priced in another token (NVDAc trades against NVDA): a multi-hop route
+  // ETH -> [USDG] -> pair -> token in one Universal Router call, quoted alongside the direct pools.
+  const pathPools = await pathCandidates(client, req.token, opts.discover?.apiPools, tradable.length > 0).catch(() => []);
+  if (!tradable.length && !pathPools.length)
     return empty([
-      uniswap.length
-        ? { code: 'NO_ROUTE', message: `Only pools with fees above ${MAX_VENUE_FEE_BPS / 100}% exist for this token; not routed.` }
-        : nonEthQuoteGuard(opts.discover?.apiPools) ?? { code: 'NO_ROUTE', message: 'No Uniswap pool with ETH liquidity for this token yet.' },
+      nonEthQuoteGuard(opts.discover?.apiPools) ??
+        (uniswap.length
+          ? { code: 'NO_ROUTE', message: `Only pools with fees above ${MAX_VENUE_FEE_BPS / 100}% exist for this token; not routed.` }
+          : { code: 'NO_ROUTE', message: 'No Uniswap pool with ETH liquidity for this token yet.' }),
     ]);
 
   // Chain facts the guards need, fetched while the pools quote (one round trip instead of two in a row).
@@ -309,10 +317,14 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
 
   // 2. Quote every pool once, pick the best, then apply the final slippage locally (no re-quote).
   const base = { side: req.side, token: req.token, quoteAsset: 'ETH' as const, amountIn: req.amountIn, trader: req.trader, referral: req.referral ?? null, holderDiscountBps: req.holderDiscountBps ?? 0, source: { kind: 'web' as const } };
-  const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, { ...base, slippageBps: 500 }, cfg)));
-  const quotes = rankQuotes(settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : [])));
+  const [settled, pathQuote] = await Promise.all([
+    Promise.allSettled(tradable.map((p) => quotePool(client, p, { ...base, slippageBps: 500 }, cfg))),
+    pathPools.length ? quotePath(client, { ...base, slippageBps: 500 }, cfg, pathPools, { apiPools: opts.pairApiPools }).catch(() => null) : Promise.resolve(null),
+  ]);
+  const quotes = rankQuotes([...settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : [])), ...(pathQuote ? [pathQuote] : [])]);
   if (!quotes.length) {
     void facts.catch(() => undefined);
+    if (pathPools.length && !tradable.length) return empty([nonEthQuoteGuard(opts.discover?.apiPools) ?? { code: 'NO_ROUTE', message: 'No route from ETH quoted for this token.' }]);
     const codes = settled.map((x) => (x.status === 'rejected' && isTradeError(x.reason) ? x.reason.code : 'QUOTE_FAILED'));
     if (codes.every((c) => c === 'LIQUIDITY_REMOVED'))
       return empty([{ code: 'LIQUIDITY_REMOVED', message: 'No liquidity left: the pool\'s liquidity was withdrawn by its provider, so this token can\'t be bought or sold.' }]);
@@ -341,7 +353,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   const built = buildSwap(quote, cfg, { now: nowS });
   const approvals = quickApprovalCalls(req.token, allowances, req.side === 'sell' ? req.amountIn : PREAPPROVE_MIN, nowS, cfg);
   if (req.side === 'sell') calls.push(...approvals);
-  calls.push({ label: 'swap', chainId: 4663, to: built.tx.to, data: built.tx.data, value: built.tx.value, gas: SWAP_GAS_FLOOR[quote.pool.venue] ?? FALLBACK_GAS.swap });
+  calls.push({ label: 'swap', chainId: 4663, to: built.tx.to, data: built.tx.data, value: built.tx.value, gas: quote.path ? PATH_SWAP_GAS : (SWAP_GAS_FLOOR[quote.pool.venue] ?? FALLBACK_GAS.swap) });
   const sellApprovals = req.side === 'buy' && allowances ? approvals : [];
 
   // 4. Guards.

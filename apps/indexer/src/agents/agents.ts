@@ -283,7 +283,12 @@ async function prepare(c: C, mode: 'quote' | 'build') {
     // Pool keys come from our own index (what GET /tokens/:a/pools serves), not a fetch of our public URL
     // from inside the worker, so hooked v4 pools of every launchpad resolve.
     const pools = await tokenPools(sql, null, req.token);
-    const poolsFetch = (async () => new Response(JSON.stringify({ pools: pools ?? [] }), { headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    // Other tokens' pools (the pair token of a multi-hop route, e.g. NVDA for NVDAc) come from the same index.
+    const poolsFetch = (async (url: string | URL) => {
+      const m = /\/tokens\/(0x[0-9a-fA-F]{40})\/pools/.exec(String(url));
+      const rows = !m || m[1]!.toLowerCase() === req.token ? pools : await tokenPools(sql, null, m[1]!.toLowerCase());
+      return new Response(JSON.stringify({ pools: rows ?? [] }), { headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
     const p = await prepareSwap(client as never, req, { forSigning: mode === 'build', simulate: mode === 'build' && simulate, simulateFundEth, fetch: poolsFetch });
     // Every buy: simulated buy→sell round trip first (honeypot.ts). Fails closed; sells are never checked.
     let honeypotCheck: HoneypotCheck | null = null;

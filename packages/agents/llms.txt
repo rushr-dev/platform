@@ -65,6 +65,7 @@ Rotate or recover a key: repeat steps 1-2 with `purpose=login`, then `POST /v1/a
 
 Agents can trade every column of the trenches:
 - **Graduated tokens** (`migrated`) trade on Uniswap pools (v2, v3 and v4, including hooked v4 pools), quoted in ETH or USDG, through the Universal Router.
+- **Tokens priced in another token** (a graduated PONS token whose pool trades against NVDA, a token that only trades against USDG): bought and sold with ETH through a **multi-hop** route, ETH → (USDG) → that token → your token, in ONE Universal Router transaction like any other Uniswap build. `quote.path` lists the hops; the fee is in ETH. Pools charging more than 10% are never routed.
 - **Bonding-curve tokens** (`new`, `almost`: PONS tokens that haven't graduated yet) trade on the curve itself, in ETH only. A buy that completes the curve graduates the token in the same transaction and refunds the unused ETH. The quote shows that refund as `expectedRefund`.
 - **Curves priced in another token** (a PONS curve paired with, say, ANT instead of ETH): still bought and sold with ETH, in **two trades** from your wallet: a Universal Router swap ETH → ANT (through USDG when needed) that carries the fee, then ANT → token on the curve. Sells run the other way. The build returns them as ordered `steps` (see "Pair-token curves" below).
 

@@ -86,9 +86,23 @@ export interface TradeSource {
   id?: string;
 }
 
+/** One hop of a multi-pool Universal Router route, in trade order. */
+export interface PathHop {
+  pool: V2Pool | V3Pool | V4Pool;
+  tokenIn: Address;
+  tokenOut: Address;
+}
+
 export interface Quote {
   request: SwapRequest;
+  /** The token's own pool (on multi-hop routes: the hop that trades the token). */
   pool: Pool;
+  /**
+   * Multi-hop routes only (the token trades against another token, e.g. NVDAc against NVDA): every hop in
+   * trade order, ETH side first on buys. One Universal Router call; the fee stays in ETH. Absent on
+   * single-pool routes.
+   */
+  path?: PathHop[];
   /** Total the user spends. */
   amountIn: bigint;
   /** What actually goes into the venue (buys: amountIn minus our fee). */

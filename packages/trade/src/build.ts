@@ -5,6 +5,7 @@ import type { TradeConfig } from './config';
 import { TradeError } from './errors';
 import { cmd, encodeExecute, encodeV3Path, OPEN_DELTA, v4, type EncodedCommand, type PermitSingle } from './universal-router';
 import type { Approval, BuiltSwap, Quote } from './types';
+import { planPairSwap } from './pair-route';
 
 const ETH = TRADE_ADDRESSES.eth;
 const WETH = TRADE_ADDRESSES.weth;
@@ -27,6 +28,11 @@ export interface BuildOptions {
  */
 export function planUniversalRouter(q: Quote, cfg: TradeConfig): EncodedCommand[] {
   const pool = q.pool;
+  // Multi-hop (the token trades against another token): one chained call, the fee in ETH (pair-route.ts).
+  if (q.path?.length)
+    return q.request.side === 'buy'
+      ? planPairSwap({ side: 'buy', hops: q.path, amountIn: q.swapAmountIn, minOut: q.minAmountOut, treasury: cfg.feeRecipient, feeAmount: q.fee.feeAmount })
+      : planPairSwap({ side: 'sell', hops: q.path, amountIn: q.amountIn, minOut: q.minGrossOut, treasury: cfg.feeRecipient, feeBps: q.fee.feeBps, minNet: q.minAmountOut });
   if (pool.venue === 'pons-curve') throw new TradeError('UNSUPPORTED_VENUE', 'PONS curves are not reachable through the Universal Router');
   const treasury = cfg.feeRecipient;
   const isUsdg = pool.quote === TRADE_ADDRESSES.usdg;
@@ -126,12 +132,12 @@ export function buildSwap(q: Quote, cfg: TradeConfig, opts: BuildOptions = {}): 
   const commands = planUniversalRouter(q, cfg);
   const approvals: Approval[] = [];
   // ERC20 the router pulls from the user via Permit2: the token on sells, USDG on USDG buys.
-  const pulled = side === 'sell' ? q.pool.token : q.pool.quote === TRADE_ADDRESSES.usdg ? TRADE_ADDRESSES.usdg : null;
+  const pulled = side === 'sell' ? q.pool.token : q.pool.quote === TRADE_ADDRESSES.usdg && !q.path ? TRADE_ADDRESSES.usdg : null;
   if (pulled) {
     approvals.push({ kind: 'erc20', token: pulled, spender: TRADE_ADDRESSES.permit2, amount: maxUint256 });
     if (opts.permit) commands.unshift(cmd.permit2Permit(opts.permit.permit, opts.permit.signature));
     else approvals.push({ kind: 'permit2', token: pulled, spender: cfg.universalRouter, amount: q.amountIn });
   }
-  const value = side === 'buy' && q.pool.quote !== TRADE_ADDRESSES.usdg ? q.amountIn : 0n;
+  const value = side === 'buy' && (q.path?.length || q.pool.quote !== TRADE_ADDRESSES.usdg) ? q.amountIn : 0n;
   return { quote: q, tx: { to: cfg.universalRouter, data: encodeExecute(commands, deadline), value }, approvals, commands, deadline };
 }

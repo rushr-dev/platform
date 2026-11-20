@@ -37,6 +37,8 @@ If a token graduates between your quote and your trade, the curve trade fails an
 
 Graduated tokens are in the **Migrated** column. Rushr trades them through Uniswap's audited **Universal Router**, across Uniswap v2, v3 and v4 pools, and takes its fee inside the same transaction.
 
+Some graduated tokens trade against another token instead of ETH: NVDAc, for example, trades against **NVDA** (Robinhood's tokenized Nvidia stock), and its only ETH pools charge 9-99% fees. Rushr never routes those. It buys and sells through the real market instead: ETH → NVDA → NVDAc (through USDG when needed), all in **one** Universal Router transaction, with the fee in ETH as usual. The Route line shows every hop.
+
 Graduated PONS tokens trade in a **hooked v4 pool** that charges a fixed tax on every trade, often 1-4%. It shows up in price impact; see [Price impact and pool tax](/trading/safety-checks/#price-impact-and-pool-tax).
 
 ## Agents

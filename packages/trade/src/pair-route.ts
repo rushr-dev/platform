@@ -1,12 +1,16 @@
 import { zeroAddress, type Address, type Hex, type PublicClient } from 'viem';
 import { TRADE_ADDRESSES, UR_ADDRESS_THIS, UR_MSG_SENDER } from './addresses';
-import { erc20Abi } from './abis';
+import { erc20Abi, v3FactoryAbi, v4StateViewAbi } from './abis';
+import { v4PoolId, V4_DYNAMIC_FEE_FLAG } from './math';
 import { discoverPools } from './pools';
 import { quoteVenue } from './quote';
 import { CONTRACT_BALANCE, cmd, encodeV3Path, OPEN_DELTA, v4, type EncodedCommand } from './universal-router';
 import type { ApiPoolRow } from './api-pools';
-import type { Pool, V2Pool, V3Pool, V4Pool } from './types';
-import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
+import type { PathHop, Pool, Quote, SwapRequest, V2Pool, V3Pool, V4Pool } from './types';
+import type { TradeConfig } from './config';
+import { minOut, sellMinimums, splitBuyInput, splitSellOutput, type FeeBreakdown } from './fees';
+import { effectiveFeeBps, referrerAccrual, savedBetween } from './referral';
+import { launchpadForHook, STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
 /**
  * ETH routes to and from a "pair token": an ERC-20 that a token is priced in instead of ETH (a PONS curve
@@ -56,6 +60,8 @@ const UNISWAP = ['uniswap-v4', 'uniswap-v3', 'uniswap-v2'] as const;
 export interface PairDiscoverOptions {
   /** Rushr API pool rows for a token (`fetchApiPools`, or the indexer's own `tokenPools`): adds v4 keys. */
   apiPools?: (token: Address) => Promise<ApiPoolRow[] | null>;
+  /** Pair pools known already, by pair token (tests). */
+  known?: PairPools[];
 }
 
 const POOLS_TTL_MS = 30_000;
@@ -182,11 +188,11 @@ export interface PairSwapPlan {
  * Universal Router commands for a pair route. Recipients are only the router itself (between hops) and the
  * user (UR_MSG_SENDER); the only other payee is the treasury's fee.
  *
- * Buys: TRANSFER fee · [WRAP_ETH] · hop 1 (fixed amount) · hop 2 (CONTRACT_BALANCE) -> user, final minimum.
- * Sells: hop 1 (pulls the pair token via Permit2) · hop 2 (CONTRACT_BALANCE) · [UNWRAP_WETH] · PAY_PORTION · SWEEP.
+ * Buys: TRANSFER fee · [WRAP_ETH] · hop 1 (fixed amount) · later hops (CONTRACT_BALANCE) -> user, final minimum.
+ * Sells: hop 1 (pulls the input via Permit2) · later hops (CONTRACT_BALANCE) · [UNWRAP_WETH] · PAY_PORTION · SWEEP.
  */
 export function planPairSwap(p: PairSwapPlan): EncodedCommand[] {
-  if (!p.hops.length || p.hops.length > 2) throw new Error('pair route: 1 or 2 hops');
+  if (!p.hops.length || p.hops.length > 3) throw new Error('pair route: 1 to 3 hops');
   const out: EncodedCommand[] = [];
   const ETH = TRADE_ADDRESSES.eth;
   const WETH = TRADE_ADDRESSES.weth;
@@ -312,4 +318,163 @@ export function pairCurveFillFromLogs(
   if (!inflow || !outflow) return null;
   const [tok, pair] = fill.side === 'buy' ? [inflow, outflow] : [outflow, inflow];
   return { side: fill.side, curve: lc(fill.curve), token: tok.t, tokenAmount: tok.net < 0n ? -tok.net : tok.net, pairToken: pair.t, pairAmount: pair.net < 0n ? -pair.net : pair.net };
+}
+
+// ---- multi-hop routes for tokens priced in another token ------------------------------------------
+
+/** The same path traded the other way (a buy path as the matching sell, and back). */
+export function reversePath(path: readonly PathHop[]): PathHop[] {
+  return [...path].reverse().map((h) => ({ pool: h.pool, tokenIn: h.tokenOut, tokenOut: h.tokenIn }));
+}
+
+const ETH_SIDE = new Set<string>([TRADE_ADDRESSES.eth, TRADE_ADDRESSES.weth]);
+
+/** API rows of the token's pools priced in another token (not ETH/WETH), busiest first. */
+export function pairQuotedRows(rows: readonly ApiPoolRow[] | null | undefined): ApiPoolRow[] {
+  return (rows ?? []).filter((r) => (r.version === 'v4' || (r.version === 'v3' && r.dex === 'uniswap')) && !!r.quote && !ETH_SIDE.has(lc(r.quote)));
+}
+
+/** True when the API's busiest Uniswap pool for the token is priced in another token: worth quoting a path. */
+export function busiestIsPairQuoted(rows: readonly ApiPoolRow[] | null | undefined): boolean {
+  const uni = (rows ?? []).filter((r) => r.version === 'v4' || (r.version === 'v3' && r.dex === 'uniswap'));
+  const top = [...uni].sort((a, b) => (b.volume_24h_usd ?? 0) - (a.volume_24h_usd ?? 0))[0];
+  return !!top && !!top.quote && !ETH_SIDE.has(lc(top.quote));
+}
+
+/**
+ * The token's own pools priced in another token, from API rows, checked on-chain: v4 keys must hash to the
+ * row's pool id and be initialized (hookless, or a launchpad's known hook such as the PONS migration hook,
+ * whose tax shows in price impact), v3 pools must be the Uniswap factory's pool for the pair. Pools charging
+ * more than 10% are dropped (trap pools). At most `limit`, busiest first.
+ */
+export async function pairQuotedPools(client: PublicClient, token: Address, rows: readonly ApiPoolRow[] | null | undefined, limit = 3): Promise<HopPool[]> {
+  const t = lc(token);
+  const cands = pairQuotedRows(rows).sort((a, b) => (b.volume_24h_usd ?? 0) - (a.volume_24h_usd ?? 0));
+  const out: HopPool[] = [];
+  for (const r of cands) {
+    if (out.length >= limit) break;
+    const quote = lc(r.quote);
+    const k = r.key;
+    try {
+      if (r.version === 'v4') {
+        if (!k || k.fee == null || k.tickSpacing == null) continue;
+        const key = { currency0: lc(k.currency0), currency1: lc(k.currency1), fee: k.fee, tickSpacing: k.tickSpacing, hooks: lc(k.hooks ?? zeroAddress) };
+        if (v4PoolId(key) !== (r.pool.toLowerCase() as Hex)) continue;
+        if (![key.currency0, key.currency1].includes(t) || ![key.currency0, key.currency1].includes(quote)) continue;
+        const launchpad = key.hooks === zeroAddress ? null : launchpadForHook(key.hooks);
+        if (key.hooks !== zeroAddress && !launchpad) continue; // unknown hooks may do anything
+        const [sqrtPriceX96, , , lpFee] = await client.readContract({ address: TRADE_ADDRESSES.v4.stateView, abi: v4StateViewAbi, functionName: 'getSlot0', args: [v4PoolId(key)] });
+        if (sqrtPriceX96 === 0n) continue;
+        const dynamic = (key.fee & V4_DYNAMIC_FEE_FLAG) !== 0;
+        const bps = (dynamic ? lpFee : key.fee) / 100;
+        if (bps > MAX_HOP_FEE_BPS) continue;
+        out.push({
+          venue: 'uniswap-v4', id: v4PoolId(key), key, hookData: '0x', token: t, quote, launchpad, venueFeeBps: bps,
+          venueFeeLabel: `Uniswap v4${launchpad ? ` (${launchpad} hook)` : ''} · ${(bps / 100).toFixed(2)}% pool fee`,
+        });
+      } else {
+        const fee = k?.fee;
+        if (fee == null || fee / 100 > MAX_HOP_FEE_BPS) continue;
+        const addr = await client.readContract({ address: TRADE_ADDRESSES.v3.factory, abi: v3FactoryAbi, functionName: 'getPool', args: [t, quote, fee] });
+        if (lc(addr) !== lc(r.pool)) continue;
+        out.push({ venue: 'uniswap-v3', id: lc(addr), token: t, quote, fee, venueFeeBps: fee / 100, venueFeeLabel: `Uniswap v3 · ${(fee / 10_000).toFixed(2)}% pool fee` });
+      }
+    } catch {
+      /* skip a pool that can't be read */
+    }
+  }
+  return out;
+}
+
+export interface PathQuoteParts {
+  side: 'buy' | 'sell';
+  /** The token's own pool (priced in the pair token). */
+  tokenPool: HopPool;
+  /** Every hop, trade order. */
+  hops: PairHop[];
+  /** Buys: tokens out; sells: gross ETH (or WETH) out. */
+  out: bigint;
+}
+
+/**
+ * Best multi-hop path for the token through one of its pair-quoted pools: buys ETH -> [USDG] -> pair -> token
+ * (`ethIn` already net of the fee), sells token -> pair -> [USDG] -> ETH. Null when no pool quotes.
+ */
+export async function quoteTokenPath(
+  client: PublicClient,
+  tokenPools: HopPool[],
+  side: 'buy' | 'sell',
+  amountIn: bigint,
+  opts: PairDiscoverOptions = {},
+): Promise<PathQuoteParts | null> {
+  const tries = await Promise.all(
+    tokenPools.map(async (tp): Promise<PathQuoteParts | null> => {
+      const pp = opts.known?.find((k) => k.pair === tp.quote) ?? (await discoverPairPools(client, tp.quote, opts).catch(() => null));
+      if (!pp) return null;
+      if (side === 'buy') {
+        const toPair = await quoteEthToPair(client, pp, amountIn);
+        const last = toPair ? await bestHop(client, [tp], 'buy', toPair[toPair.length - 1]!.amountOut) : null;
+        return toPair && last ? { side, tokenPool: tp, hops: [...toPair, last], out: last.amountOut } : null;
+      }
+      const first = await bestHop(client, [tp], 'sell', amountIn);
+      const toEth = first ? await quotePairToEth(client, pp, first.amountOut) : null;
+      return first && toEth ? { side, tokenPool: tp, hops: [first, ...toEth], out: toEth[toEth.length - 1]!.amountOut } : null;
+    }),
+  );
+  return tries.reduce<PathQuoteParts | null>((best, x) => (x && (!best || x.out > best.out) ? x : best), null);
+}
+
+/**
+ * A full quote for a multi-hop route (`quote.path` set, `quote.pool` = the token's own pool), with the Rushr
+ * fee in ETH: taken from the input on buys, from the gross ETH output on sells. Holder and referral discounts
+ * as on any route. Null when no path quotes. `buildSwap` turns it into one Universal Router call.
+ */
+export async function quotePath(client: PublicClient, req: SwapRequest, cfg: TradeConfig, tokenPools: HopPool[], opts: PairDiscoverOptions = {}): Promise<Quote | null> {
+  if (!tokenPools.length || req.quoteAsset !== 'ETH') return null;
+  const slippageBps = req.slippageBps ?? cfg.defaultSlippageBps;
+  const holderBps = req.holderDiscountBps ?? 0;
+  const feeBps = effectiveFeeBps(cfg, req.referral, holderBps);
+  const holderOnlyBps = effectiveFeeBps(cfg, null, holderBps);
+  const buy = req.side === 'buy';
+  const split = buy ? splitBuyInput(req.amountIn, feeBps) : null;
+  const parts = await quoteTokenPath(client, tokenPools, req.side, buy ? split!.swapAmount : req.amountIn, opts);
+  if (!parts) return null;
+  const path: PathHop[] = parts.hops.map((h) => ({ pool: h.pool, tokenIn: h.tokenIn, tokenOut: h.tokenOut }));
+  const impact = pathImpactBps(parts.hops.map((h) => ({ spotOut: h.spotOut, out: h.amountOut, venueFeeBps: h.pool.venueFeeBps })));
+  const tp = parts.tokenPool;
+  const label = `${pathLabel(parts.hops)} (through ${KNOWN_SYMBOLS[tp.quote] ?? 'the token it trades against'})`;
+  const fee = (amount: bigint, basis: bigint): FeeBreakdown => ({
+    side: req.side,
+    feeToken: TRADE_ADDRESSES.eth,
+    feeBps,
+    baseFeeBps: cfg.feeBps,
+    feeAmount: amount,
+    holderDiscountBps: holderBps,
+    holderDiscountAmount: holderBps ? savedBetween(basis, cfg.feeBps, holderOnlyBps) : 0n,
+    referralDiscountAmount: req.referral ? savedBetween(basis, holderOnlyBps, feeBps) : 0n,
+    referrerAccrual: referrerAccrual(amount, cfg, req.referral),
+    venueFeeBps: parts.hops.reduce((s, h) => s + h.pool.venueFeeBps, 0),
+    venueFeeLabel: label,
+  });
+  const warnings: string[] = [`Multi-hop route: ${label}, in one transaction.`];
+  if (tp.venue === 'uniswap-v4' && tp.key.hooks !== zeroAddress) warnings.push('Hooked v4 pool: the hook may change fees or behaviour at swap time');
+  if (impact !== null && impact > 500) warnings.push(`High price impact: ${(impact / 100).toFixed(1)}%`);
+  const common = { request: req, pool: tp as Pool, path, slippageBps, priceImpactBps: impact, gasEstimate: null, expectedRefund: 0n, warnings };
+  if (buy) {
+    const m = minOut(parts.out, slippageBps);
+    return { ...common, amountIn: req.amountIn, swapAmountIn: split!.swapAmount, grossOut: parts.out, amountOut: parts.out, minAmountOut: m, minGrossOut: m, fee: fee(split!.fee, req.amountIn) };
+  }
+  const { fee: feeAmount, netOut } = splitSellOutput(parts.out, feeBps);
+  const { minGross, minNet } = sellMinimums(parts.out, feeBps, slippageBps);
+  return { ...common, amountIn: req.amountIn, swapAmountIn: req.amountIn, grossOut: parts.out, amountOut: netOut, minAmountOut: minNet, minGrossOut: minGross, fee: fee(feeAmount, parts.out) };
+}
+
+/**
+ * Candidate pools for a path route, when worth trying: the API lists pools of the token priced in another
+ * token, and either nothing routable trades it against ETH or its busiest pool is the pair-quoted one.
+ */
+export async function pathCandidates(client: PublicClient, token: Address, rows: readonly ApiPoolRow[] | null | undefined, ethRoutable: boolean): Promise<HopPool[]> {
+  if (!pairQuotedRows(rows).length) return [];
+  if (ethRoutable && !busiestIsPairQuoted(rows)) return [];
+  return pairQuotedPools(client, token, rows);
 }

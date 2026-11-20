@@ -1,7 +1,7 @@
 // Trade ledger: POST /v1/trades + confirmation from the chain (receipt, our decoded swap, the treasury's
 // fee from a call trace), referral accrual, and the member read endpoints. Local Postgres, fake RPC.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { CURVE_BUY_TOPIC, CURVE_SELL_TOPIC, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, effectiveFeeBps } from '@rushr/trade';
+import { CURVE_BUY_TOPIC, CURVE_SELL_TOPIC, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, cmd, effectiveFeeBps, encodeExecute } from '@rushr/trade';
 import { v1 } from '../src/agents/app';
 import { confirmTrade, ethReceived, sweepStuckTrades, tokenFlow, trades } from '../src/ledger';
 import { pgAvailable, setup } from './harness';
@@ -68,6 +68,12 @@ const PSELL_TX = `0x${'d5'.repeat(32)}`;
 const PSELL_CURVE_TX = `0x${'d6'.repeat(32)}`;
 const PONLY_TX = `0x${'d9'.repeat(32)}`;
 const PFEE = (E18 * BASE_BPS) / 10_000n; // Carol isn't referred
+// Multi-hop buy (ETH -> STOCK -> MTOKEN in one Universal Router call): a swap row per hop, the fee in ETH.
+const STOCK = '0x5707000000000000000000000000000000000057';
+const MTOKEN = '0x7373000000000000000000000000000000000073';
+const MPOOL_A = '0x900a00000000000000000000000000000000000a';
+const MPOOL_B = '0x900b00000000000000000000000000000000000b';
+const MH_TX = `0x${'e1'.repeat(32)}`;
 const feeTx = (from: string, nonce: number, v: bigint) => ({
   tx: { from, to: TREASURY, value: hex(v), input: '0x', nonce: hex(BigInt(nonce)) },
   receipt: { status: '0x1', blockNumber: '0x70', logs: [] },
@@ -171,6 +177,11 @@ const chain: Record<string, { tx: object; receipt: object; trace: object }> = {
       { type: 'CALL', from: ROUTER, to: TREASURY, value: hex(SELL_FEE) },
       { type: 'CALL', from: ROUTER, to: CAROL, value: hex(SELL_GROSS - SELL_FEE) },
     ] },
+  },
+  [MH_TX]: {
+    tx: { from: CAROL, to: ROUTER, value: hex(E18), input: encodeExecute([cmd.transfer('0x0000000000000000000000000000000000000000', TREASURY as `0x${string}`, PFEE)], 1n) },
+    receipt: { status: '0x1', blockNumber: '0x76', logs: [transfer(MTOKEN, POOL, CAROL, 7000n * E18)] },
+    trace: { type: 'CALL', from: CAROL, to: ROUTER, value: hex(E18), calls: [{ type: 'CALL', from: ROUTER, to: TREASURY, value: hex(PFEE) }] },
   },
   // A pair buy whose curve leg never landed: Carol ends with the PAIR.
   [PONLY_TX]: {
@@ -370,6 +381,18 @@ describe.skipIf(!pg)('trade ledger', () => {
       // Fresh rows are left to their own job.
       expect((await sweepStuckTrades(t.sql, t.env as never)).map((x) => x.tx)).not.toContain(CSTUCK_TX);
     });
+  });
+
+  it('a multi-hop buy (the token trades against a stock token): the token the trader got, an ETH trade', async () => {
+    const eth = '0x0000000000000000000000000000000000000000';
+    // The intermediate hop is the bigger row by USD; the trader never held STOCK, so it isn't the trade.
+    await t.sql`insert into swaps (tx, log_index, token, pool, block, time, trader, side, token_amount, quote, quote_amount, price_usd, usd) values
+      (${MH_TX}, 1, ${STOCK}, ${MPOOL_A}, 118, now(), ${CAROL}, 'buy', ${(20n * E18).toString()}, ${eth}, ${E18.toString()}, 1, 3000),
+      (${MH_TX}, 2, ${MTOKEN}, ${MPOOL_B}, 118, now(), ${CAROL}, 'buy', ${(7000n * E18).toString()}, ${STOCK}, ${(20n * E18).toString()}, 1, 2990)`;
+    expect((await t.call('POST', '/trades', { auth: carol, body: { txHash: MH_TX, chainId: 4663, source: { kind: 'web' } } })).status).toBe(202);
+    expect(await confirmTrade(t.sql, t.env as never, MH_TX, false)).toBe('done');
+    const [row] = await t.sql`select * from trades_ledger where tx_hash = ${MH_TX}`;
+    expect(row).toMatchObject({ status: 'confirmed', side: 'buy', token: MTOKEN, quote_asset: 'ETH', amount_in: E18.toString(), amount_out: (7000n * E18).toString(), fee_amount: PFEE.toString(), flags: [] });
   });
 
   describe('pair trades: the fee is in the Universal Router swap, the token comes from the curve leg', () => {

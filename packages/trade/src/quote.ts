@@ -213,6 +213,9 @@ export function withSlippage(q: Quote, slippageBps: number): Quote {
   return { ...q, request, slippageBps, minAmountOut: minNet, minGrossOut: minGross };
 }
 
+/** Pools charging more than this are never routed (same limit as the web app's MAX_VENUE_FEE_BPS). */
+export const MAX_ROUTED_VENUE_FEE_BPS = 1_000;
+
 export interface RouteResult {
   best: Quote;
   /** All successful quotes, best first. */
@@ -238,8 +241,9 @@ export async function findBestRoute(
   const holder = req.holderDiscountBps != null ? Promise.resolve(req.holderDiscountBps) : readHolderDiscountBps(client, req.trader, cfg);
   const pools = discover.pools ?? (await discoverPools(client, req.token, { ...discover, quoteAsset: req.quoteAsset, trader: req.trader }));
   req = { ...req, holderDiscountBps: await holder };
-  const tradable = pools.filter((p) => !(p.venue === 'pons-curve' && p.graduated));
-  if (!tradable.length) throw new TradeError('NO_ROUTE', 'No pool found for this token and quote asset', { token: req.token });
+  // Trap pools (a venue fee above 10%, e.g. a 90%-fee v4 pool) are never routed, as in the web app.
+  const tradable = pools.filter((p) => !(p.venue === 'pons-curve' && p.graduated) && p.venueFeeBps <= MAX_ROUTED_VENUE_FEE_BPS);
+  if (!tradable.length) throw new TradeError('NO_ROUTE', pools.length ? 'Only pools with fees above 10% exist for this token and quote asset; not routed' : 'No pool found for this token and quote asset', { token: req.token });
   const settled = await Promise.allSettled(tradable.map((p) => quotePool(client, p, req, cfg)));
   const quotes: Quote[] = [];
   const failures: RouteResult['failures'] = [];
