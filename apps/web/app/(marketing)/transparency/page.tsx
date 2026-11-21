@@ -39,6 +39,17 @@ const TX = (h: string) => `https://robin.etherscan.io/tx/${h}`;
 /** Every $RUSHR burn so far, newest first. Each one is a plain transfer to 0x…dEaD; amounts are from the transactions. */
 const BURNS: { date: string; title: string; amount: string; note: string; txs: [string, string][] }[] = [
   {
+    date: '21 Nov 2026',
+    title: 'Creator-tax buyback #2',
+    amount: '40,602,158',
+    note: 'The second creator-tax claim paid 2.917 ETH. 0.668 ETH of it (22.9%, above the 20% rule) bought $RUSHR and burned all of it.',
+    txs: [
+      ['Claim', '0x9fb25dac51360db413e84e014cb1cc7db731846f40e5d732b88e4fefa14c87fc'],
+      ['Buy', '0xfceabe24e8464483670cca06aae59591c90a84d44b6e16a795c0fbf0a26eafe0'],
+      ['Burn', '0xd4869f1e0c65967c96b1039a932af8a472f57d40420ecbcf6b044f52e109aed7'],
+    ],
+  },
+  {
     date: '19 Nov 2026',
     title: 'Platform-fee buyback #1',
     amount: '1,173,460',
@@ -267,14 +278,18 @@ export default async function TransparencyPage() {
                   First claim, 16 Nov 2026: <span className="font-mono font-semibold text-ink">1.92875 ETH</span>. 0.386 ETH of it bought{' '}
                   <span className="font-mono font-semibold text-brand-deep">8,787,534 $RUSHR</span>, all burned.
                 </p>
+                <p className="mt-3">
+                  Second claim, 20 Nov 2026: <span className="font-mono font-semibold text-ink">2.917 ETH</span>. 0.668 ETH of it bought{' '}
+                  <span className="font-mono font-semibold text-brand-deep">40,602,158 $RUSHR</span>, all burned.
+                </p>
               </div>
             </Section>
 
             <Section id="buybacks" title="Buybacks & burns">
               <div className="rounded-xl border border-line bg-surface p-5 md:p-6">
                 <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-muted">Total burned</div>
-                <div className="mt-2 font-mono text-3xl font-semibold tabular-nums tracking-tight text-brand-deep md:text-4xl">101,173,460 $RUSHR</div>
-                <div className="mt-1 text-sm text-muted">10.1% of the 1,000,000,000 supply, sent to 0x…dEaD and gone for good.</div>
+                <div className="mt-2 font-mono text-3xl font-semibold tabular-nums tracking-tight text-brand-deep md:text-4xl">141,775,618 $RUSHR</div>
+                <div className="mt-1 text-sm text-muted">14.2% of the 1,000,000,000 supply, sent to 0x…dEaD and gone for good.</div>
               </div>
               <ol className="mt-3 divide-y divide-line rounded-xl border border-line bg-surface">
                 {BURNS.map((b) => (
