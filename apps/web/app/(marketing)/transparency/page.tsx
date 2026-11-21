@@ -42,7 +42,7 @@ const BURNS: { date: string; title: string; amount: string; note: string; txs: [
     date: '21 Nov 2026',
     title: 'Creator-tax buyback #2',
     amount: '40,602,158',
-    note: 'The second creator-tax claim paid 2.917 ETH. 0.668 ETH of it (22.9%, above the 20% rule) bought $RUSHR and burned all of it.',
+    note: 'The second creator-tax claim paid 2.917 ETH. 0.668 ETH of it bought $RUSHR and burned all of it: about 4% of the supply.',
     txs: [
       ['Claim', '0x9fb25dac51360db413e84e014cb1cc7db731846f40e5d732b88e4fefa14c87fc'],
       ['Buy', '0xfceabe24e8464483670cca06aae59591c90a84d44b6e16a795c0fbf0a26eafe0'],
