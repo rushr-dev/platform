@@ -101,7 +101,12 @@ export function MobileNav() {
             >
               <span className="relative">
                 <Ico size={20} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
-                {n.href === '/rush' && rushLive && <LiveDot className="absolute -right-1 -top-0.5" />}
+                {n.href === '/rush' && rushLive && (
+                  <span
+                    aria-label="Live"
+                    className="absolute -right-0.5 -top-0.5 size-2 rounded-full bg-brand ring-2 ring-surface-2"
+                  />
+                )}
               </span>
               {n.label}
             </Link>
