@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePathname } from 'next/navigation';
-import { ChatCircleText, X } from '@phosphor-icons/react';
+import { ChatCircleText, ImageSquare, X } from '@phosphor-icons/react';
 import { auth } from '@/lib/auth';
 import { useLiveStatus } from '@/lib/live';
 import { V1 } from '@/lib/members';
@@ -45,13 +45,13 @@ function writeDraft(d: Draft | null) {
  * Sends feedback to POST /v1/feedback. Works signed in or out (the API attaches the member when a
  * session token is present). The API has no category field, so the kind is a "[bug] " prefix.
  */
-async function sendFeedback(kind: Kind, message: string, page: string): Promise<{ ok: true } | { ok: false; message: string }> {
+async function sendFeedback(kind: Kind, message: string, page: string, screenshotUrl?: string | null): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const token = await auth.getAccessToken().catch(() => null);
     const r = await fetch(`${V1}/feedback`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ message: `[${kind}] ${message.trim()}`.slice(0, MAX), page }),
+      body: JSON.stringify({ message: `[${kind}] ${message.trim()}`.slice(0, MAX), page, ...(screenshotUrl ? { screenshotUrl } : {}) }),
     });
     if (r.ok) return { ok: true };
     if (r.status === 429) return { ok: false, message: 'Too many messages, try again in a bit.' };
@@ -61,6 +61,26 @@ async function sendFeedback(kind: Kind, message: string, page: string): Promise<
     return { ok: false, message: 'Network error. Try again.' };
   }
 }
+
+const SHOT_MAX = 3_000_000;
+const SHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+/** Uploads a screenshot (POST /v1/feedback/screenshot, raw bytes) and returns its link. */
+async function uploadScreenshot(file: File): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
+  if (!SHOT_TYPES.includes(file.type)) return { ok: false, message: 'Use a PNG, JPEG, WebP or GIF image.' };
+  if (file.size > SHOT_MAX) return { ok: false, message: 'Screenshots are at most 3MB.' };
+  try {
+    const r = await fetch(`${V1}/feedback/screenshot`, { method: 'POST', headers: { 'content-type': file.type }, body: file });
+    if (r.ok) return { ok: true, url: ((await r.json()) as { url: string }).url };
+    if (r.status === 429) return { ok: false, message: 'Too many uploads, try again later.' };
+    const e = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
+    return { ok: false, message: e?.error?.message ?? 'Couldn’t upload the screenshot.' };
+  } catch {
+    return { ok: false, message: 'Network error while uploading.' };
+  }
+}
+
+type Shot = { preview: string; url: string | null; uploading: boolean; error: string | null };
 
 /**
  * Top-bar Feedback button. A small dot on it shows the live connection (green when streaming, red
@@ -108,6 +128,20 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const area = useRef<HTMLTextAreaElement>(null);
   const [draft, setDraft] = useState<Draft>({ kind: 'bug', message: '' });
   const [state, setState] = useState<{ s: 'idle' | 'sending' | 'sent' } | { s: 'error'; message: string }>({ s: 'idle' });
+  const [shot, setShot] = useState<Shot | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  // Attach a screenshot (from the picker or pasted into the text): upload it right away, show a preview.
+  const attach = useCallback(async (file: File) => {
+    const preview = URL.createObjectURL(file);
+    setShot({ preview, url: null, uploading: true, error: null });
+    const r = await uploadScreenshot(file);
+    setShot((s) => (s?.preview === preview ? { ...s, uploading: false, url: r.ok ? r.url : null, error: r.ok ? null : r.message } : s));
+  }, []);
+  const removeShot = () => {
+    if (shot) URL.revokeObjectURL(shot.preview);
+    setShot(null);
+  };
 
   // Restore the unsent draft, then focus the text.
   useEffect(() => {
@@ -158,13 +192,13 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
   };
 
   const text = draft.message.trim();
-  const canSend = text.length > 0 && draft.message.length <= MAX && state.s !== 'sending';
+  const canSend = text.length > 0 && draft.message.length <= MAX && state.s !== 'sending' && !shot?.uploading;
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSend) return;
     setState({ s: 'sending' });
     const page = `${window.location.pathname}${window.location.search}`;
-    const r = await sendFeedback(draft.kind, draft.message, page || path);
+    const r = await sendFeedback(draft.kind, draft.message, page || path, shot?.url);
     if (r.ok) {
       writeDraft(null);
       setState({ s: 'sent' });
@@ -213,11 +247,48 @@ function FeedbackDialog({ onClose }: { onClose: () => void }) {
               ref={area}
               value={draft.message}
               onChange={(e) => update({ ...draft, message: e.target.value.slice(0, MAX) })}
+              onPaste={(e) => {
+                const img = [...e.clipboardData.files].find((f) => f.type.startsWith('image/'));
+                if (img) {
+                  e.preventDefault();
+                  void attach(img);
+                }
+              }}
               placeholder="What happened, or what would make Rushr better?"
               rows={5}
               maxLength={MAX}
               aria-label="Your feedback"
               className="mt-3 w-full resize-none rounded-xl border border-white/[0.08] bg-bg/60 p-3 text-sm text-ink placeholder:text-muted/70 focus:border-white/20 focus:outline-none"
+            />
+            {shot ? (
+              <div className="mt-2 flex items-center gap-3 rounded-xl border border-white/[0.08] bg-bg/60 p-2">
+                <img src={shot.preview} alt="Screenshot to attach" className="h-12 w-16 rounded-md object-cover" />
+                <span className={`min-w-0 flex-1 truncate text-xs ${shot.error ? 'text-risk-high' : 'text-muted'}`}>
+                  {shot.uploading ? 'Uploading…' : shot.error ?? 'Screenshot attached'}
+                </span>
+                <button type="button" onClick={removeShot} aria-label="Remove screenshot" className="rounded-md p-1 text-muted hover:text-ink">
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInput.current?.click()}
+                className="mt-2 flex items-center gap-1.5 rounded-lg px-1 py-1 text-xs text-muted transition hover:text-ink"
+              >
+                <ImageSquare size={14} /> Attach a screenshot <span className="text-muted/60">(or paste one)</span>
+              </button>
+            )}
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void attach(f);
+                e.target.value = '';
+              }}
             />
             <div className="mt-2 flex items-center gap-3">
               <span className={`font-mono text-[11px] ${draft.message.length >= MAX ? 'text-risk-high' : 'text-muted'}`}>

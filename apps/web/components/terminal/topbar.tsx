@@ -11,6 +11,7 @@ import { TokenAvatar, RiskDot } from './bits';
 import { AccountMenu } from './auth/account-menu';
 import { FeedbackButton } from './feedback';
 import { RushrPill } from './rushr-pill';
+import { useRushLive } from '@/lib/rush-live';
 
 /** `phone: false`: left out of the phone tab bar (five tabs fit a phone; the leaderboard is linked from Rush). */
 const NAV: { href: string; label: string; phone?: boolean }[] = [
@@ -24,8 +25,19 @@ const NAV: { href: string; label: string; phone?: boolean }[] = [
   { href: '/rush', label: 'Rush' },
 ];
 
+/** A small green dot on the Rush tab while the event is live. */
+function LiveDot({ className = '' }: { className?: string }) {
+  return (
+    <span className={`relative inline-flex size-2 ${className}`} aria-label="Live">
+      <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand opacity-60" />
+      <span className="relative inline-flex size-2 rounded-full bg-brand" />
+    </span>
+  );
+}
+
 export function TopBar() {
   const path = usePathname();
+  const rushLive = useRushLive();
   return (
     <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b border-white/[0.06] bg-bg/90 px-3 backdrop-blur-md sm:gap-3 md:gap-6 md:px-4">
       {path.startsWith('/token/') && <BackButton />}
@@ -41,9 +53,10 @@ export function TopBar() {
           <Link
             key={n.label}
             href={n.href}
-            className={`rounded-lg px-3 py-1.5 transition ${path.startsWith(n.href) ? 'bg-white/[0.07] text-ink' : 'text-muted hover:text-ink'}`}
+            className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${path.startsWith(n.href) ? 'bg-white/[0.07] text-ink' : 'text-muted hover:text-ink'}`}
           >
             {n.label}
+            {n.href === '/rush' && rushLive && <LiveDot />}
           </Link>
         ))}
       </nav>
@@ -68,6 +81,7 @@ const NAV_ICONS: Record<string, Icon> = { '/trenches': Fire, '/stocks': ChartLin
  */
 export function MobileNav() {
   const path = usePathname();
+  const rushLive = useRushLive();
   if (path.startsWith('/token/')) return null;
   return (
     <div className="shrink-0 px-3 pt-1.5 [padding-bottom:max(0.5rem,env(safe-area-inset-bottom))] md:hidden">
@@ -85,7 +99,10 @@ export function MobileNav() {
               aria-current={on ? 'page' : undefined}
               className={`flex flex-col items-center gap-0.5 rounded-xl py-1.5 text-[10.5px] transition active:scale-[0.96] ${on ? 'bg-white/[0.07] font-medium text-ink' : 'text-muted'}`}
             >
-              <Ico size={20} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
+              <span className="relative">
+                <Ico size={20} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
+                {n.href === '/rush' && rushLive && <LiveDot className="absolute -right-1 -top-0.5" />}
+              </span>
               {n.label}
             </Link>
           );

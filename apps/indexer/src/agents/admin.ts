@@ -173,7 +173,7 @@ adminV1.post('/invites/:code/revoke', async (c) => {
 
 adminV1.get('/feedback', async (c) => {
   const rows = await c.var.sql`
-    select f.id::text, f.page, f.message, f.user_agent, f.created_at, m.handle
+    select f.id::text, f.page, f.message, f.user_agent, f.screenshot_url, f.created_at, m.handle
     from feedback f left join members m on m.id = f.member_id
     order by f.created_at desc limit ${Math.min(Number(c.req.query('limit') ?? 200) || 200, 1000)}`;
   return c.json({ feedback: rows }, 200, NO_STORE);

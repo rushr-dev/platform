@@ -61,6 +61,21 @@ export const media = new Hono<Ctx>();
 media.post('/me/avatar', (c) => upload(c, 'avatar'));
 media.post('/me/banner', (c) => upload(c, 'banner'));
 
+/** Feedback screenshots (POST /v1/feedback/screenshot). */
+media.get('/media/feedback/:file', async (c) => {
+  const r2 = bucket(c);
+  const obj = await r2.get(`feedback/${c.req.param('file')}`);
+  if (!obj) throw fail(404, 'not_found', 'No such image.');
+  return new Response(obj.body, {
+    headers: {
+      'content-type': obj.httpMetadata?.contentType ?? 'application/octet-stream',
+      'cache-control': 'public, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'",
+    },
+  });
+});
+
 media.get('/media/:kind{avatar|banner}/:member/:file', async (c) => {
   const r2 = bucket(c);
   const key = `${c.req.param('kind')}/${c.req.param('member')}/${c.req.param('file')}`;

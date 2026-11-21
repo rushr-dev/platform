@@ -75,6 +75,7 @@ export function FeedView({ serverNow }: { serverNow: number }) {
                 [
                   ['global', 'For you'],
                   ['following', 'Following'],
+                  ['best', 'Best calls'],
                 ] as const
               ).map(([id, label]) => (
                 <button
@@ -104,6 +105,7 @@ export function FeedView({ serverNow }: { serverNow: number }) {
               </div>
             )}
           </div>
+          {tab === 'best' && <p className="mb-2 text-xs text-muted">Bullish calls from the last 7 days, ranked by their biggest move since they were posted.</p>}
 
           {following && !canFollow ? (
             <Empty>

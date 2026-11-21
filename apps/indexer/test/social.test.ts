@@ -86,6 +86,30 @@ describe.skipIf(!pg)('social', () => {
     expect((await t.call('GET', `/tokens/${TOKEN}/callouts?limit=3`)).json.items).toHaveLength(3);
   });
 
+  it('ranks best calls by their peak move since posting, bullish only, last 7 days', async () => {
+    const A = '0x00000000000000000000000000000000000000b1', B = '0x00000000000000000000000000000000000000b2';
+    for (const tok of [A, B])
+      await t.sql`insert into tokens (address, name, symbol, decimals, total_supply, deployer, created_block, created_at, price_usd)
+        values (${tok}, ${tok.slice(-2)}, ${tok.slice(-2).toUpperCase()}, 18, '1000', '0xdev', 1, now() - interval '1 day', 1)`;
+    // Called at $1 each: A peaked at $5 (5x), B at $2 (2x). A bearish call on A must not rank.
+    await t.sql`insert into callouts (id, author_id, token, stance, body, price_at_post_usd, created_at) values
+      ('best_a', ${carol.member.id}, ${A}, 'bullish', 'A to the moon', 1, now() - interval '3 hours'),
+      ('best_b', ${dave.member.id}, ${B}, 'bullish', 'B is cooking', 1, now() - interval '2 hours'),
+      ('best_bear', ${dave.member.id}, ${A}, 'bearish', 'A dumps', 1, now() - interval '2 hours'),
+      ('best_old', ${carol.member.id}, ${B}, 'bullish', 'too old', 0.01, now() - interval '10 days')`;
+    await t.sql`insert into candles (token, interval, bucket, open, high, low, close, volume_usd, trades) values
+      (${A}, '1m', date_trunc('minute', now() - interval '1 hour'), 1, 5, 1, 4, 100, 3),
+      (${B}, '1m', date_trunc('minute', now() - interval '1 hour'), 1, 2, 1, 2, 100, 3)`;
+    const r = await t.call('GET', '/feed/best?limit=10');
+    expect(r.status).toBe(200);
+    const ids = r.json.items.map((i: { id: string }) => i.id);
+    expect(ids.indexOf('best_a')).toBeLessThan(ids.indexOf('best_b'));
+    expect(ids).not.toContain('best_bear');
+    expect(ids).not.toContain('best_old');
+    const a = r.json.items.find((i: { id: string }) => i.id === 'best_a');
+    expect(a.result.peakSincePostPct).toBeCloseTo(400);
+  });
+
   it('likes and comments', async () => {
     const [first] = (await t.call('GET', '/members/alice/callouts')).json.items;
     expect((await t.call('POST', `/callouts/${first.id}/like`, { auth: alice.token })).json.error.code).toBe('cannot_like_own');

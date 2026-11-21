@@ -289,6 +289,29 @@ social.get('/feed', async (c) => {
   return c.json({ items, next: nextCursor(items, n) }, 200, publicCache(5));
 });
 
+/**
+ * Best calls (public, cached): bullish calls from the last `days` (default 7, up to 30), ranked by their peak move
+ * since posting (the highest 1-minute candle high over the price at post, as on the Rush caller board). One page.
+ */
+social.get('/feed/best', async (c) => {
+  const sql = c.var.sql;
+  const n = pageSize(c);
+  const days = Math.min(Math.max(Number(c.req.query('days') ?? 7) || 7, 1), 30);
+  const ranked = await sql<{ id: string }[]>`
+    select c.id from callouts c
+    join members m on m.id = c.author_id and m.status = 'active'
+    where c.deleted_at is null and c.hidden_at is null and c.stance = 'bullish'
+      and c.created_at > now() - make_interval(days => ${days}) and c.price_at_post_usd > 0
+    order by (select max(k.high) from candles k where k.token = c.token and k.interval = '1m' and k.bucket >= date_trunc('minute', c.created_at))
+      / c.price_at_post_usd desc nulls last, c.created_at desc
+    limit ${n}`;
+  if (!ranked.length) return c.json({ items: [], next: null, days }, 200, publicCache(30));
+  const rows = await calloutRows(sql, sql`and c.id in ${sql(ranked.map((r) => r.id))}`, n, null);
+  const order = new Map(ranked.map((r, i) => [r.id, i]));
+  const items = rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0));
+  return c.json({ items, next: null, days }, 200, publicCache(30));
+});
+
 /** Callouts by the members I follow, plus my own. */
 social.get('/me/feed', async (c) => {
   const me = requireMember(c);

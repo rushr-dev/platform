@@ -72,4 +72,14 @@ describe.skipIf(!pg)('beta: invites and feedback', () => {
     const fb = await t.admin('GET', '/feedback');
     expect(fb.json.feedback.map((f) => [f.message, f.handle, f.page])).toEqual([['love it', null, null], ['the chart is slow', 'alice', '/token/0xabc']]);
   });
+
+  it('attaches a screenshot uploaded through the feedback route, never an arbitrary link', async () => {
+    // A link made by POST /v1/feedback/screenshot (same origin, /v1/media/feedback/<file>) is accepted.
+    const ok = await t.call('POST', '/feedback', { body: { message: 'see the screenshot', screenshotUrl: 'http://localhost/v1/media/feedback/AbC_12-x.png' } });
+    expect(ok.status).toBe(201);
+    for (const bad of ['https://evil.example/v1/media/feedback/a.png', 'http://localhost/v1/media/avatar/m_1/a.png', 'http://localhost/v1/media/feedback/../x.png'])
+      expect((await t.call('POST', '/feedback', { body: { message: 'x', screenshotUrl: bad } })).json.error.code).toBe('invalid_field');
+    const fb = await t.admin('GET', '/feedback');
+    expect(fb.json.feedback[0]).toMatchObject({ message: 'see the screenshot', screenshot_url: 'http://localhost/v1/media/feedback/AbC_12-x.png' });
+  });
 });

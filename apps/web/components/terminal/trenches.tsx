@@ -1,5 +1,6 @@
 'use client';
 
+import { RushBanner } from './rush-banner';
 import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -253,6 +254,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   return (
     <div className="flex h-full flex-col">
       <Toolbar showSpam={showSpam} onShowSpam={setShowSpam} showPlain={showPlain} onShowPlain={setShowPlain} quick={quick} onQuick={changeQuick} />
+      <RushBanner />
       {/* Mobile: one column at a time */}
       <div className="flex gap-1 px-2 pb-2 md:hidden">
         {COLUMNS.map((c) => (

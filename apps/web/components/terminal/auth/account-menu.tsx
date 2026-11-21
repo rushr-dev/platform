@@ -52,7 +52,7 @@ export function AccountMenu() {
     const cached = me?.status === 'registered' ? me.member : null;
     return (
       <div className="flex items-center gap-2" aria-busy>
-        {hint.wallet && <BalanceButton wallet={hint.wallet as `0x${string}`} onOpen={() => auth.login()} />}
+        <BalanceButton wallet={(hint.wallet as `0x${string}` | undefined) ?? null} onOpen={() => auth.login()} />
         <span className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-surface py-1 pl-1 pr-3 text-sm">
           <MemberAvatar member={cached} wallet={hint.wallet} label={hint.name ?? ''} size={28} />
           <span className="hidden max-w-[12ch] truncate font-medium sm:inline">{cached ? `@${cached.handle}` : <NameSkeleton />}</span>
@@ -78,7 +78,7 @@ export function AccountMenu() {
   const name = me?.status === 'registered' ? `@${me.member.handle}` : me ? displayName(user) : <NameSkeleton />;
   return (
     <div ref={box} className="relative flex items-center gap-2">
-      {user.wallet && <BalanceButton wallet={user.wallet} onOpen={() => setWalletOpen(true)} />}
+      <BalanceButton wallet={user.wallet ?? null} onOpen={() => setWalletOpen(true)} />
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -209,7 +209,7 @@ const moneyWhole = new Intl.NumberFormat('en-US', { style: 'currency', currency:
  * Total wallet value in dollars next to the account chip (the same total as the wallet view): ETH at
  * the live price plus every token held. Opens the wallet panel. Phones drop the cents above $1,000.
  */
-function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () => void }) {
+function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}` | null; onOpen: () => void }) {
   const h = useWalletHoldings(wallet);
   const v = h.totalUsd;
   return (
@@ -221,7 +221,11 @@ function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () =
       className="rounded-xl border border-white/[0.08] bg-surface px-2.5 py-1.5 font-mono text-[13px] font-semibold tabular-nums transition hover:border-white/20 sm:px-3 sm:py-2 sm:text-sm"
     >
       {v == null ? (
-        <span className="inline-block h-4 w-14 animate-pulse rounded bg-white/[0.08] align-middle" />
+        // Still loading: keep the box and say so, so an empty box never reads as an empty wallet.
+        <span className="inline-flex items-center gap-1.5 text-muted" aria-busy>
+          <span className="inline-block size-1.5 animate-pulse rounded-full bg-brand" />
+          <span className="font-sans text-xs font-medium">Loading</span>
+        </span>
       ) : (
         <>
           <span className="sm:hidden">{v >= 1000 ? moneyWhole.format(v) : money.format(v)}</span>

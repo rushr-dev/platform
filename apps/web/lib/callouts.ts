@@ -131,9 +131,10 @@ export async function postComment(id: string, body: string): Promise<{ ok: true 
 
 /* ------------------------------------------------------------------ feeds */
 
-export type FeedKind = 'global' | 'following';
+/** `best`: bullish calls from the last 7 days ranked by their peak move since posting (one page, no polling). */
+export type FeedKind = 'global' | 'following' | 'best';
 const FEED_PAGE = 20;
-const feedUrl = (kind: FeedKind) => `${V1}/${kind === 'global' ? 'feed' : 'me/feed'}`;
+const feedUrl = (kind: FeedKind) => `${V1}/${kind === 'global' ? 'feed' : kind === 'best' ? 'feed/best' : 'me/feed'}`;
 
 async function fetchFeed(kind: FeedKind, before: string | null): Promise<{ items: Callout[]; next: string | null } | null> {
   const qs = `limit=${FEED_PAGE}${before ? `&before=${encodeURIComponent(before)}` : ''}&r=${Date.now()}`;
@@ -206,6 +207,8 @@ export function useFeed(kind: FeedKind, enabled = true): Feed {
     };
     void first();
     const poll = window.setInterval(async () => {
+      // A ranking, not a timeline: new entries aren't "new calls" to announce.
+      if (kind === 'best') return;
       const page = await fetchFeed(kind, null).catch(() => null);
       if (!live || !page || shown.current == null) return;
       const known = new Set([...(shown.current ?? []), ...pending.current].map((c) => c.id));
