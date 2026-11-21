@@ -136,7 +136,7 @@ export function FeedView({ serverNow }: { serverNow: number }) {
           ) : (
             <ul className="space-y-2.5">
               {feed.items.map((c) => (
-                <CallCard key={c.id} c={c} nowMs={nowMs} showToken follow={followFor(c)} />
+                <CallCard key={c.id} c={c} nowMs={nowMs} showToken follow={followFor(c)} showPeak={tab === 'best'} />
               ))}
             </ul>
           )}

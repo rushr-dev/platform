@@ -66,6 +66,7 @@ export function CallCard({
   onSelect,
   showToken = false,
   follow = null,
+  showPeak = false,
 }: {
   c: Callout;
   nowMs: number;
@@ -73,6 +74,8 @@ export function CallCard({
   onSelect?: () => void;
   showToken?: boolean;
   follow?: { following: boolean; onToggle: () => void } | null;
+  /** Best calls: lead with the biggest move since the call, which is what it was ranked on. */
+  showPeak?: boolean;
 }) {
   const session = useAuth();
   const me = useMe();
@@ -154,6 +157,9 @@ export function CallCard({
       <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-[11px] text-muted">
         {c.atPost.marketCapUsd != null && <span>called at {usd(c.atPost.marketCapUsd)} MC</span>}
         {c.atPost.marketCapUsd != null && since != null && <span className="text-muted/50">·</span>}
+        {showPeak && c.result.peakSincePostPct != null && (
+          <span className="rounded bg-go/10 px-1.5 py-0.5 font-medium text-go">peak {pctSigned(c.result.peakSincePostPct, 0)}</span>
+        )}
         {since != null && <span className={since >= 0 ? 'text-go' : 'text-risk-high'}>{pctSigned(since, 0)} since</span>}
         {c.entry && <span className="font-sans">{c.entry.when === 'before_post' ? 'Bought before calling' : 'Bought after calling'}</span>}
       </div>
