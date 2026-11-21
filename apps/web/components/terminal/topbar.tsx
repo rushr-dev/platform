@@ -31,7 +31,8 @@ export function TopBar() {
       {path.startsWith('/token/') && <BackButton />}
       <Link href="/" className="flex items-center gap-2">
         <Image src="/logo-mark.png" alt="" width={22} height={22} priority />
-        <span className="text-lg font-semibold tracking-[-0.04em]">rushr</span>
+        {/* Phones show the mark alone: the top bar is tight there. */}
+        <span className="hidden text-lg font-semibold tracking-[-0.04em] sm:inline">rushr</span>
         {/* Same dashed chip as the landing's, in the dark theme. */}
         <span className="hidden rounded-full border border-dashed border-white/20 px-1.5 py-px font-mono text-[9px] uppercase tracking-wider text-muted md:inline">Beta</span>
       </Link>
