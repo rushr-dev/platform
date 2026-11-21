@@ -134,6 +134,12 @@ export function RushView() {
 
         {failed && !data && <p className="mt-4 text-sm text-risk-high">Couldn&apos;t load the standings. Retrying…</p>}
 
+        <div className="mt-6 flex justify-end">
+          <Link href="/leaderboard" className="text-sm font-medium text-muted underline-offset-4 hover:text-ink hover:underline">
+            Full leaderboard →
+          </Link>
+        </div>
+
         {/* Categories */}
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <Category

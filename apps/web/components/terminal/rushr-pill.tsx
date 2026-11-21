@@ -35,10 +35,11 @@ export function RushrPill() {
     <Link
       href={`/token/${RUSHR_TOKEN}`}
       title="$RUSHR, the Rushr token: hold it for lower trading fees"
-      className="flex shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand/[0.08] py-1 pl-1 pr-3 text-xs transition hover:border-brand/60 hover:bg-brand/[0.14]"
+      className="flex shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand/[0.08] p-1 text-xs sm:pr-3 transition hover:border-brand/60 hover:bg-brand/[0.14]"
     >
       <TokenAvatar t={t ?? { address: RUSHR_TOKEN, symbol: 'RUSHR', launchpad: 'pons' }} size={20} />
-      <span className="font-semibold text-ink">$RUSHR</span>
+      {/* Phones show the coin alone: the top bar is tight there. */}
+      <span className="hidden font-semibold text-ink sm:inline">$RUSHR</span>
       {t?.market_cap_usd != null && <span className="hidden font-mono text-muted sm:inline">{usd(t.market_cap_usd)}</span>}
     </Link>
   );

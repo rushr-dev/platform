@@ -218,7 +218,7 @@ function BalanceButton({ wallet, onOpen }: { wallet: `0x${string}`; onOpen: () =
       onClick={onOpen}
       title="Wallet balance: ETH, USDG and every token you hold"
       aria-label={v == null ? 'Wallet balance' : `Wallet balance ${money.format(v)}`}
-      className="rounded-xl border border-white/[0.08] bg-surface px-3 py-2 font-mono text-sm font-semibold tabular-nums transition hover:border-white/20"
+      className="rounded-xl border border-white/[0.08] bg-surface px-2.5 py-1.5 font-mono text-[13px] font-semibold tabular-nums transition hover:border-white/20 sm:px-3 sm:py-2 sm:text-sm"
     >
       {v == null ? (
         <span className="inline-block h-4 w-14 animate-pulse rounded bg-white/[0.08] align-middle" />

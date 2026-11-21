@@ -12,14 +12,14 @@ import { AccountMenu } from './auth/account-menu';
 import { FeedbackButton } from './feedback';
 import { RushrPill } from './rushr-pill';
 
-/** `short`: the phone tab bar's label, where six tabs share ~360px. */
-const NAV: { href: string; label: string; short?: string }[] = [
+/** `phone: false`: left out of the phone tab bar (five tabs fit a phone; the leaderboard is linked from Rush). */
+const NAV: { href: string; label: string; phone?: boolean }[] = [
   { href: '/trenches', label: 'Trenches' },
   // Robinhood's tokenized stocks, $ANT featured.
   { href: '/stocks', label: 'Stocks' },
   { href: '/feed', label: 'Feed' },
   { href: '/agents', label: 'Agents' },
-  { href: '/leaderboard', label: 'Leaderboard', short: 'Ranks' },
+  { href: '/leaderboard', label: 'Leaderboard', phone: false },
   // Rush the Trenches (the Season 0 trading event): its rules and live standings.
   { href: '/rush', label: 'Rush' },
 ];
@@ -27,13 +27,13 @@ const NAV: { href: string; label: string; short?: string }[] = [
 export function TopBar() {
   const path = usePathname();
   return (
-    <header className="sticky top-0 z-40 flex h-14 items-center gap-3 border-b border-white/[0.06] bg-bg/90 px-3 backdrop-blur-md md:gap-6 md:px-4">
+    <header className="sticky top-0 z-40 flex h-14 items-center gap-2 border-b border-white/[0.06] bg-bg/90 px-3 backdrop-blur-md sm:gap-3 md:gap-6 md:px-4">
       {path.startsWith('/token/') && <BackButton />}
       <Link href="/" className="flex items-center gap-2">
         <Image src="/logo-mark.png" alt="" width={22} height={22} priority />
         <span className="text-lg font-semibold tracking-[-0.04em]">rushr</span>
         {/* Same dashed chip as the landing's, in the dark theme. */}
-        <span className="hidden rounded-full border border-dashed border-white/20 px-1.5 py-px font-mono text-[9px] uppercase tracking-wider text-muted min-[380px]:inline">Beta</span>
+        <span className="hidden rounded-full border border-dashed border-white/20 px-1.5 py-px font-mono text-[9px] uppercase tracking-wider text-muted md:inline">Beta</span>
       </Link>
       <nav className="hidden items-center gap-1 text-sm md:flex">
         {NAV.map((n) => (
@@ -47,7 +47,7 @@ export function TopBar() {
         ))}
       </nav>
       <Search />
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
         <RushrPill />
         <FeedbackButton />
         <AccountMenu />
@@ -72,9 +72,9 @@ export function MobileNav() {
     <div className="shrink-0 px-3 pt-1.5 [padding-bottom:max(0.5rem,env(safe-area-inset-bottom))] md:hidden">
       <nav
         aria-label="Sections"
-        className="grid grid-cols-6 rounded-2xl border border-white/[0.08] bg-surface-2/95 px-1 py-1 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.8)] backdrop-blur-md"
+        className="grid grid-cols-5 rounded-2xl border border-white/[0.08] bg-surface-2/95 px-1 py-1 shadow-[0_12px_32px_-12px_rgba(0,0,0,0.8)] backdrop-blur-md"
       >
-        {NAV.map((n) => {
+        {NAV.filter((n) => n.phone !== false).map((n) => {
           const on = path.startsWith(n.href);
           const Ico = NAV_ICONS[n.href] ?? Fire;
           return (
@@ -85,7 +85,7 @@ export function MobileNav() {
               className={`flex flex-col items-center gap-0.5 rounded-xl py-1.5 text-[10.5px] transition active:scale-[0.96] ${on ? 'bg-white/[0.07] font-medium text-ink' : 'text-muted'}`}
             >
               <Ico size={20} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
-              {n.short ?? n.label}
+              {n.label}
             </Link>
           );
         })}
