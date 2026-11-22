@@ -101,6 +101,8 @@ export interface CallMark {
   /** The author's uploaded avatar (already proxied), drawn instead of the generated one once loaded. */
   imageSrc: string | null;
   selected: boolean;
+  /** Ring colour override (FOMO markers); otherwise the stance colour. */
+  ring?: string;
 }
 
 /** Marker radius in CSS pixels. */
@@ -229,7 +231,7 @@ export class CallMarks implements ISeriesPrimitive<Time> {
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.lineWidth = (it.selected ? 2.5 : 2) * vr;
-        ctx.strokeStyle = it.selected ? '#ffffff' : it.stance === 'bullish' ? BUY : SELL;
+        ctx.strokeStyle = it.selected ? '#ffffff' : (it.ring ?? (it.stance === 'bullish' ? BUY : SELL));
         ctx.stroke();
       }
     });

@@ -307,6 +307,25 @@ export const deployerStats = pgTable('deployer_stats', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** FOMO theses and large buys/sells on Robinhood Chain (fomoapi.io alert feed), for chart markers. */
+export const fomoEvents = pgTable(
+  'fomo_events',
+  {
+    id: text('id').primaryKey(),
+    /** 'thesis' | 'buy' | 'sell' */
+    kind: text('kind').notNull(),
+    token: text('token').notNull(),
+    handle: text('handle').notNull(),
+    userId: text('user_id'),
+    avatarUrl: text('avatar_url'),
+    body: text('body'),
+    usd: numeric('usd'),
+    ts: timestamp('ts', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('fomo_events_token_ts_idx').on(t.token, t.ts.desc())],
+);
+
 export const indexerState = pgTable('indexer_state', {
   key: text('key').primaryKey(),
   value: jsonb('value').notNull(),

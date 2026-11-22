@@ -16,6 +16,7 @@ import { page, repairBalances, walletHoldings, walletPosition } from './wallets'
 import { PAUSED_BODY, readPause } from './pause';
 import { TRANSPARENCY_CACHE_S, transparency } from './transparency';
 import { STOCKS_CACHE_S, stocksList } from './stocks';
+import { tokenFomo } from './fomo';
 import { PNL_RANGES, walletPnlHistory, walletTrades, type PnlRange } from './wallet-history';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
@@ -169,6 +170,13 @@ api.get('/tokens/:address/candles', async (c) => {
   }
   const intervals: Record<string, string> = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '4h': '4 hours' };
   return c.json({ candles: await minuteCandles(c.var.sql, token, intervals[iv] ?? '1 minute', hours) }, 200, cache(2));
+});
+
+/** FOMO theses and large FOMO buys/sells on this token (fomo.ts), newest first, for chart markers. */
+api.get('/tokens/:address/fomo', async (c) => {
+  const token = addr(c.req.param('address'));
+  if (!/^0x[0-9a-f]{40}$/.test(token)) return c.json({ error: 'bad address' }, 422);
+  return c.json({ items: await tokenFomo(c.var.sql, token) }, 200, cache(30));
 });
 
 /**

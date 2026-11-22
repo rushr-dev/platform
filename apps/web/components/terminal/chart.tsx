@@ -16,6 +16,7 @@ import { API_URL, type Candle } from '@/lib/api';
 import { price, usd } from '@/lib/format';
 import type { Hydration } from '@/lib/feed/protocol';
 import type { Callout } from '@/lib/callouts';
+import type { FomoMark } from '@/lib/fomo';
 import type { OwnTrade } from '@/lib/position';
 import { iconSrc } from './bits';
 import { avatarSeed, MemberAvatar } from './member-avatar';
@@ -23,6 +24,11 @@ import { CALL_RADIUS, CallMarks, TradePills, type CallMark, type Pill } from './
 
 /** At most this many calls are drawn (the most recent), so the chart stays readable. */
 const MAX_CALL_MARKS = 30;
+const MAX_FOMO_MARKS = 30;
+/** Marker ids for FOMO items, so a click on one never selects a Rushr call. */
+const FOMO_PREFIX = 'fomo:';
+/** Ring colour for FOMO theses (buys and sells use the buy / sell colours). */
+const FOMO_RING = '#f5b041';
 import type { Tx } from '@/lib/trades';
 
 /**
@@ -64,6 +70,7 @@ export function PriceChart({
   hydration,
   marks = null,
   calls = null,
+  fomo = null,
   selectedCall = null,
   onSelectCall,
   avgBuy = null,
@@ -86,6 +93,8 @@ export function PriceChart({
   marks?: OwnTrade[] | null;
   /** Members' calls on this token, newest first: avatar markers at each call's time and price. */
   calls?: Callout[] | null;
+  /** FOMO theses and big FOMO trades on this token: markers at the candle of each, ringed amber / buy / sell. */
+  fomo?: FomoMark[] | null;
   selectedCall?: string | null;
   onSelectCall?: (id: string | null) => void;
   /** The signed-in wallet's average buy price (USD) while it holds the token: a dashed line on the axis. */
@@ -108,6 +117,9 @@ export function PriceChart({
   const [hovering, setHovering] = useState(false);
   const [showCalls, setShowCalls] = useState(true);
   const [showTrades, setShowTrades] = useState(true);
+  const [showFomo, setShowFomo] = useState(true);
+  const [hoverFomo, setHoverFomo] = useState<{ mark: FomoMark; x: number; y: number } | null>(null);
+  const fomoById = useRef(new Map<string, FomoMark>());
   // The call pill under the cursor, with its centre in the chart pane (CSS pixels).
   const [hoverCall, setHoverCall] = useState<{ call: Callout; x: number; y: number; others: number } | null>(null);
   const callsById = useRef(new Map<string, Callout>());
@@ -173,6 +185,8 @@ export function PriceChart({
       if (bar) setLegend(bar);
       const hit = p.point ? callMarks.current?.hit(p.point.x, p.point.y) : null;
       const call = hit ? callsById.current.get(hit.item.id) : undefined;
+      const fm = hit ? fomoById.current.get(hit.item.id) : undefined;
+      setHoverFomo(hit && fm ? { mark: fm, x: hit.x, y: hit.y } : null);
       setHoverCall(
         hit && call ? { call, x: hit.x, y: hit.y, others: Math.max(0, (callsByBar.current.get(hit.item.time)?.length ?? 1) - 1) } : null,
       );
@@ -180,7 +194,7 @@ export function PriceChart({
     // Clicking a call pill selects it; clicking elsewhere on a candle with calls selects the newest.
     const onClick = (p: MouseEventParams) => {
       const hit = p.point ? callMarks.current?.hit(p.point.x, p.point.y) : null;
-      if (hit) return onSelectRef.current?.(hit.item.id);
+      if (hit) return hit.item.id.startsWith(FOMO_PREFIX) ? undefined : onSelectRef.current?.(hit.item.id);
       const here = p.time == null ? undefined : callsByBar.current.get(p.time as number);
       if (here?.length) onSelectRef.current?.(here[0]!.id);
     };
@@ -396,10 +410,35 @@ export function PriceChart({
         });
       }
     }
+    // FOMO markers sit at the candle's close: FOMO's feed carries the time, not the price.
+    // Added first so Rushr calls draw on top where they share a candle.
+    const fomoMap = new Map<string, FomoMark>();
+    if (showFomo && fomo?.length) {
+      const step = INTERVALS[interval];
+      for (const f of fomo.slice(0, MAX_FOMO_MARKS)) {
+        const bucket = Math.floor(new Date(f.ts).getTime() / 1000 / step) * step;
+        const bar = bars.current.get(bucket);
+        if (!bar) continue;
+        const id = FOMO_PREFIX + f.id;
+        fomoMap.set(id, f);
+        out.unshift({
+          id,
+          time: bucket,
+          value: bar.close,
+          stance: f.kind === 'sell' ? 'bearish' : 'bullish',
+          handle: f.handle,
+          seed: `fomo:${f.handle}`,
+          imageSrc: f.avatarUrl ? iconSrc(f.avatarUrl) : null,
+          selected: false,
+          ring: f.kind === 'thesis' ? FOMO_RING : undefined,
+        });
+      }
+    }
+    fomoById.current = fomoMap;
     callsByBar.current = byBar;
     callsById.current = new Map((calls ?? []).map((c) => [c.id, c]));
     api.set(out);
-  }, [calls, selectedCall, showCalls, interval, base, scale, lastBar]);
+  }, [calls, fomo, selectedCall, showCalls, showFomo, interval, base, scale, lastBar]);
 
   const ownHere = legend ? ownByBar.get(legend.time) : undefined;
   const empty = base != null && base.length === 0 && !(trades?.length && FROM_TRADES.has(interval));
@@ -426,6 +465,7 @@ export function PriceChart({
           {calls != null && (
             <ChipToggle on={showCalls} onClick={() => setShowCalls(!showCalls)} label="Calls" />
           )}
+          {fomo != null && fomo.length > 0 && <ChipToggle on={showFomo} onClick={() => setShowFomo(!showFomo)} label="FOMO" />}
           {marks != null && <ChipToggle on={showTrades} onClick={() => setShowTrades(!showTrades)} label="My trades" short="Mine" />}
         </div>
         <div className="ml-1 flex shrink-0 rounded-lg bg-white/[0.04] p-0.5">
@@ -466,6 +506,7 @@ export function PriceChart({
           </div>
         )}
         {hoverCall && <CallHover hover={hoverCall} scale={scale} />}
+        {hoverFomo && !hoverCall && <FomoHover hover={hoverFomo} />}
         {loading && <div className="absolute inset-x-6 bottom-10 top-10 animate-pulse rounded-xl bg-white/[0.025]" />}
         {hydrating ? (
           <HydratingPill hydration={hydration!} />
@@ -676,6 +717,42 @@ function CallHover({ hover, scale }: { hover: { call: Callout; x: number; y: num
         </p>
       )}
       {hover.others > 0 && <p className="mt-1 text-[11px] text-muted">+{hover.others} more call{hover.others > 1 ? 's' : ''} on this candle</p>}
+    </div>
+  );
+}
+
+/** Hover card for a FOMO thesis or big FOMO trade, placed like CallHover. */
+function FomoHover({ hover }: { hover: { mark: FomoMark; x: number; y: number } }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const f = hover.mark;
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const box = el?.parentElement;
+    if (!el || !box) return;
+    const h = el.offsetHeight;
+    const w = box.clientWidth;
+    const left = Math.min(Math.max(4, hover.x - HOVER_W / 2), Math.max(4, w - HOVER_W - 4));
+    const above = hover.y - HOVER_GAP - h;
+    setPos({ left, top: above >= 4 ? above : hover.y + HOVER_GAP });
+  }, [hover.x, hover.y, f.id]);
+  const label = f.kind === 'thesis' ? 'Thesis' : f.kind === 'buy' ? 'Bought' : 'Sold';
+  const tone = f.kind === 'thesis' ? 'bg-[#f5b041]/15 text-[#f5b041]' : f.kind === 'buy' ? 'bg-go/15 text-go' : 'bg-risk-high/15 text-risk-high';
+  return (
+    <div
+      ref={ref}
+      className="pointer-events-none absolute z-20 rounded-xl border border-white/[0.1] bg-surface-2/95 p-3 text-xs shadow-2xl backdrop-blur-sm"
+      style={{ width: HOVER_W, left: pos?.left ?? -9999, top: pos?.top ?? 0, visibility: pos ? 'visible' : 'hidden' }}
+      role="tooltip"
+    >
+      <div className="flex items-center gap-2">
+        <span className="shrink-0 rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/80">FOMO</span>
+        <span className="min-w-0 truncate font-medium text-ink">@{f.handle}</span>
+        <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}>{label}</span>
+      </div>
+      {/* Theses: the trader's text. Buys and sells: FOMO's own line (a buy's size, a sell's realized PnL). */}
+      {f.body && <p className={`mt-2 line-clamp-4 whitespace-pre-line break-words leading-snug ${f.kind === 'thesis' ? 'text-[13px] text-ink/90' : 'text-xs text-ink/80'}`}>{f.body}</p>}
+      <p className="mt-1 text-[11px] text-muted">From FOMO</p>
     </div>
   );
 }

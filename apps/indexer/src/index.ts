@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { refreshRaetoRecords } from './agents/raeto';
+import { pollFomo } from './fomo';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
 import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
@@ -607,6 +608,19 @@ export default {
             and coalesce((select min(x.block) from transfers x where x.token = t.address), 0) > t.created_block + 100
           order by t.volume_24h_usd desc nulls last limit 20`;
         if (rows.length) await holderHistory(env).enqueueHolders(rows.map((r) => r.address));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // FOMO theses and big trades (fomo.ts), every FOMO_POLL_MINUTES (default 2) when FOMOAPI_KEY is set.
+    const fomoEvery = Math.max(1, Number(env.FOMO_POLL_MINUTES) || 2);
+    if (env.FOMOAPI_KEY && minute % fomoEvery === 0) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const added = await pollFomo(sql, env.FOMOAPI_KEY);
+        if (added) console.log(`fomo: ${added} new`);
+      } catch (err) {
+        console.error('fomo poll failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }

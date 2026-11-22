@@ -24,6 +24,7 @@ import { AboutCard, PositionCard, ThesisBox } from './simple-rail';
 import { SafetyGrid } from './safety-grid';
 import { useTokenCallouts, type Callout } from '@/lib/callouts';
 import { CallsFeed } from './calls-feed';
+import { useTokenFomo } from '@/lib/fomo';
 import { useEthUsd } from '@/lib/profile';
 
 import { BubblesTab, DevTokensTab, EarlyBuyersTab, HoldersTab, TopTradersTab, useFetch } from './token-tabs';
@@ -76,6 +77,8 @@ export function TokenView({
   const [tab, setTab] = useState<Tab>('trades');
   // Members' calls on this token: the feed column (or Calls tab) and the chart markers.
   const calls = useTokenCallouts(t.address);
+  // FOMO theses and big FOMO trades: chart markers only.
+  const fomo = useTokenFomo(t.address);
   const [selectedCall, setSelectedCall] = useState<string | null>(null);
   const [callsOpen, setCallsOpen] = useStoredFlag('rushr.calls.open', true);
   const wide = useMediaQuery('(min-width: 1280px)');
@@ -232,6 +235,7 @@ export function TokenView({
               hydration={live.hydration}
               marks={myWallet ? position.trades : null}
               calls={calls.items}
+              fomo={fomo}
               avgBuy={myWallet && position.loaded && position.holding && position.boughtTokens > 0 ? position.boughtUsd / position.boughtTokens : null}
               athMcap={Math.max(t.ath_market_cap_usd ?? 0, mcapNow ?? 0) || null}
               selectedCall={selectedCall}
