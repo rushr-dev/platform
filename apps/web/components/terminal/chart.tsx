@@ -20,6 +20,7 @@ import type { FomoMark } from '@/lib/fomo';
 import type { OwnTrade } from '@/lib/position';
 import { iconSrc } from './bits';
 import { avatarSeed, MemberAvatar } from './member-avatar';
+import { FomoLogo } from './fomo-logo';
 import { CALL_RADIUS, CallMarks, TradePills, type CallMark, type Pill } from './trade-pills';
 
 /** At most this many calls are drawn (the most recent), so the chart stays readable. */
@@ -465,7 +466,7 @@ export function PriceChart({
           {calls != null && (
             <ChipToggle on={showCalls} onClick={() => setShowCalls(!showCalls)} label="Calls" />
           )}
-          {fomo != null && fomo.length > 0 && <ChipToggle on={showFomo} onClick={() => setShowFomo(!showFomo)} label="FOMO" />}
+          {fomo != null && fomo.length > 0 && <ChipToggle on={showFomo} onClick={() => setShowFomo(!showFomo)} label="FOMO on the chart" icon={<FomoLogo className="my-[3px] h-2.5 w-auto" />} />}
           {marks != null && <ChipToggle on={showTrades} onClick={() => setShowTrades(!showTrades)} label="My trades" short="Mine" />}
         </div>
         <div className="ml-1 flex shrink-0 rounded-lg bg-white/[0.04] p-0.5">
@@ -649,15 +650,19 @@ function OwnLegend({ g, scale }: { g: { buys: OwnTrade[]; sells: OwnTrade[] }; s
   );
 }
 
-function ChipToggle({ on, onClick, label, short }: { on: boolean; onClick: () => void; label: string; short?: string }) {
+function ChipToggle({ on, onClick, label, short, icon }: { on: boolean; onClick: () => void; label: string; short?: string; icon?: React.ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={on}
-      className={`shrink-0 rounded-md border px-2 py-0.5 ${on ? 'border-white/15 bg-white/[0.06] text-ink' : 'border-white/[0.06] text-muted line-through decoration-white/30'}`}
+      aria-label={icon ? label : undefined}
+      title={icon ? label : undefined}
+      className={`flex shrink-0 items-center rounded-md border px-2 py-0.5 ${on ? 'border-white/15 bg-white/[0.06] text-ink' : 'border-white/[0.06] text-muted line-through decoration-white/30'} ${icon && !on ? 'opacity-50' : ''}`}
     >
-      {short ? (
+      {icon ? (
+        icon
+      ) : short ? (
         <>
           <span className="sm:hidden">{short}</span>
           <span className="hidden sm:inline">{label}</span>
@@ -746,13 +751,13 @@ function FomoHover({ hover }: { hover: { mark: FomoMark; x: number; y: number } 
       role="tooltip"
     >
       <div className="flex items-center gap-2">
-        <span className="shrink-0 rounded bg-white/[0.08] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink/80">FOMO</span>
+        <FomoLogo className="h-3 w-auto shrink-0 text-ink" />
+        <span className="h-3 w-px shrink-0 bg-white/15" />
         <span className="min-w-0 truncate font-medium text-ink">@{f.handle}</span>
         <span className={`ml-auto shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}>{label}</span>
       </div>
       {/* Theses: the trader's text. Buys and sells: FOMO's own line (a buy's size, a sell's realized PnL). */}
       {f.body && <p className={`mt-2 line-clamp-4 whitespace-pre-line break-words leading-snug ${f.kind === 'thesis' ? 'text-[13px] text-ink/90' : 'text-xs text-ink/80'}`}>{f.body}</p>}
-      <p className="mt-1 text-[11px] text-muted">From FOMO</p>
     </div>
   );
 }
