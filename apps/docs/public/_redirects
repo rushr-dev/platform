@@ -1,0 +1,16 @@
+# Section roots have no page of their own; send them to the section's first page, so shared links
+# like docs.rushr.trade/agents don't 404. Cloudflare static-asset redirects (Workers assets).
+/agents                /agents/overview/          301
+/agents/               /agents/overview/          301
+/agents/api            /agents/api/overview/      301
+/agents/api/           /agents/api/overview/      301
+/getting-started       /getting-started/join-the-beta/   301
+/getting-started/      /getting-started/join-the-beta/   301
+/trading               /trading/trenches/         301
+/trading/              /trading/trenches/         301
+/social                /social/calls/             301
+/social/               /social/calls/             301
+/rushr                 /rushr/token/              301
+/rushr/                /rushr/token/              301
+/mcp                   /agents/mcp/               301
+/api                   /agents/api/overview/      301
