@@ -473,11 +473,65 @@ export function DevTokensTab({ deployer, self, serverNow }: { deployer: string; 
 
 /* ------------------------------------------------------------------ bubble map */
 
-export function BubblesTab({ address }: { address: string }) {
+/**
+ * Bubblemaps' own map (iframe.bubblemaps.io), shown next to ours when we have a partner id.
+ * NEXT_PUBLIC_BUBBLEMAPS_PARTNER_ID is set at build time once Bubblemaps whitelists our domain; without it,
+ * local dev uses their `demo` id (it only works on localhost) and production hides the switch.
+ */
+const BUBBLEMAPS_PARTNER_ID = process.env.NEXT_PUBLIC_BUBBLEMAPS_PARTNER_ID ?? '';
+
+function bubblemapsPartnerId(): string | null {
+  if (BUBBLEMAPS_PARTNER_ID) return BUBBLEMAPS_PARTNER_ID;
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)) return 'demo';
+  return null;
+}
+
+function BubblemapsFrame({ address, partnerId }: { address: string; partnerId: string }) {
+  const src = `https://iframe.bubblemaps.io/map?chain=robinhood&address=${address}&partnerId=${encodeURIComponent(partnerId)}`;
+  return (
+    <iframe
+      src={src}
+      title="Bubblemaps"
+      allow="clipboard-write"
+      loading="lazy"
+      referrerPolicy="strict-origin-when-cross-origin"
+      className="block h-[520px] w-full border-0 bg-surface-2"
+    />
+  );
+}
+
+function RushrMap({ address }: { address: string }) {
   const { data, error, pending } = useFetch<BubbleData>(`${API_URL}/tokens/${address}/bubblemap`);
   if (pending) return <Fetching />;
   if (error) return <Empty text="Couldn't load the bubble map." />;
   if (!data) return <TableSkeleton />;
   if (!data.nodes.length) return <Empty text="No holders to map yet." />;
   return <BubbleMap data={data} />;
+}
+
+export function BubblesTab({ address }: { address: string }) {
+  const [partnerId, setPartnerId] = useState<string | null>(null);
+  const [view, setView] = useState<'rushr' | 'bubblemaps'>('rushr');
+  // Read the hostname after mount so the server and client render the same first frame.
+  useEffect(() => setPartnerId(bubblemapsPartnerId()), []);
+  if (!partnerId) return <RushrMap address={address} />;
+  const opt = (v: typeof view, label: string) => (
+    <button
+      type="button"
+      onClick={() => setView(v)}
+      className={`rounded-md px-2 py-0.5 ${view === v ? 'bg-white/[0.1] text-ink' : 'hover:text-ink'}`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 border-b border-white/[0.04] px-3 py-1.5 text-[11px] text-muted">
+        {opt('rushr', 'Rushr map')}
+        {opt('bubblemaps', 'Bubblemaps')}
+        {view === 'bubblemaps' && <span className="ml-auto text-muted/70">Map by Bubblemaps</span>}
+      </div>
+      {view === 'rushr' ? <RushrMap address={address} /> : <BubblemapsFrame address={address} partnerId={partnerId} />}
+    </div>
+  );
 }

@@ -6,7 +6,8 @@
  *   'unsafe-inline'), plus two Cloudflare hosts: Turnstile (Privy's bot protection on sign-in) and the
  *   Web Analytics beacon Cloudflare injects at the edge (it can't carry our nonce, so no 'strict-dynamic',
  *   which would make browsers ignore host allowlists).
- * - Frames: Privy's auth iframe (it hosts the embedded wallet), WalletConnect verify, Turnstile.
+ * - Frames: Privy's auth iframe (it hosts the embedded wallet), WalletConnect verify, Turnstile, and the
+ *   Bubblemaps map on the token page (iframe.bubblemaps.io).
  * - Connections: our API (+ live WebSocket v1/v2), the public Robinhood Chain RPC, DexScreener (pool
  *   panel fallback), Privy and WalletConnect (EVM wallet sign-in), Cloudflare Web Analytics.
  * - Images: same origin (token icons and X avatars go through /api/img), data/blob, Privy, WalletConnect.
@@ -27,7 +28,7 @@ export function buildCsp(opts: { nonce: string; dev?: boolean; apiUrl?: string }
     'form-action': ["'self'"],
     'frame-ancestors': ["'none'"],
     'child-src': ['https://auth.privy.io', 'https://verify.walletconnect.com', 'https://verify.walletconnect.org'],
-    'frame-src': ['https://auth.privy.io', 'https://verify.walletconnect.com', 'https://verify.walletconnect.org', 'https://challenges.cloudflare.com'],
+    'frame-src': ['https://auth.privy.io', 'https://verify.walletconnect.com', 'https://verify.walletconnect.org', 'https://challenges.cloudflare.com', 'https://iframe.bubblemaps.io'],
     'connect-src': [
       "'self'",
       api,
