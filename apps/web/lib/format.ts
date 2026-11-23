@@ -50,6 +50,19 @@ export const LAUNCHPAD_LABEL: Record<string, string> = {
   qhooks: 'QHooks',
 };
 
+/**
+ * Launchpad logos for PONS, Uniswap and QHooks (public/launchpads, 64px, from each project's own site icon,
+ * 2026-11-23); other launchpads show their first letter. Shown as the
+ * badge on token avatars and next to the launchpad name on token pages.
+ */
+export const LAUNCHPAD_LOGO: Record<string, string> = {
+  pons: '/launchpads/pons.png',
+  qhooks: '/launchpads/qhooks.png',
+  'uniswap-v4': '/launchpads/uniswap.png',
+  'uniswap-v3': '/launchpads/uniswap.png',
+  'uniswap-v2': '/launchpads/uniswap.png',
+};
+
 /** Longer age for headers: "42s", "12m 5s", "5h 12m", "119d 4h". */
 export function ageLong(fromMs: number, nowMs: number): string {
   const s = Math.max(0, Math.floor((nowMs - fromMs) / 1000));

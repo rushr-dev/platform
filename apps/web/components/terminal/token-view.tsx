@@ -12,7 +12,7 @@ import { aggregate, usePairs, type Pair } from '@/lib/pairs';
 import { mergePools, useApiPools } from '@/lib/pools';
 
 import { holderContext, toWhole, TRADE_LIMIT, windowStats, WINDOWS, type HolderInfo, type Tx, type WindowId, type WindowStats as WindowStatsT } from '@/lib/trades';
-import { RingedAvatar, RiskTag, ringOf, SocialLinks, riskText } from './bits';
+import { LaunchpadBadge, RingedAvatar, RiskTag, ringOf, SocialLinks, riskText } from './bits';
 import { hydrationLabel, isHydrating, PriceChart } from './chart';
 import dynamic from 'next/dynamic';
 import { tradingAvailable } from '@/components/trade/flag';
@@ -428,7 +428,10 @@ function Header({ t, pools, priceNow, serverNow }: { t: TokenDetail; pools: Pool
               {short(t.address)} {copied ? <Check size={12} className="text-brand" /> : <Copy size={12} />}
             </button>
             <span>·</span>
-            <span>{LAUNCHPAD_LABEL[t.launchpad ?? ''] ?? t.launchpad}</span>
+            <span className="flex items-center gap-1.5">
+              {t.launchpad && <LaunchpadBadge launchpad={t.launchpad} migrated={ringOf(t).kind === 'migrated'} size={14} />}
+              {LAUNCHPAD_LABEL[t.launchpad ?? ''] ?? t.launchpad}
+            </span>
             <span>·</span>
             <span title={known(t.created_at) ? dateTimeUtc(t.created_at) : undefined} className="font-mono">
               {known(t.created_at) ? ageLong(created, now) : 'age —'}

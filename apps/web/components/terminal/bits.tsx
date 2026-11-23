@@ -4,7 +4,7 @@ import { stockLogo } from '@/lib/stock-logos';
 import { useState } from 'react';
 import { CircleNotch, Globe, MagnifyingGlass, TelegramLogo, XLogo } from '@phosphor-icons/react';
 import type { RiskLevel, TokenCard } from '@/lib/api';
-import { LAUNCHPAD_LABEL } from '@/lib/format';
+import { LAUNCHPAD_LABEL, LAUNCHPAD_LOGO } from '@/lib/format';
 import { GeneratedAvatar } from './avatar';
 import { SHOW_RISK } from '@/lib/risk-labels';
 
@@ -20,11 +20,14 @@ export function TokenAvatar({
   t,
   size = 40,
   badge = false,
+  migrated = false,
   shape = 'circle',
 }: {
   t: Pick<TokenCard, 'address' | 'symbol' | 'launchpad'> & { image_url?: string | null };
   size?: number;
   badge?: boolean;
+  /** Badge rim: silver while on the launchpad's curve (or a plain pool), gold once migrated. */
+  migrated?: boolean;
   /** Rounded squares or circles (the default). */
   shape?: 'circle' | 'square';
 }) {
@@ -65,12 +68,33 @@ export function TokenAvatar({
         )}
       </span>
       {badge && t.launchpad && (
-        <span
-          title={LAUNCHPAD_LABEL[t.launchpad] ?? t.launchpad}
-          className="absolute -bottom-0.5 -right-0.5 grid size-4 place-items-center rounded-full border-2 border-surface bg-ink text-[7px] font-black text-bg"
-        >
-          {(LAUNCHPAD_LABEL[t.launchpad] ?? t.launchpad).slice(0, 1)}
+        <span className="absolute -bottom-1 -right-1">
+          <LaunchpadBadge launchpad={t.launchpad} migrated={migrated} size={size >= 44 ? 18 : 16} />
         </span>
+      )}
+    </span>
+  );
+}
+
+const SILVER = '#c9ced6';
+
+/**
+ * A launchpad's logo in a small round badge (GMGN-style): silver rim while the token is on the launchpad's
+ * curve or a plain pool, gold once it has migrated. Falls back to the name's first letter without a logo.
+ */
+export function LaunchpadBadge({ launchpad, migrated = false, size = 16 }: { launchpad: string; migrated?: boolean; size?: number }) {
+  const label = LAUNCHPAD_LABEL[launchpad] ?? launchpad;
+  const logo = LAUNCHPAD_LOGO[launchpad];
+  return (
+    <span
+      title={`${label}${migrated ? ' · migrated' : ''}`}
+      className="grid place-items-center overflow-hidden rounded-full bg-surface"
+      style={{ width: size, height: size, boxShadow: `0 0 0 1.5px ${migrated ? GOLD : SILVER}, 0 0 0 3px var(--color-surface)` }}
+    >
+      {logo ? (
+        <img src={logo} alt={label} width={size} height={size} className="size-full object-cover" />
+      ) : (
+        <span className="text-[8px] font-black text-ink">{label.slice(0, 1)}</span>
       )}
     </span>
   );
@@ -132,7 +156,7 @@ export function RingedAvatar({
           />
         )}
       </svg>
-      <TokenAvatar t={t} size={inner} badge={badge} />
+      <TokenAvatar t={t} size={inner} badge={badge} migrated={ring.kind === 'migrated'} />
     </span>
   );
 }
