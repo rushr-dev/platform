@@ -1089,14 +1089,19 @@ function TrendingTab({ serverNow, quick, quick2 }: { serverNow: number; quick: n
                       ) : (
                         <span className="font-mono text-ink/70">#{i + 1 - rows.filter((r, j) => j < i && r.trend?.featured).length}</span>
                       )}
-                      <Dot />
-                      <span>
-                        <span className="font-mono text-ink/75">{usd(t.trend.volume1h)}</span> vol 1h
-                      </span>
-                      <Dot />
-                      <span>
-                        <span className="font-mono text-ink/75">{compact(t.trend.trades1h)}</span> trades
-                      </span>
+                      {/* A featured token with no trades this hour shows its label only, not zeros. */}
+                      {t.trend.volume1h > 0 && (
+                        <>
+                          <Dot />
+                          <span>
+                            <span className="font-mono text-ink/75">{usd(t.trend.volume1h)}</span> vol 1h
+                          </span>
+                          <Dot />
+                          <span>
+                            <span className="font-mono text-ink/75">{t.trend.trades1h < 1000 ? t.trend.trades1h : compact(t.trend.trades1h)}</span> trades
+                          </span>
+                        </>
+                      )}
                       {t.trend.calls1h > 0 && (
                         <>
                           <Dot />
