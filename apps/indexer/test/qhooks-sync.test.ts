@@ -26,6 +26,13 @@ describe('QHooks launch sync', () => {
     expect(u.bondedAt?.getTime()).toBe(1794000000 * 1000);
   });
 
+  it('takes the token image as an absolute URL, never a data: URI', () => {
+    expect(qhooksUpdate({ ...base, logo: '/api/token-profiles/4663/0xebf6/image?v=1' })!.image).toBe('https://qhooks.com/api/token-profiles/4663/0xebf6/image?v=1');
+    expect(qhooksUpdate({ ...base, logo: 'https://qhooks.com/qhooks-logo.jpg' })!.image).toBe('https://qhooks.com/qhooks-logo.jpg');
+    expect(qhooksUpdate({ ...base, logo: 'data:image/jpeg;base64,AAAA' })!.image).toBeNull();
+    expect(qhooksUpdate({ ...base, links: { website: 'https://qhooks.com', x: 'javascript:1' } })).toMatchObject({ website: 'https://qhooks.com', twitter: null });
+  });
+
   it('caps progress at 1 and ignores other chains and bad addresses', () => {
     expect(qhooksUpdate({ ...base, progressBps: 9000 })!.progress).toBe(1);
     expect(qhooksUpdate({ ...base, chainId: '8453' })).toBeNull();

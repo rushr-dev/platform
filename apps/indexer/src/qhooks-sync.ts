@@ -21,6 +21,10 @@ export interface QHooksLaunch {
   targetBps?: number | null;
   bonded?: boolean;
   bondedAt?: string | number | null;
+  /** Token image: an absolute URL, a path on qhooks.com, or an inline data: URI (not used). */
+  logo?: string | null;
+  logoURI?: string | null;
+  links?: { x?: string | null; telegram?: string | null; website?: string | null } | null;
 }
 
 export interface QHooksUpdate {
@@ -31,6 +35,11 @@ export interface QHooksUpdate {
   progress: number;
   bonded: boolean;
   bondedAt: Date | null;
+  /** Absolute https image URL, when QHooks has one. */
+  image: string | null;
+  website: string | null;
+  twitter: string | null;
+  telegram: string | null;
 }
 
 const ADDR = /^0x[0-9a-f]{40}$/;
@@ -47,7 +56,22 @@ export function qhooksUpdate(l: QHooksLaunch): QHooksUpdate | null {
   const when = l.bondedAt == null ? null : new Date(typeof l.bondedAt === 'number' && l.bondedAt < 1e12 ? l.bondedAt * 1000 : l.bondedAt);
   const poolId = /^0x[0-9a-f]{64}$/i.test(String(l.poolId ?? '')) ? String(l.poolId).toLowerCase() : null;
   const hook = ADDR.test(String(l.key?.hooks ?? '').toLowerCase()) ? String(l.key!.hooks).toLowerCase() : null;
-  return { token, poolId, hook, progress, bonded, bondedAt: when && !Number.isNaN(when.getTime()) ? when : null };
+  const link = (v: unknown) => (typeof v === 'string' && /^https:\/\//.test(v) ? v : null);
+  return {
+    token, poolId, hook, progress, bonded, bondedAt: when && !Number.isNaN(when.getTime()) ? when : null,
+    image: absoluteImage(l.logo ?? l.logoURI ?? null),
+    website: link(l.links?.website),
+    twitter: link(l.links?.x),
+    telegram: link(l.links?.telegram),
+  };
+}
+
+/** QHooks token images: absolute https URLs as they are, qhooks.com paths made absolute, data: URIs skipped. */
+export function absoluteImage(v: string | null): string | null {
+  if (!v) return null;
+  if (/^https:\/\//.test(v)) return v;
+  if (v.startsWith('/') && !v.startsWith('//')) return `https://qhooks.com${v}`;
+  return null;
 }
 
 export async function fetchQHooksLaunches(fetcher: typeof fetch = fetch): Promise<QHooksLaunch[]> {
@@ -78,6 +102,13 @@ export async function applyQHooks(sql: Sql, launches: QHooksLaunch[], knownHooks
         and (launchpad is distinct from 'qhooks' or bonding_progress is distinct from ${u.progress}
              or (${u.bonded} and status is distinct from 'migrated'))`;
     changed += res.count;
+    // Image and links from QHooks, only where we have none (never overwrite metadata from elsewhere).
+    if (u.image || u.website || u.twitter || u.telegram)
+      await sql`update tokens set image_url = coalesce(image_url, ${u.image}), website = coalesce(website, ${u.website}),
+          twitter = coalesce(twitter, ${u.twitter}), telegram = coalesce(telegram, ${u.telegram})
+        where address = ${u.token}
+          and ((image_url is null and ${u.image}::text is not null) or (website is null and ${u.website}::text is not null)
+               or (twitter is null and ${u.twitter}::text is not null) or (telegram is null and ${u.telegram}::text is not null))`;
     if (u.poolId) await sql`update pools set launchpad = 'qhooks' where id = ${u.poolId} and launchpad is distinct from 'qhooks'`;
   }
   const known = new Set(knownHooks.map((h) => h.toLowerCase()));
