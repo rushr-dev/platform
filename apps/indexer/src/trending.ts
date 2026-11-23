@@ -1,6 +1,5 @@
 import type { Sql } from 'postgres';
 import { STOCK_DEPLOYERS, STOCK_NAME_SUFFIX } from '@rushr/core';
-import { RUSHR_TOKEN } from '@rushr/trade';
 
 /**
  * Trending in the trenches: tokens by swap volume over the last hour, with their trades and the calls
@@ -14,8 +13,17 @@ import { RUSHR_TOKEN } from '@rushr/trade';
 export const TRENDING_KEY = 'trending:1h';
 const TOP = 40;
 
-/** Pinned at the top of Trending with a "Featured" label, whatever their volume. Edit to change. */
-export const FEATURED_TOKENS: readonly string[] = [RUSHR_TOKEN.toLowerCase()];
+/**
+ * Pinned at the top of Trending under "Featured", whatever their volume, in this order. Edit to change.
+ * Official contracts only (copycats share these tickers): checked against each project's own site, 2026-11-23.
+ */
+export const FEATURED_TOKENS: readonly string[] = [
+  '0x39dbed3a2bd333467115de45665cc57f813c4571', // PONS
+  '0x72be1277e198d0c476869253cb4e62807e14533c', // RAETO (raeto.cc)
+  '0x20429af7ca3b0ce4d99edbaa0693f26c5df05195', // QHOOKS (qhooks.com)
+  '0x6354a37799e96ed6ccaecffbe1c100fa7f30cec8', // ZENI, Tokyo Futuro
+  '0xb33eb16782776b4d738c0fd643577cb0284db610', // HEY, HEY Research Lab (heyresearch.xyz)
+];
 
 export interface TrendRow {
   token: string;

@@ -2,7 +2,7 @@
 
 import { RushBanner } from './rush-banner';
 import Link from 'next/link';
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChefHat,
   Crosshair,
@@ -1072,8 +1072,14 @@ function TrendingTab({ serverNow, quick, quick2 }: { serverNow: number; quick: n
         ) : (
           <ul>
             {rows.map((t, i) => (
+              <Fragment key={t.address}>
+              {/* Section labels: the pinned partners, then the ranking by volume. */}
+              {(i === 0 || !!rows[i - 1]?.trend?.featured !== !!t.trend?.featured) && (
+                <li className="border-b border-white/[0.05] bg-white/[0.02] px-4 py-1.5 font-mono text-[10px] uppercase tracking-wider text-muted">
+                  {t.trend?.featured ? 'Featured' : 'Top by volume, last hour'}
+                </li>
+              )}
               <Row
-                key={t.address}
                 t={t}
                 col={t.status === 'migrated' ? 'migrated' : 'new'}
                 serverNow={serverNow}
@@ -1114,6 +1120,7 @@ function TrendingTab({ serverNow, quick, quick2 }: { serverNow: number; quick: n
                   )
                 }
               />
+              </Fragment>
             ))}
           </ul>
         )}
