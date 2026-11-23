@@ -132,23 +132,7 @@ export async function loadSnapshot(
       and not coalesce((s.data->>'spam')::bool, false)
     order by organic desc limit 1`;
 
-  // Transfer tax: recent trades that were the only swap of this token in their tx, with the trader's net
-  // flow of the token in that tx (what actually reached or left the wallet).
-  const taxRows = await sql<{ side: 'buy' | 'sell'; token_amount: string; net: string }[]>`
-    with sw as (
-      select s.tx, s.side, s.token_amount, s.trader from swaps s
-      where s.token = ${token}
-        and not exists (select 1 from swaps o where o.tx = s.tx and o.token = s.token and o.log_index <> s.log_index)
-        -- Transfers recorded for the tx (not for history we skipped), and a real wallet as the trader
-        -- (a router fallback means the recipient wasn't resolved, so its net flow says nothing).
-        and exists (select 1 from transfers x where x.tx = s.tx and x.token = s.token)
-        and s.trader <> all(${EXCLUDED})
-      order by s.block desc, s.log_index desc limit 40
-    )
-    select sw.side, sw.token_amount::text,
-      coalesce(sum(case when tr.to = sw.trader then tr.amount when tr."from" = sw.trader then -tr.amount else 0 end), 0)::text as net
-    from sw left join transfers tr on tr.tx = sw.tx and tr.token = ${token}
-    group by sw.tx, sw.side, sw.token_amount`;
+  const taxRows = await taxSampleRows(sql, token);
   const [counts] = await sql<{ buys: number; sells: number }[]>`
     select count(*) filter (where side = 'buy')::int as buys, count(*) filter (where side = 'sell')::int as sells
     from swaps where token = ${token}`;
@@ -306,4 +290,48 @@ export async function ensureFunding(sql: Sql, rpc: Rpc, wallets: string[]) {
     insert into wallets ${sql(rows)}
     on conflict (address) do update set first_funder = excluded.first_funder, funded_at = excluded.funded_at,
       first_seen = excluded.first_seen, funding_checked_at = excluded.funding_checked_at, is_contract = excluded.is_contract`;
+}
+
+const ZERO = '0x0000000000000000000000000000000000000000';
+const DEAD = '0x000000000000000000000000000000000000dead';
+
+/**
+ * Transfer-tax samples: recent trades that were the only swap of this token in their tx, with the trader's net
+ * flow of the token in that tx (what actually reached or left the wallet).
+ *
+ * A sample counts only when the recorded trader is where the trade actually landed: on a buy, the biggest net
+ * receiver of the token in the tx; on a sell, the biggest net sender. Routed trades (QHooks' router, aggregators)
+ * sometimes resolve the trader to a fee wallet that got a 0.2% cut, or to a router that passed everything on;
+ * read as the buyer, those look like a 99.8% or 100% tax. The token contract and burn addresses don't compete
+ * for "biggest", so a tax that goes to the token itself (or is burnt) is still measured.
+ */
+export async function taxSampleRows(sql: Sql, token: string) {
+  return sql<{ side: 'buy' | 'sell'; token_amount: string; net: string }[]>`
+    with sw as (
+      select s.tx, s.side, s.token_amount, s.trader from swaps s
+      where s.token = ${token}
+        and not exists (select 1 from swaps o where o.tx = s.tx and o.token = s.token and o.log_index <> s.log_index)
+        -- Transfers recorded for the tx (not for history we skipped), and a real wallet as the trader
+        -- (a router fallback means the recipient wasn't resolved, so its net flow says nothing).
+        and exists (select 1 from transfers x where x.tx = s.tx and x.token = s.token)
+        and s.trader <> all(${EXCLUDED})
+      order by s.block desc, s.log_index desc limit 40
+    ),
+    nets as (
+      select sw.tx, f.addr, sum(f.delta) as net
+      from sw join transfers tr on tr.tx = sw.tx and tr.token = ${token}
+      cross join lateral (values (tr.to, tr.amount), (tr."from", -tr.amount)) as f(addr, delta)
+      group by sw.tx, f.addr
+    ),
+    rivals as (
+      select tx, max(net) as top_in, min(net) as top_out from nets
+      where addr not in (${token}, ${ZERO}, ${DEAD})
+      group by tx
+    )
+    select sw.side, sw.token_amount::text, coalesce(n.net, 0)::text as net
+    from sw
+    left join nets n on n.tx = sw.tx and n.addr = sw.trader
+    join rivals r on r.tx = sw.tx
+    where (sw.side = 'buy' and coalesce(n.net, 0) > 0 and coalesce(n.net, 0) >= r.top_in)
+       or (sw.side = 'sell' and coalesce(n.net, 0) < 0 and coalesce(n.net, 0) <= r.top_out)`;
 }
