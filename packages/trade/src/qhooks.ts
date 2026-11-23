@@ -17,7 +17,8 @@ import type { Pool, Quote, V4Pool } from './types';
  * then unwrap the WETH the swap paid out (built after the swap confirms, from the balance change).
  */
 
-export const QHOOKS_MCP = 'https://qhooks.com/mcp';
+/** `ref=rushr` credits Rushr as a QHooks partner (trades show under Rushr in QHooks' stats). */
+export const QHOOKS_MCP = 'https://qhooks.com/mcp?ref=rushr';
 /** QHooks fee router on Robinhood Chain (their skill.md chain table): the swap target and approval spender. */
 export const QHOOKS_FEE_ROUTER: Address = '0x79d211f5137d22b0fe3bfda81fbb8b7f53248bff';
 /** QHooks launch hooks (each is also its factory), from the core launchpad registry (`launchpadForHook`). */

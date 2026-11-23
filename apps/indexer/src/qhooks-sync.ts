@@ -10,7 +10,9 @@ import type { Sql } from 'postgres';
  * while we agree a feed with them (QHOOKS_SYNC=0 turns it off).
  */
 
-export const QHOOKS_MCP = 'https://qhooks.com/mcp';
+/** `ref=rushr` credits Rushr as a QHooks partner on every call (MCP and REST). */
+export const QHOOKS_REF = 'rushr';
+export const QHOOKS_MCP = `https://qhooks.com/mcp?ref=${QHOOKS_REF}`;
 
 export interface QHooksLaunch {
   chainId?: string;
@@ -149,9 +151,16 @@ export function qhooksMarket(d: RawMarketDetail): QHooksMarket | null {
   return { token, hooks, image: absoluteImage(d.meta?.logo ?? d.meta?.logoURI ?? null) };
 }
 
+/** Adds `ref=rushr` to a QHooks REST URL. */
+export function withQHooksRef(url: string): string {
+  const u = new URL(url);
+  u.searchParams.set('ref', QHOOKS_REF);
+  return u.toString();
+}
+
 export async function fetchQHooksMarkets(fetcher: typeof fetch = fetch, max = 50): Promise<QHooksMarket[]> {
   const headers = { accept: 'application/json', 'X-QHooks-Client-Name': 'rushr' };
-  const r = await fetcher(QHOOKS_MARKETS, { headers });
+  const r = await fetcher(withQHooksRef(QHOOKS_MARKETS), { headers });
   if (!r.ok) throw new Error(`qhooks markets ${r.status}`);
   const list = ((await r.json()) as { markets?: RawMarket[] }).markets ?? [];
   const urls = list
@@ -161,7 +170,7 @@ export async function fetchQHooksMarkets(fetcher: typeof fetch = fetch, max = 50
   const out: QHooksMarket[] = [];
   for (const u of urls) {
     try {
-      const d = await fetcher(u, { headers });
+      const d = await fetcher(withQHooksRef(u), { headers });
       if (!d.ok) continue;
       const m = qhooksMarket((await d.json()) as RawMarketDetail);
       if (m) out.push(m);
