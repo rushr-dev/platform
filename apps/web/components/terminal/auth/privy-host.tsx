@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { PrivyProvider, useExportWallet, usePrivy, useSendTransaction, useSignTransaction, useWallets } from '@privy-io/react-auth';
 import { robinhoodChain } from '@rushr/trade';
 import { privyAppId, setAuthActions, setAuthState, type AuthUser } from '@/lib/auth';
+import { rpcProxyUrl } from '@/lib/rpc';
 
 /**
  * Privy, loaded lazily by AuthRoot. It wraps only a bridge component (never the page), so loading
@@ -29,8 +30,9 @@ export default function PrivyHost() {
         embeddedWallets: { ethereum: { createOnLogin: 'all-users' }, showWalletUIs: false },
         // Privy's modal links Terms and Privacy; the Risk disclosure is linked in our own sign-up step.
         legal: { termsAndConditionsUrl: `${window.location.origin}/terms`, privacyPolicyUrl: `${window.location.origin}/privacy` },
-        defaultChain: robinhoodChain,
-        supportedChains: [robinhoodChain],
+        // Our Alchemy proxy instead of the chain's public RPC, for anything Privy reads or sends.
+        defaultChain: chainViaProxy(),
+        supportedChains: [chainViaProxy()],
       }}
     >
       <Bridge />
@@ -109,4 +111,9 @@ function Bridge() {
   }, [login, logout, exportWallet, sendTransaction, signTransaction, getAccessToken, embedded]);
 
   return null;
+}
+
+let proxied: typeof robinhoodChain | null = null;
+function chainViaProxy(): typeof robinhoodChain {
+  return (proxied ??= { ...robinhoodChain, rpcUrls: { default: { http: [rpcProxyUrl()] } } } as typeof robinhoodChain);
 }

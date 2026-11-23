@@ -319,7 +319,8 @@ api.get('/search', async (c) => {
 
 /** Treasury, platform fees and (after $RUSHR) buybacks, for the public Transparency page (transparency.ts). */
 api.get('/transparency', async (c) => c.json(
-    await transparency(c.var.sql, [c.env.PUBLIC_RPC_URL ?? ROBINHOOD_CHAIN.publicRpc, ...[await chainUrl(c)].filter((u): u is string => !!u)]),
+    // Our Alchemy RPC only (the public RPC rate-limits); PUBLIC_RPC_URL stays an override for tests.
+    await transparency(c.var.sql, [...[c.env.PUBLIC_RPC_URL ?? (await chainUrl(c))].filter((u): u is string => !!u)]),
     200, cache(TRANSPARENCY_CACHE_S)));
 
 /** Headline numbers for the landing page. */

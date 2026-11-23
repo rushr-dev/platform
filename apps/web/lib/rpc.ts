@@ -1,18 +1,17 @@
 'use client';
 
-import { fallback, http, type Transport } from 'viem';
-import { ROBINHOOD_CHAIN } from '@rushr/core';
+import { http, type Transport } from 'viem';
 
 /**
- * Browser RPC transport: our Alchemy proxy first (app/api/rpc), then Robinhood Chain's public RPC if the proxy
- * errors, rate-limits or refuses a method (e.g. eth_getLogs). Same-origin, so it works on rushr.trade,
- * app.rushr.trade and local previews alike.
+ * Browser RPC transport: our Alchemy proxy (app/api/rpc) only. No fallback to Robinhood Chain's public RPC: it
+ * rate-limits under load and failed users' sends (withdrawals included). Same-origin in the browser, so it works on
+ * rushr.trade, app.rushr.trade and local previews; outside a browser it uses the app's own proxy URL.
  */
+export const rpcProxyUrl = () => (typeof window === 'undefined' ? 'https://app.rushr.trade/api/rpc' : `${window.location.origin}/api/rpc`);
+
 let transport: Transport | null = null;
 export function rpcTransport(): Transport {
   if (transport) return transport;
-  const proxy = typeof window === 'undefined' ? null : `${window.location.origin}/api/rpc`;
-  const pub = http(ROBINHOOD_CHAIN.publicRpc, { batch: true });
-  transport = proxy ? fallback([http(proxy, { batch: { batchSize: 20 }, timeout: 10_000, retryCount: 0 }), pub]) : pub;
+  transport = http(rpcProxyUrl(), { batch: { batchSize: 20 }, timeout: 15_000, retryCount: 2, retryDelay: 400 });
   return transport;
 }

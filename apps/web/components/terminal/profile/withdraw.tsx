@@ -3,20 +3,25 @@
 import { useState } from 'react';
 import { encodeFunctionData, erc20Abi, formatUnits, getAddress, isAddress, parseUnits } from 'viem';
 import { ArrowSquareOut, CheckCircle, Warning } from '@phosphor-icons/react';
-import { auth } from '@/lib/auth';
 import { publicClient, USDG, type Balances } from '@/lib/balances';
 import { EXPLORER, short } from '@/lib/format';
+import { sendWalletCall } from '@/components/trade/use-quick-trade';
 
 type Asset = 'ETH' | 'USDG';
 const DECIMALS: Record<Asset, number> = { ETH: 18, USDG: 6 };
-/** Gas kept back on "Max" for an ETH send: a plain transfer is 21k gas; keep room for a busy block. */
-const GAS_RESERVE_UNITS = 60_000n;
+/** Gas limits: a plain ETH transfer is 21k (a contract wallet a little more); a USDG transfer about 50k. */
+const GAS = { ETH: 40_000n, USDG: 90_000n } as const;
+/**
+ * Gas kept back on "Max" for an ETH send: the gas limit at up to 3x today's gas price, since the sender caps fees
+ * above the current price and the wallet must hold limit x cap.
+ */
+const GAS_RESERVE_UNITS = GAS.ETH * 3n;
 
 type Step = { kind: 'form' } | { kind: 'review' } | { kind: 'sending' } | { kind: 'done'; hash: `0x${string}` } | { kind: 'failed'; message: string };
 
 /**
  * Send ETH or USDG from the Rushr wallet to any address on Robinhood Chain. The user reviews, then
- * their own Privy embedded wallet signs (Rushr never holds the key); we wait for the receipt.
+ * their own Privy embedded wallet signs (Rushr never holds the key); we broadcast through our RPC and wait for the receipt.
  */
 export function WithdrawPanel({ from, balances, onDone }: { from: `0x${string}`; balances: Balances | null; onDone: () => void }) {
   const [asset, setAsset] = useState<Asset>('ETH');
@@ -57,13 +62,13 @@ export function WithdrawPanel({ from, balances, onDone }: { from: `0x${string}`;
     setStep({ kind: 'sending' });
     try {
       const recipient = getAddress(to.trim());
-      const hash =
+      const call =
         asset === 'ETH'
-          ? await auth.sendTransaction({ to: recipient, value: wei })
-          : await auth.sendTransaction({ to: USDG, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [recipient, wei] }), value: 0n });
-      const receipt = await publicClient().waitForTransactionReceipt({ hash, timeout: 120_000 });
-      if (receipt.status !== 'success') throw new Error('The transaction reverted on-chain.');
-      setStep({ kind: 'done', hash });
+          ? { label: 'withdraw' as const, chainId: 4663, to: recipient, data: '0x' as const, value: wei, gas: GAS.ETH }
+          : { label: 'withdraw' as const, chainId: 4663, to: USDG, data: encodeFunctionData({ abi: erc20Abi, functionName: 'transfer', args: [recipient, wei] }), value: 0n, gas: GAS.USDG };
+      const r = await sendWalletCall(from, call);
+      if (r.receipt.status !== 'success') throw new Error('The transaction reverted on-chain.');
+      setStep({ kind: 'done', hash: r.hash });
       onDone();
     } catch (e) {
       const msg = (e as Error).message || 'Sending failed.';

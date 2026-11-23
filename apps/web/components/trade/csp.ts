@@ -8,7 +8,7 @@
  *   which would make browsers ignore host allowlists).
  * - Frames: Privy's auth iframe (it hosts the embedded wallet), WalletConnect verify, Turnstile, and the
  *   Bubblemaps map on the token page (iframe.bubblemaps.io).
- * - Connections: our API (+ live WebSocket v1/v2), the public Robinhood Chain RPC, DexScreener (pool
+ * - Connections: our API (+ live WebSocket v1/v2), DexScreener (pool
  *   panel fallback), Privy and WalletConnect (EVM wallet sign-in), Cloudflare Web Analytics.
  * - Images: same origin (token icons and X avatars go through /api/img), data/blob, Privy, WalletConnect.
  * Based on Privy's CSP guidance (docs.privy.io/security/implementation-guide/content-security-policy).
@@ -33,7 +33,6 @@ export function buildCsp(opts: { nonce: string; dev?: boolean; apiUrl?: string }
       "'self'",
       api,
       ws,
-      'https://rpc.mainnet.chain.robinhood.com',
       'https://api.dexscreener.com',
       'https://auth.privy.io',
       'https://*.rpc.privy.systems',

@@ -168,7 +168,7 @@ function fmtEth(wei: bigint): string {
 /** One transaction for the embedded wallet (send in order; wait for each receipt). */
 export interface WalletCall {
   /** 'swap' is the Universal Router call (or the curve call on an ETH curve); 'curve swap' is the curve leg of a pair route. */
-  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'approve pair token for the curve' | 'swap' | 'curve swap' | 'Rushr fee' | 'wrap ETH' | 'approve for QHooks' | 'unwrap WETH';
+  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'approve pair token for the curve' | 'swap' | 'curve swap' | 'Rushr fee' | 'wrap ETH' | 'approve for QHooks' | 'unwrap WETH' | 'withdraw';
   chainId: number;
   to: Address;
   data: Hex;

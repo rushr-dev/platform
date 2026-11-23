@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { createPublicClient, formatUnits, http, isAddress, parseUnits, type Address, type PublicClient } from 'viem';
+import { createPublicClient, formatUnits, isAddress, parseUnits, type Address, type PublicClient } from 'viem';
+import { rpcTransport } from '@/lib/rpc';
 import {
   assertSignable,
   buildSwap,
@@ -34,7 +35,7 @@ import { TradeBox } from './trade-box';
  * (eth_call / eth_simulateV1). This component never asks the wallet to sign or send anything.
  */
 
-const client = createPublicClient({ chain: robinhoodChain, transport: http(), batch: { multicall: true } }) as PublicClient;
+const client = createPublicClient({ chain: robinhoodChain, transport: rpcTransport(), batch: { multicall: true } }) as PublicClient;
 // Placeholder fee config (see docs/trading.md): 1% to a placeholder treasury. Signing is refused until it is set.
 const cfg = resolveConfig();
 /** Used when no wallet is connected: an empty address, funded only inside the simulation. */

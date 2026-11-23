@@ -702,6 +702,14 @@ async function sendWithRetry(pipe: TxPipeline, call: WalletCall, onSubmitted: (h
   }
 }
 
+/**
+ * One wallet call (a withdrawal, say) through the same path as trades: the wallet signs, we broadcast through our
+ * RPC (app/api/rpc, Alchemy) and wait for the receipt. Never the chain's public RPC.
+ */
+export function sendWalletCall(wallet: Address, call: WalletCall): Promise<SendResult> {
+  return sendWithRetry(pipelineFor(wallet), call, () => undefined);
+}
+
 /** Sends a curve trade's fee transfer and tells the ledger its hash. Failures never surface as a failed trade. */
 async function sendFollowUpFee(pipe: TxPipeline, call: WalletCall, tradeHash: Hex) {
   try {
