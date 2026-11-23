@@ -21,7 +21,7 @@ import {
   Sparkle,
   X,
 } from '@phosphor-icons/react';
-import { API_URL, type Column, type TokenCard } from '@/lib/api';
+import { API_URL, type Column, type TokenCard, type TrendCard } from '@/lib/api';
 import { age, compact, LAUNCHPAD_LABEL, LAUNCHPAD_LOGO, pct, quoteLabel, short, usd } from '@/lib/format';
 import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
@@ -34,7 +34,7 @@ import { migrateQuickBuyToUsd, QUICK_USD_PRESETS, updateSettings, useSettings } 
 import { useEthUsd } from '@/lib/profile';
 import { RingedAvatar, ringOf, SocialLinks } from './bits';
 import { CallCard } from './calls-feed';
-import { useFeed } from '@/lib/callouts';
+import { useFeed, type Callout } from '@/lib/callouts';
 import { useWatchlist } from '@/lib/watchlist';
 import { SHOW_RISK, SHOW_SERIAL_DEV } from '@/lib/risk-labels';
 
@@ -105,8 +105,7 @@ const MOBILE_TABS: { id: MobileTab; title: string }[] = [
   { id: 'almost', title: 'Almost' },
   { id: 'migrated', title: 'Migrated' },
 ];
-/** A token card with Trending's numbers (GET /tokens/trending). */
-type TrendCard = TokenCard & { trend?: { volume1h: number; trades1h: number; calls1h: number; featured: boolean } };
+
 
 /* ------------------------------------------------------------------ filters */
 
@@ -173,7 +172,18 @@ function loadFilters(): Record<Column, Filters> {
 
 /* ------------------------------------------------------------------ main */
 
-export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverNow: number }) {
+export function Trenches({
+  initial,
+  initialCalls = [],
+  initialTrending = [],
+  serverNow,
+}: {
+  initial: TokenCard[];
+  /** Server-rendered first screens of the Calls and Trending tabs (they fill in before scripts boot). */
+  initialCalls?: Callout[];
+  initialTrending?: TrendCard[];
+  serverNow: number;
+}) {
   // Every known token, by address: server-rendered first screen, then the HTTP snapshot and live
   // deltas from the feed client (batched once per frame there).
   // v1: one `trenches` topic, columns computed here. v2: one topic per column, membership decided by
@@ -372,7 +382,18 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
           const hidden = c.id === 'new' ? (mobileCol === 'left' ? '' : 'hidden md:flex') : mobileCol === c.id ? '' : 'hidden md:flex';
           if (c.id === 'new' && leftTab !== 'new')
             return (
-              <LeftPanel key="left" tab={leftTab} tabs={tabs!} serverNow={serverNow} nowMs={now} quick={quick} quick2={quick2} className={hidden} />
+              <LeftPanel
+                key="left"
+                tab={leftTab}
+                tabs={tabs!}
+                serverNow={serverNow}
+                nowMs={now}
+                quick={quick}
+                quick2={quick2}
+                initialCalls={initialCalls}
+                initialTrending={initialTrending}
+                className={hidden}
+              />
             );
           return (
             <ColumnPanel
@@ -785,7 +806,8 @@ const Row = memo(function Row({
     SHOW_RISK && t.risk === 'high' && 'High risk',
     SHOW_RISK && t.copycat && 'Copycat',
     SHOW_SERIAL_DEV && t.serial_launcher && 'Serial dev',
-    !!t.airdropped && t.airdropped > 10 && `${t.airdropped} fake holders`,
+    // Hidden with the other risk labels for now (NEXT_PUBLIC_SHOW_RISK).
+    SHOW_RISK && !!t.airdropped && t.airdropped > 10 && `${t.airdropped} fake holders`,
   ].filter(Boolean) as string[];
   return (
     <li ref={ref} className="relative overflow-hidden border-b border-white/[0.05] transition-colors hover:border-white/[0.1]">
@@ -955,6 +977,8 @@ function LeftPanel({
   nowMs,
   quick,
   quick2,
+  initialCalls,
+  initialTrending,
   className,
 }: {
   tab: Exclude<LeftTab, 'new'>;
@@ -963,13 +987,15 @@ function LeftPanel({
   nowMs: number;
   quick: number;
   quick2: number;
+  initialCalls: Callout[];
+  initialTrending: TrendCard[];
   className: string;
 }) {
   return (
     <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-surface ${className}`}>
       {tabs}
-      {tab === 'calls' && <CallsTab nowMs={nowMs} />}
-      {tab === 'trending' && <TrendingTab serverNow={serverNow} quick={quick} quick2={quick2} />}
+      {tab === 'calls' && <CallsTab nowMs={nowMs} initial={initialCalls} />}
+      {tab === 'trending' && <TrendingTab serverNow={serverNow} quick={quick} quick2={quick2} initial={initialTrending} />}
       {tab === 'watchlist' && <WatchlistTab serverNow={serverNow} quick={quick} quick2={quick2} />}
     </section>
   );
@@ -1006,8 +1032,10 @@ function EmptyNote({ children }: { children: React.ReactNode }) {
 }
 
 /** The latest calls from humans and agents, newest first, with the move since each call. */
-function CallsTab({ nowMs }: { nowMs: number }) {
+function CallsTab({ nowMs, initial }: { nowMs: number; initial: Callout[] }) {
   const feed = useFeed('global');
+  // The server's first screen until the browser's own fetch lands.
+  const items = feed.items ?? (initial.length ? initial : null);
   return (
     <>
       <TabHeader
@@ -1028,13 +1056,13 @@ function CallsTab({ nowMs }: { nowMs: number }) {
             {feed.incoming.length} new call{feed.incoming.length > 1 ? 's' : ''}
           </button>
         )}
-        {feed.items == null ? (
+        {items == null ? (
           <ListSkeleton />
-        ) : feed.items.length === 0 ? (
+        ) : items.length === 0 ? (
           <EmptyNote>No calls yet. Call a token from its page.</EmptyNote>
         ) : (
           <ul className="space-y-2 p-2">
-            {feed.items.slice(0, 40).map((c) => (
+            {items.slice(0, 40).map((c) => (
               <CallCard key={c.id} c={c} nowMs={nowMs} showToken />
             ))}
           </ul>
@@ -1045,8 +1073,8 @@ function CallsTab({ nowMs }: { nowMs: number }) {
 }
 
 /** Tokens by swap volume over the last hour (GET /tokens/trending, refreshed every 2 minutes server side). */
-function TrendingTab({ serverNow, quick, quick2 }: { serverNow: number; quick: number; quick2: number }) {
-  const [rows, setRows] = useState<TrendCard[] | null>(null);
+function TrendingTab({ serverNow, quick, quick2, initial }: { serverNow: number; quick: number; quick2: number; initial: TrendCard[] }) {
+  const [rows, setRows] = useState<TrendCard[] | null>(initial.length ? initial : null);
   useEffect(() => {
     let live = true;
     const load = () =>

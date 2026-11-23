@@ -818,7 +818,7 @@ function Safety({ t, grid = true }: { t: TokenDetail; grid?: boolean }) {
       {grid && <SafetyGrid t={t} className="mt-3" />}
       {SHOW_RISK && t.verdict && <p className={`mt-3 text-sm leading-relaxed ${riskText(t.risk)}`}>{t.verdict}</p>}
       {!t.launch_indexed && <p className="mt-2 text-xs text-muted">Found after launch. Launch-time checks fill in once its first blocks are indexed.</p>}
-      {(t.airdropped ?? 0) > 0 && (
+      {SHOW_RISK && (t.airdropped ?? 0) > 0 && (
         <div className="mt-3 flex justify-between text-[13px]">
           <span className="text-muted">Airdropped holders</span>
           <span className={`font-mono ${(t.airdropped ?? 0) > 10 ? 'text-risk-high' : ''}`}>{nf.format(t.airdropped!)}</span>

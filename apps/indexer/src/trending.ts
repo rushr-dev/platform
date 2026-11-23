@@ -18,6 +18,7 @@ const TOP = 40;
  * Official contracts only (copycats share these tickers): checked against each project's own site, 2026-11-23.
  */
 export const FEATURED_TOKENS: readonly string[] = [
+  '0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed', // RUSHR
   '0x39dbed3a2bd333467115de45665cc57f813c4571', // PONS
   '0x72be1277e198d0c476869253cb4e62807e14533c', // RAETO (raeto.cc)
   '0x20429af7ca3b0ce4d99edbaa0693f26c5df05195', // QHOOKS (qhooks.com)

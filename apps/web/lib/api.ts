@@ -119,6 +119,14 @@ async function get<T>(path: string, revalidate: number, timeoutMs = 6_000): Prom
 }
 
 export const getStats = () => get<Stats>('/stats', 30);
+
+/** A token card with Trending's numbers (GET /tokens/trending). */
+export type TrendCard = TokenCard & { trend?: { volume1h: number; trades1h: number; calls1h: number; featured: boolean } };
+
+/** First screen of the trenches' left tabs, server-rendered so they show before the page's scripts boot. */
+export const getLatestCalls = async (limit = 12) =>
+  (await get<{ items?: import('./callouts').Callout[] }>(`/v1/feed?limit=${limit}`, 0, 3_000))?.items ?? [];
+export const getTrending = async (limit = 15) => ((await get<{ tokens?: TrendCard[] }>('/tokens/trending', 0, 3_000))?.tokens ?? []).slice(0, limit);
 export const getToken = (address: string) => get<TokenCard>(`/tokens/${address}`, 60);
 
 export interface Trade {
