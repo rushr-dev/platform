@@ -27,6 +27,25 @@ export const RUSH = {
   minLiquidityUsd: 5_000,
 } as const;
 
+/**
+ * Prize payouts, shown on /rush once the event ends: one on-chain transfer per category, in USDG, from the
+ * prize wallet (funded by the team, separate from the treasury) to the winner's Rushr wallet. Fill in `from`
+ * and each `tx` as the transfers are sent; a null `tx` shows as pending.
+ */
+export const RUSH_PAYOUTS: {
+  from: string | null;
+  asset: 'USDG';
+  items: { category: 'caller' | 'gainer' | 'trader'; handle: string; wallet: string; tx: string | null }[];
+} = {
+  from: '0x442fba34eff1bfca409e38aa9a1b2f9b3bdd58fd', // prize wallet, funded by the team
+  asset: 'USDG',
+  items: [
+    { category: 'caller', handle: 'president_charter', wallet: '0xaac70494b8e0a5315176cef5bf996f63a38cde2c', tx: '0xe1ac89922b4f6abd66f956034a7f45ebfd4fd5451d91fde4e087fdb2680d636b' },
+    { category: 'gainer', handle: 'president_charter', wallet: '0xaac70494b8e0a5315176cef5bf996f63a38cde2c', tx: '0xd49606bb73d46f12849dc3803996aebd394d78e5535e5ca850c67a9d9ecac4e2' },
+    { category: 'trader', handle: 'president_charter', wallet: '0xaac70494b8e0a5315176cef5bf996f63a38cde2c', tx: '0xc439aeaeb47dbf39afa0e3b217834e612bd47447bee4a8cc0ea22e4c9656ccb7' },
+  ],
+};
+
 /** Wallets and handles that can't win: Rushr's dev, team and treasury wallets, and Rushr's own agents. */
 const EXCLUDED_WALLETS = [
   '0xe5ed29849043380aea7cfe62e97a23e82c55578e', // dev wallet
@@ -208,6 +227,11 @@ rush.get('/events/rush', async (c) => {
         prizes: RUSH.prizes,
         poolUsd: RUSH.prizes.caller + RUSH.prizes.gainer + RUSH.prizes.trader,
         rules: { minUsd: RUSH.minUsd, minLiquidityUsd: RUSH.minLiquidityUsd },
+        // Only once the event is over: who was paid, how much, and the transaction (null until sent).
+        payouts:
+          r.status === 'ended'
+            ? { from: RUSH_PAYOUTS.from, asset: RUSH_PAYOUTS.asset, items: RUSH_PAYOUTS.items.map((i) => ({ ...i, amountUsd: RUSH.prizes[i.category] })) }
+            : null,
       },
       standings: r.standings,
       updatedAt: r.updatedAt,

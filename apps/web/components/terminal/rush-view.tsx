@@ -2,9 +2,9 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ArrowRight, ChartLineUp, Crown, Megaphone, Rocket, Trophy } from '@phosphor-icons/react';
+import { ArrowRight, ArrowSquareOut, ChartLineUp, Crown, Megaphone, Rocket, Trophy } from '@phosphor-icons/react';
 import { API_URL } from '@/lib/api';
-import { usd } from '@/lib/format';
+import { EXPLORER, short, usd } from '@/lib/format';
 import { useNow } from '@/lib/now';
 import { MemberAvatar } from './member-avatar';
 import { TokenAvatar } from './bits';
@@ -16,6 +16,12 @@ type Token = { address: string; symbol: string | null; imageUrl: string | null }
 type CallerRow = { rank: number; member: Member; token: Token; multiplier: number; calledAtMc: number | null; body: string };
 type GainerRow = { rank: number; member: Member; token: Token; multiplier: number; boughtUsd: number; soldUsd: number; pnlUsd: number };
 type TraderRow = { rank: number; member: Member; pnlUsd: number; tokens: number; trades: number };
+type PrizeCategory = 'caller' | 'gainer' | 'trader';
+interface Payouts {
+  from: string | null;
+  asset: string;
+  items: { category: PrizeCategory; handle: string; wallet: string; amountUsd: number; tx: string | null }[];
+}
 interface RushData {
   event: {
     name: string;
@@ -25,6 +31,8 @@ interface RushData {
     prizes: { caller: number; gainer: number; trader: number };
     poolUsd: number;
     rules: { minUsd: number; minLiquidityUsd: number };
+    /** Once ended: one transfer per category from the prize wallet (tx null until sent). */
+    payouts?: Payouts | null;
   };
   standings: { caller: CallerRow[]; gainer: GainerRow[]; trader: TraderRow[] };
   updatedAt: string;
@@ -140,6 +148,8 @@ export function RushView() {
           </Link>
         </div>
 
+        {status === 'ended' && ev?.payouts && <PayoutsPanel p={ev.payouts} />}
+
         {/* Categories */}
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <Category
@@ -203,7 +213,7 @@ export function RushView() {
             <Rule>Tokens need ${((ev?.rules.minLiquidityUsd ?? 5000) / 1000).toFixed(0)}K+ in liquidity (or market cap while on a bonding curve). Your own launches don&apos;t count.</Rule>
             <Rule>Buy-and-sell round trips in one transaction don&apos;t count. Wash trading or manipulation disqualifies.</Rule>
             <Rule>Humans and AI agents compete under the same rules. Rushr&apos;s own wallets and agents can&apos;t win.</Rule>
-            <Rule>One prize per category: the leader when the event ends. Prizes are paid on-chain from the treasury and listed on the transparency page.</Rule>
+            <Rule>One prize per category: the leader when the event ends. Prizes are paid on-chain to the winner&apos;s Rushr wallet, one transaction per category, listed on this page.</Rule>
             <Rule>Standings update about every 30 seconds and are final once the event ends and results are checked.</Rule>
           </ul>
         </section>
@@ -296,6 +306,51 @@ function Category<R extends { rank: number; member: Member }>({
         </>
       )}
       {status === 'ended' && leader && <p className="mt-auto border-t border-white/[0.05] p-3 text-center text-xs text-muted">Winner: @{leader.member.handle}</p>}
+    </section>
+  );
+}
+
+const CATEGORY_LABEL: Record<PrizeCategory, string> = { caller: 'Top Caller', gainer: 'Top Gainer', trader: 'Top Trader' };
+
+/** The prizes: one on-chain transfer per category, each linked to the explorer once sent. */
+function PayoutsPanel({ p }: { p: Payouts }) {
+  return (
+    <section className="mt-6 rounded-2xl border border-white/[0.06] bg-surface p-5 md:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="flex items-center gap-2 text-lg font-semibold">
+          <Crown size={18} weight="bold" className="text-brand" /> Prizes
+        </h2>
+        <p className="text-xs text-muted">
+          Paid in {p.asset} to each winner&apos;s Rushr wallet
+          {p.from && (
+            <>
+              {' '}from the prize wallet{' '}
+              <a href={`${EXPLORER}/address/${p.from}`} target="_blank" rel="noreferrer" className="font-mono text-ink/80 hover:text-brand">
+                {short(p.from, 4, 4)}
+              </a>
+            </>
+          )}
+        </p>
+      </div>
+      <ul className="mt-4 divide-y divide-white/[0.05]">
+        {p.items.map((i) => (
+          <li key={i.category} className="flex flex-wrap items-center gap-x-4 gap-y-1 py-3 text-sm">
+            <span className="w-28 shrink-0 font-mono text-[11px] uppercase tracking-wider text-muted">{CATEGORY_LABEL[i.category]}</span>
+            <span className="font-medium text-ink">@{i.handle}</span>
+            <a href={`${EXPLORER}/address/${i.wallet}`} target="_blank" rel="noreferrer" className="font-mono text-xs text-muted hover:text-ink">
+              {short(i.wallet, 4, 4)}
+            </a>
+            <span className="ml-auto font-mono font-semibold text-ink">${i.amountUsd.toLocaleString('en-US')}</span>
+            {i.tx ? (
+              <a href={`${EXPLORER}/tx/${i.tx}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md bg-go/10 px-2 py-0.5 text-xs font-medium text-go hover:bg-go/20">
+                Sent <ArrowSquareOut size={12} />
+              </a>
+            ) : (
+              <span className="rounded-md bg-white/[0.06] px-2 py-0.5 text-xs text-muted">Pending</span>
+            )}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
