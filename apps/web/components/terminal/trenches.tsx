@@ -19,7 +19,7 @@ import {
   X,
 } from '@phosphor-icons/react';
 import { API_URL, type Column, type TokenCard } from '@/lib/api';
-import { age, compact, LAUNCHPAD_LABEL, pct, quoteLabel, short, usd } from '@/lib/format';
+import { age, compact, LAUNCHPAD_LABEL, LAUNCHPAD_LOGO, pct, quoteLabel, short, usd } from '@/lib/format';
 import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
 import type { Delta } from '@/lib/feed/protocol';
@@ -92,15 +92,18 @@ interface Filters {
   hideHighRisk: boolean;
   hideCopycat: boolean;
   hasSocial: boolean;
-  launchpad: string;
+  /** Only these launchpads (none checked: all). */
+  launchpads: string[];
   keyword: string;
 }
+/** Launchpads offered as filter checkboxes, in this order. */
+const FILTER_LAUNCHPADS = ['uniswap-v4', 'pons', 'qhooks'] as const;
 const NO_FILTERS: Filters = {
   minMcap: 0, maxMcap: 0, minVolume: 0, minHolders: 0, maxAgeMin: 0, maxTop10: 0, maxDev: 0,
-  hideHighRisk: false, hideCopycat: false, hasSocial: false, launchpad: '', keyword: '',
+  hideHighRisk: false, hideCopycat: false, hasSocial: false, launchpads: [], keyword: '',
 };
 const activeCount = (f: Filters) =>
-  (Object.keys(NO_FILTERS) as (keyof Filters)[]).filter((k) => f[k] !== NO_FILTERS[k]).length;
+  (Object.keys(NO_FILTERS) as (keyof Filters)[]).filter((k) => (k === 'launchpads' ? f.launchpads.length > 0 : f[k] !== NO_FILTERS[k])).length;
 
 function passes(t: TokenCard, f: Filters, now: number) {
   const mc = t.market_cap_usd ?? 0;
@@ -115,7 +118,7 @@ function passes(t: TokenCard, f: Filters, now: number) {
   if (SHOW_RISK && f.hideHighRisk && t.risk === 'high') return false;
   if (SHOW_RISK && f.hideCopycat && t.copycat) return false;
   if (f.hasSocial && !t.website && !t.twitter && !t.telegram) return false;
-  if (f.launchpad && t.launchpad !== f.launchpad) return false;
+  if (f.launchpads.length && !f.launchpads.includes(t.launchpad ?? 'uniswap-v4')) return false;
   if (f.keyword.trim()) {
     const k = f.keyword.trim().toLowerCase();
     if (!t.symbol.toLowerCase().includes(k) && !t.name.toLowerCase().includes(k) && !t.address.startsWith(k)) return false;
@@ -127,8 +130,13 @@ function loadFilters(): Record<Column, Filters> {
   const base = { new: NO_FILTERS, almost: NO_FILTERS, migrated: NO_FILTERS };
   try {
     const raw = JSON.parse(localStorage.getItem('rushr.trenches.filters') ?? '{}') as Partial<Record<Column, Partial<Filters>>>;
-    // Older saves lack the newer keys; fill them in.
-    return { new: { ...NO_FILTERS, ...raw.new }, almost: { ...NO_FILTERS, ...raw.almost }, migrated: { ...NO_FILTERS, ...raw.migrated } };
+    // Older saves lack the newer keys (and kept one `launchpad` string): fill them in.
+    const fix = (f: (Partial<Filters> & { launchpad?: string }) | undefined): Filters => {
+      const { launchpad, ...rest } = f ?? {};
+      const pads = Array.isArray(rest.launchpads) ? rest.launchpads : launchpad ? [launchpad] : [];
+      return { ...NO_FILTERS, ...rest, launchpads: pads.filter((l) => (FILTER_LAUNCHPADS as readonly string[]).includes(l)) };
+    };
+    return { new: fix(raw.new), almost: fix(raw.almost), migrated: fix(raw.migrated) };
   } catch {
     return base;
   }
@@ -211,21 +219,22 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   useTopicDeltas('trenches:almost', onDeltas);
   useTopicDeltas('trenches:migrated', onDeltas);
 
-  // A column filtered to one launchpad lists all of that launchpad's tokens, not only the live window (the last
-  // 7 days): fetched once per filter change, then merged with the live cards below.
+  // A column filtered to launchpads lists those launchpads' tokens beyond the live cards: every age for PONS and
+  // QHooks (launches can be weeks old), and the plain-pool Uniswap tokens the live view hides by default.
+  // Fetched once per launchpad change, then merged with the live cards below.
   const [byLaunchpad, setByLaunchpad] = useState<Partial<Record<Column, TokenCard[]>>>({});
-  const padKey = COLUMNS.map((c) => filters[c.id].launchpad).join('|');
+  const padKey = COLUMNS.map((c) => filters[c.id].launchpads.join(',')).join('|');
   useEffect(() => {
     const ctl = new AbortController();
-    const want = COLUMNS.filter((c) => filters[c.id].launchpad);
     setByLaunchpad({});
-    for (const c of want) {
-      const lp = encodeURIComponent(filters[c.id].launchpad);
-      fetch(`${API_URL}/tokens?column=${c.id}&launchpad=${lp}&maxAgeMin=5256000&limit=100&plain=1`, { signal: ctl.signal })
-        .then((r) => (r.ok ? (r.json() as Promise<{ tokens: (TokenCard | null)[] }>) : null))
-        .then((b) => b && setByLaunchpad((p) => ({ ...p, [c.id]: b.tokens.filter((t): t is TokenCard => t != null) })))
-        .catch(() => undefined);
-    }
+    for (const c of COLUMNS)
+      for (const lp of filters[c.id].launchpads) {
+        const ageParam = lp === 'uniswap-v4' ? '' : '&maxAgeMin=5256000';
+        fetch(`${API_URL}/tokens?column=${c.id}&launchpad=${encodeURIComponent(lp)}${ageParam}&limit=100&plain=1`, { signal: ctl.signal })
+          .then((r) => (r.ok ? (r.json() as Promise<{ tokens: (TokenCard | null)[] }>) : null))
+          .then((b) => b && setByLaunchpad((p) => ({ ...p, [c.id]: [...(p[c.id] ?? []), ...b.tokens.filter((t): t is TokenCard => t != null)] })))
+          .catch(() => undefined);
+      }
     return () => ctl.abort();
     // Refetch only when a column's launchpad changes (padKey), not on every filter edit.
   }, [padKey]);
@@ -261,10 +270,11 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
     return out;
   }, [tokens, serverColumns, colNew.data, colAlmost.data, colMigrated.data, showSpam, showPlain, sorts, byLaunchpad]);
   // Paused columns look tokens up by address across every source.
-  const byAddress = useMemo(
-    () => (serverColumns ? new Map([...tokens, ...colNew.data, ...colAlmost.data, ...colMigrated.data]) : tokens),
-    [serverColumns, tokens, colNew.data, colAlmost.data, colMigrated.data],
-  );
+  // The launchpad-filter fetches count too, or a paused (hovered) column would drop their cards.
+  const byAddress = useMemo(() => {
+    const extra = COLUMNS.flatMap((c) => (byLaunchpad[c.id] ?? []).map((t) => [t.address, t] as const));
+    return serverColumns ? new Map([...extra, ...tokens, ...colNew.data, ...colAlmost.data, ...colMigrated.data]) : new Map([...extra, ...tokens]);
+  }, [serverColumns, tokens, colNew.data, colAlmost.data, colMigrated.data, byLaunchpad]);
 
   const setColFilters = useCallback((col: Column, f: Filters) => {
     setFilters((prev) => {
@@ -569,21 +579,29 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
       {num('maxAgeMin', 'Max age (min)', 'any')}
       {num('maxTop10', 'Max top 10 %', 'any')}
       {num('maxDev', 'Max dev %', 'any')}
-      <label className="col-span-2 flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-wider text-muted">Launchpad</span>
-        <select
-          value={value.launchpad}
-          onChange={(e) => onChange({ ...value, launchpad: e.target.value })}
-          className="rounded-lg border border-white/[0.06] bg-black/30 px-2 py-1.5 text-xs outline-none"
-        >
-          <option value="">All</option>
-          {['pons', 'doppler', 'lift.fun', 'qhooks', 'uniswap-v4'].map((l) => (
-            <option key={l} value={l}>
-              {LAUNCHPAD_LABEL[l] ?? l}
-            </option>
-          ))}
-        </select>
-      </label>
+      <fieldset className="col-span-2 flex flex-col gap-1 lg:col-span-4">
+        <legend className="mb-1 text-[10px] uppercase tracking-wider text-muted">Launchpad</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {FILTER_LAUNCHPADS.map((l) => {
+            const on = value.launchpads.includes(l);
+            return (
+              <label
+                key={l}
+                className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2 py-1 text-xs ${on ? 'border-brand/50 bg-brand/10 text-ink' : 'border-white/[0.08] text-muted hover:text-ink'}`}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) => onChange({ ...value, launchpads: e.target.checked ? [...value.launchpads, l] : value.launchpads.filter((x) => x !== l) })}
+                  className="accent-[var(--color-brand)]"
+                />
+                {LAUNCHPAD_LOGO[l] && <img src={LAUNCHPAD_LOGO[l]} alt="" width={14} height={14} className="size-3.5 rounded-full" />}
+                {LAUNCHPAD_LABEL[l] ?? l}
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
       <div className="col-span-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 lg:col-span-4">
         {SHOW_RISK && toggle('hideHighRisk', 'Hide high risk')}
         {SHOW_RISK && toggle('hideCopycat', 'Hide copycats')}
