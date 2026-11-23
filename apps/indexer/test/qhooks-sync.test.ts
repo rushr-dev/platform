@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { qhooksUpdate } from '../src/qhooks-sync';
+import { qhooksMarket, qhooksUpdate } from '../src/qhooks-sync';
 
 const base = {
   chainId: '4663',
@@ -37,5 +37,23 @@ describe('QHooks launch sync', () => {
     expect(qhooksUpdate({ ...base, progressBps: 9000 })!.progress).toBe(1);
     expect(qhooksUpdate({ ...base, chainId: '8453' })).toBeNull();
     expect(qhooksUpdate({ ...base, token: 'not-an-address' })).toBeNull();
+  });
+
+  it('reads an auction-style market: token, both pool hooks, image', () => {
+    const m = qhooksMarket({
+      meta: {
+        token: '0x965C490D5C501A500B7152629AF87DB50EC62AC3',
+        pools: [
+          { key: { hooks: '0x08a7c13fd8bfeae5726abd8332c627a7ab01eacc' } },
+          { key: { hooks: '0xa484309dcc556bb9e1c4d6e94c369cb5cb102acc' } },
+          { key: { hooks: '0x0000000000000000000000000000000000000000' } },
+        ],
+        logo: '/api/token-profiles/4663/0x965c/image?v=2',
+      },
+    })!;
+    expect(m.token).toBe('0x965c490d5c501a500b7152629af87db50ec62ac3');
+    expect(m.hooks).toEqual(['0x08a7c13fd8bfeae5726abd8332c627a7ab01eacc', '0xa484309dcc556bb9e1c4d6e94c369cb5cb102acc']);
+    expect(m.image).toBe('https://qhooks.com/api/token-profiles/4663/0x965c/image?v=2');
+    expect(qhooksMarket({ meta: { token: 'solana-mint' } })).toBeNull();
   });
 });

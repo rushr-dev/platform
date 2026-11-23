@@ -115,3 +115,78 @@ export async function applyQHooks(sql: Sql, launches: QHooksLaunch[], knownHooks
   const newHooks = [...new Set(ups.map((u) => u.hook).filter((h): h is string => !!h && !known.has(h)))];
   return { changed, newHooks };
 }
+
+/* ------------------------------------------------------------------ markets (every launch type) */
+
+/**
+ * QHooks' markets API lists every launch, including the auction-style ones `list_launches` leaves out. Those
+ * use their own hooks per token (a launch pool and a graduated pool), so they're tagged by token address and
+ * pool hooks from each market's detail, not from the hook registry.
+ */
+export const QHOOKS_MARKETS = 'https://qhooks.com/api/v1/markets';
+
+export interface QHooksMarket {
+  token: string;
+  /** Hooks of the market's pools (launch, graduated). */
+  hooks: string[];
+  image: string | null;
+}
+
+interface RawMarket {
+  chainId?: string;
+  token?: string;
+  url?: string;
+}
+interface RawMarketDetail {
+  meta?: { token?: string; pools?: { key?: { hooks?: string } }[]; logo?: string | null; logoURI?: string | null };
+}
+
+/** One market detail → what we tag, or null if it isn't a usable Robinhood Chain token. */
+export function qhooksMarket(d: RawMarketDetail): QHooksMarket | null {
+  const token = String(d.meta?.token ?? '').toLowerCase();
+  if (!ADDR.test(token)) return null;
+  const hooks = [...new Set((d.meta?.pools ?? []).map((p) => String(p.key?.hooks ?? '').toLowerCase()).filter((h) => ADDR.test(h) && !/^0x0{40}$/.test(h)))];
+  return { token, hooks, image: absoluteImage(d.meta?.logo ?? d.meta?.logoURI ?? null) };
+}
+
+export async function fetchQHooksMarkets(fetcher: typeof fetch = fetch, max = 50): Promise<QHooksMarket[]> {
+  const headers = { accept: 'application/json', 'X-QHooks-Client-Name': 'rushr' };
+  const r = await fetcher(QHOOKS_MARKETS, { headers });
+  if (!r.ok) throw new Error(`qhooks markets ${r.status}`);
+  const list = ((await r.json()) as { markets?: RawMarket[] }).markets ?? [];
+  const urls = list
+    .filter((m) => String(m.chainId) === '4663' && typeof m.url === 'string' && m.url.startsWith(`${QHOOKS_MARKETS}/4663/`))
+    .slice(0, max)
+    .map((m) => m.url!);
+  const out: QHooksMarket[] = [];
+  for (const u of urls) {
+    try {
+      const d = await fetcher(u, { headers });
+      if (!d.ok) continue;
+      const m = qhooksMarket((await d.json()) as RawMarketDetail);
+      if (m) out.push(m);
+    } catch {
+      // one market failing doesn't stop the rest
+    }
+  }
+  return out;
+}
+
+/** Tags market tokens and their pools as QHooks, fills a missing image. Returns tokens we don't index yet. */
+export async function applyQHooksMarkets(sql: Sql, markets: QHooksMarket[]): Promise<{ changed: number; missing: string[] }> {
+  let changed = 0;
+  const missing: string[] = [];
+  for (const m of markets) {
+    const res = await sql`
+      update tokens set launchpad = 'qhooks', image_url = coalesce(image_url, ${m.image}), updated_at = now()
+      where address = ${m.token} and (launchpad is distinct from 'qhooks' or (image_url is null and ${m.image}::text is not null))
+      returning address`;
+    changed += res.count;
+    if (!res.count) {
+      const [known] = await sql`select 1 from tokens where address = ${m.token}`;
+      if (!known) missing.push(m.token);
+    }
+    if (m.hooks.length) await sql`update pools set launchpad = 'qhooks' where token = ${m.token} and hooks = any(${m.hooks}) and launchpad is distinct from 'qhooks'`;
+  }
+  return { changed, missing };
+}

@@ -18,7 +18,7 @@ import {
   Sparkle,
   X,
 } from '@phosphor-icons/react';
-import type { Column, TokenCard } from '@/lib/api';
+import { API_URL, type Column, type TokenCard } from '@/lib/api';
 import { age, compact, LAUNCHPAD_LABEL, pct, quoteLabel, short, usd } from '@/lib/format';
 import { useTopic, useTopicDeltas } from '@/lib/feed/react';
 import { trenchesColumnSpec, trenchesSpec, type TrenchesState } from '@/lib/feed/topics';
@@ -42,7 +42,8 @@ const QuickBuyButton = dynamic(() => import('@/components/trade/quick-buy-button
 
 /** Launchpads whose tokens trade on a bonding curve before graduating (mirrors the API). */
 const CURVE_LAUNCHPADS = new Set(['pons', 'liftfun', 'qhooks']);
-const ALMOST_BONDED = 0.5;
+// Same threshold as the API (apps/indexer/src/data.ts), so a card never jumps columns on a live update.
+const ALMOST_BONDED = 0.2;
 
 function columnOf(t: TokenCard): Column {
   if (t.status === 'migrated') return 'migrated';
@@ -210,6 +211,25 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   useTopicDeltas('trenches:almost', onDeltas);
   useTopicDeltas('trenches:migrated', onDeltas);
 
+  // A column filtered to one launchpad lists all of that launchpad's tokens, not only the live window (the last
+  // 7 days): fetched once per filter change, then merged with the live cards below.
+  const [byLaunchpad, setByLaunchpad] = useState<Partial<Record<Column, TokenCard[]>>>({});
+  const padKey = COLUMNS.map((c) => filters[c.id].launchpad).join('|');
+  useEffect(() => {
+    const ctl = new AbortController();
+    const want = COLUMNS.filter((c) => filters[c.id].launchpad);
+    setByLaunchpad({});
+    for (const c of want) {
+      const lp = encodeURIComponent(filters[c.id].launchpad);
+      fetch(`${API_URL}/tokens?column=${c.id}&launchpad=${lp}&maxAgeMin=5256000&limit=100&plain=1`, { signal: ctl.signal })
+        .then((r) => (r.ok ? (r.json() as Promise<{ tokens: (TokenCard | null)[] }>) : null))
+        .then((b) => b && setByLaunchpad((p) => ({ ...p, [c.id]: b.tokens.filter((t): t is TokenCard => t != null) })))
+        .catch(() => undefined);
+    }
+    return () => ctl.abort();
+    // Refetch only when a column's launchpad changes (padKey), not on every filter edit.
+  }, [padKey]);
+
   const lists = useMemo(() => {
     const out: Record<Column, TokenCard[]> = { new: [], almost: [], migrated: [] };
     const keep = (t: TokenCard) => (showSpam || !t.spam) && (showPlain || (t.launchpad ?? 'uniswap-v4') !== 'uniswap-v4');
@@ -227,12 +247,19 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
     } else {
       for (const t of tokens.values()) if (keep(t)) out[columnOf(t)].push(t);
     }
+    // Older tokens of a filtered launchpad (live cards win: they're fresher).
+    for (const c of COLUMNS) {
+      const extra = byLaunchpad[c.id];
+      if (!extra?.length) continue;
+      const have = new Set(out[c.id].map((t) => t.address));
+      for (const t of extra) if (!have.has(t.address) && (showSpam || !t.spam)) out[c.id].push(t);
+    }
     for (const c of COLUMNS) {
       const k = sorts[c.id];
       out[c.id].sort(k === 'default' ? SORT[c.id] : (a, b) => BY[k](a, b) || SORT[c.id](a, b));
     }
     return out;
-  }, [tokens, serverColumns, colNew.data, colAlmost.data, colMigrated.data, showSpam, showPlain, sorts]);
+  }, [tokens, serverColumns, colNew.data, colAlmost.data, colMigrated.data, showSpam, showPlain, sorts, byLaunchpad]);
   // Paused columns look tokens up by address across every source.
   const byAddress = useMemo(
     () => (serverColumns ? new Map([...tokens, ...colNew.data, ...colAlmost.data, ...colMigrated.data]) : tokens),

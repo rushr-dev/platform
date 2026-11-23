@@ -302,7 +302,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     return prepareCurveTrade(client, req, curve, opts, settings, cfg, now, empty);
   }
   // A QHooks launch token trades through QHooks' router (opt-in, the web app): Rushr earns its referral share.
-  const qpool = opts.qhooks ? qhooksPool(pools) : null;
+  const qpool = opts.qhooks ? qhooksPool(pools, opts.discover?.apiPools) : null;
   if (qpool) return prepareQHooksTrade(client, req, qpool, opts, settings, cfg, now, empty);
   const uniswap = pools.filter((p) => p.venue !== 'pons-curve');
   const tradable = uniswap.filter((p) => p.venueFeeBps <= MAX_VENUE_FEE_BPS);

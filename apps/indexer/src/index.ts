@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { refreshRaetoRecords } from './agents/raeto';
 import { pollFomo } from './fomo';
-import { applyQHooks, fetchQHooksLaunches } from './qhooks-sync';
+import { applyQHooks, applyQHooksMarkets, fetchQHooksLaunches, fetchQHooksMarkets } from './qhooks-sync';
 import { LAUNCHPADS } from '@rushr/core';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
@@ -634,6 +634,10 @@ export default {
         const r = await applyQHooks(sql, await fetchQHooksLaunches(), LAUNCHPADS.find((l) => l.id === 'qhooks')?.hooks ?? []);
         if (r.changed) console.log(`qhooks: ${r.changed} tokens updated`);
         if (r.newHooks.length) console.warn(`qhooks: launches use hooks not in the registry yet: ${r.newHooks.join(', ')}`);
+        // Every launch type (auction launches aren't in list_launches): tag by token, index the ones we lack.
+        const m = await applyQHooksMarkets(sql, await fetchQHooksMarkets());
+        if (m.changed) console.log(`qhooks markets: ${m.changed} tokens tagged`);
+        for (const t of m.missing.slice(0, 5)) await hydrator(env, t).hydrate(t).catch((e: unknown) => console.warn(`qhooks: hydrate ${t} failed`, e));
       } catch (err) {
         console.error('qhooks sync failed', err);
       } finally {

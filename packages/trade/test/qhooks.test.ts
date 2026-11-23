@@ -65,5 +65,9 @@ describe('QHooks prepared trades', () => {
     const q = { ...base, id: '0x02' as const, quote: '0x0bd7d308f8e1639fab988df18a8011f41eacad73' as Address, key: key('0x023623568f41c032ec2f4bba368dbafc123160cc') };
     expect(qhooksPool([plain])).toBeNull();
     expect(qhooksPool([plain, q])?.id).toBe('0x02');
+    // Auction launches have their own hooks: the Rushr API's `qhooks` tag marks them.
+    const auction = { ...base, id: '0x03' as const, quote: '0x0bd7d308f8e1639fab988df18a8011f41eacad73' as Address, key: key('0x08a7c13fd8bfeae5726abd8332c627a7ab01eacc') };
+    expect(qhooksPool([plain, auction])).toBeNull();
+    expect(qhooksPool([plain, auction], [{ pool: '0x03', launchpad: 'qhooks' }])?.id).toBe('0x03');
   });
 });

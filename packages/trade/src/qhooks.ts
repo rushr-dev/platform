@@ -24,11 +24,19 @@ export const QHOOKS_FEE_ROUTER: Address = '0x79d211f5137d22b0fe3bfda81fbb8b7f532
 export const QHOOKS_HOOKS: readonly Address[] = LAUNCHPADS.find((l) => l.id === 'qhooks')?.hooks ?? [];
 const HOOKS = new Set(QHOOKS_HOOKS.map((h) => h.toLowerCase()));
 
-/** The token's QHooks launch pool among discovered pools (a v4 pool with a QHooks hook, priced in WETH). */
-export function qhooksPool(pools: Pool[]): V4Pool | null {
+/**
+ * The token's QHooks pool among discovered pools: a WETH-priced v4 pool whose hook is a QHooks launch hook
+ * (simple launches), or one the Rushr API tags `qhooks` (auction launches, which use their own hooks per
+ * token; apps/indexer/src/qhooks-sync.ts tags them from QHooks' markets API).
+ */
+export function qhooksPool(pools: Pool[], apiRows?: { pool: string; launchpad: string | null }[] | null): V4Pool | null {
+  const tagged = new Set((apiRows ?? []).filter((r) => r.launchpad === 'qhooks').map((r) => r.pool.toLowerCase()));
   return (
     (pools.find(
-      (p): p is V4Pool => p.venue === 'uniswap-v4' && HOOKS.has(p.key.hooks.toLowerCase()) && p.quote.toLowerCase() === TRADE_ADDRESSES.weth.toLowerCase(),
+      (p): p is V4Pool =>
+        p.venue === 'uniswap-v4' &&
+        p.quote.toLowerCase() === TRADE_ADDRESSES.weth.toLowerCase() &&
+        (HOOKS.has(p.key.hooks.toLowerCase()) || tagged.has(p.id.toLowerCase())),
     ) as V4Pool | undefined) ?? null
   );
 }
