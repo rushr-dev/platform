@@ -17,6 +17,7 @@ import type { ApiPoolRow } from './api-pools';
 import { preparePairCurveTrade, type PairLegs, type PairTradeOptions } from './pair-trade';
 import { pathCandidates, quotePath } from './pair-route';
 import { STOCK_QUOTES } from '@rushr/core/chain/robinhood';
+import { prepareQHooks, qhooksPool, qhooksQuote, qhooksReferrer, wethBalance, wrapEthData, QHOOKS_FEE_ROUTER } from './qhooks';
 
 /**
  * Beta trading v0: quick buy / sell signed client-side by the user's Privy embedded wallet with its UI
@@ -167,7 +168,7 @@ function fmtEth(wei: bigint): string {
 /** One transaction for the embedded wallet (send in order; wait for each receipt). */
 export interface WalletCall {
   /** 'swap' is the Universal Router call (or the curve call on an ETH curve); 'curve swap' is the curve leg of a pair route. */
-  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'approve pair token for the curve' | 'swap' | 'curve swap' | 'Rushr fee';
+  label: 'approve token for Permit2' | 'allow Universal Router in Permit2' | 'approve token for the curve' | 'approve pair token for the curve' | 'swap' | 'curve swap' | 'Rushr fee' | 'wrap ETH' | 'approve for QHooks' | 'unwrap WETH';
   chainId: number;
   to: Address;
   data: Hex;
@@ -204,6 +205,11 @@ export interface QuickTrade {
    * leg's receipt with `finalizePairLeg`; if it fails, the user holds the pair token (`pairHeldMessage`).
    */
   pairLegs: PairLegs | null;
+  /**
+   * QHooks sells (qhooks.ts): the swap pays WETH; after it confirms, unwrap what it added to the wallet's
+   * WETH (balance after minus `before`) with `unwrapWethData`. Null on every other route.
+   */
+  unwrapAfter: { weth: Address; before: bigint } | null;
 }
 
 export interface QuickTradeRequest {
@@ -234,6 +240,11 @@ export interface QuickTradeOptions {
   pairApiPools?: PairTradeOptions['pairApiPools'];
   /** Pair-route pools known already (tests); null: no route. */
   pairPools?: PairTradeOptions['pairPools'];
+  /**
+   * Trade QHooks launch tokens through QHooks' fee router (qhooks.ts), with Rushr as referrer. Off unless set
+   * (agents and API clients keep the direct route). `fetch` overrides the network call (tests).
+   */
+  qhooks?: boolean | { fetch?: Parameters<typeof prepareQHooks>[1] };
 }
 
 const FALLBACK_GAS = { approve: 80_000n, permit2: 80_000n, swap: 450_000n };
@@ -275,7 +286,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
   const cfg = resolveConfig(opts.config);
   const now = opts.now?.() ?? Date.now();
   const empty = (blockers: Guard[], warnings: string[] = []): QuickTrade => ({
-    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null, feeFollowUp: null, pairLegs: null,
+    ok: false, blockers, warnings, quote: null, alternatives: [], calls: [], sellApprovals: [], slippageBps: 0, gasCostWei: 0n, quotedAt: now, expiresAt: now, record: null, feeFollowUp: null, pairLegs: null, unwrapAfter: null,
   });
   if (req.amountIn <= 0n) throw new TradeError('INVALID_AMOUNT', 'amount must be > 0');
 
@@ -290,6 +301,9 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     if (opts.curveTrading === false) return empty([{ code: 'CURVE_NOT_GRADUATED', message: 'Tradable after graduation: this token is still on its PONS bonding curve.' }]);
     return prepareCurveTrade(client, req, curve, opts, settings, cfg, now, empty);
   }
+  // A QHooks launch token trades through QHooks' router (opt-in, the web app): Rushr earns its referral share.
+  const qpool = opts.qhooks ? qhooksPool(pools) : null;
+  if (qpool) return prepareQHooksTrade(client, req, qpool, opts, settings, cfg, now, empty);
   const uniswap = pools.filter((p) => p.venue !== 'pons-curve');
   const tradable = uniswap.filter((p) => p.venueFeeBps <= MAX_VENUE_FEE_BPS);
   // The token's real market may be priced in another token (NVDAc trades against NVDA): a multi-hop route
@@ -392,6 +406,7 @@ export async function prepareQuickTrade(client: PublicClient, req: QuickTradeReq
     record: draftTradeRecord(quote, cfg, built.tx.to, Math.floor(now / 1000)),
     feeFollowUp: null,
     pairLegs: null,
+    unwrapAfter: null,
   };
 }
 
@@ -417,6 +432,7 @@ export function isFresh(t: Pick<QuickTrade, 'expiresAt'>, now = Date.now()): boo
 /** Fee summary for the trade box. */
 export function feeLine(q: Quote): string {
   const pct = (q.fee.feeBps / 100).toFixed(2).replace(/0$/, '');
+  if (q.via === 'qhooks') return `QHooks fee ${+(q.fee.feeBps / 100).toFixed(2)}% (no Rushr fee)`;
   const notes = [
     ...(q.fee.baseFeeBps === BETA_FEE_BPS && BETA_FEE_BPS * 2 === STANDARD_FEE_BPS ? ['beta, half price'] : []),
     ...(q.fee.holderDiscountBps ? [`$RUSHR holder, ${q.fee.holderDiscountBps / 100}% off`] : []),
@@ -569,5 +585,83 @@ async function prepareCurveTrade(
     record: draftTradeRecord(quote, cfg, curve.curve, Math.floor(now / 1000)),
     feeFollowUp,
     pairLegs: null,
+    unwrapAfter: null,
+  };
+}
+
+
+// ---- QHooks launch tokens, through QHooks' fee router -------------------------------------------
+
+const QHOOKS_GAS = { wrap: 60_000n, approve: 80_000n, swap: 450_000n };
+
+/**
+ * A QHooks trade (qhooks.ts): buys wrap the ETH the wallet's WETH doesn't cover, approve WETH and swap;
+ * sells approve the token and swap, then unwrap (`unwrapAfter`). Every prepared call is checked, the whole
+ * set simulated from the trader, and the usual guards apply (cap, risk, balances).
+ */
+async function prepareQHooksTrade(
+  client: PublicClient,
+  req: QuickTradeRequest,
+  pool: Extract<Pool, { venue: 'uniswap-v4' }>,
+  opts: QuickTradeOptions,
+  settings: QuickSettings,
+  cfg: TradeConfig,
+  now: number,
+  empty: (blockers: Guard[], warnings?: string[]) => QuickTrade,
+): Promise<QuickTrade> {
+  const slippageBps = settings.slippageBps ?? autoSlippageBps({ side: req.side, ageMinutes: opts.risk?.ageMinutes, priceChange5mPct: opts.risk?.priceChange5mPct, taxBps: req.side === 'buy' ? opts.risk?.buyTaxBps : opts.risk?.sellTaxBps });
+  const fetcher = typeof opts.qhooks === 'object' ? opts.qhooks.fetch : undefined;
+  const [prep, ethBal, tokenBal, wethBal, gasPrice] = await Promise.all([
+    prepareQHooks({ side: req.side, token: req.token, amountIn: req.amountIn, trader: req.trader, slippageBps, referrer: qhooksReferrer(cfg) }, fetcher).catch((e: unknown) => e as Error),
+    opts.assume?.ethWei ?? client.getBalance({ address: req.trader }),
+    req.side === 'sell' ? (opts.assume?.tokenWei ?? client.readContract({ address: req.token, abi: erc20Abi, functionName: 'balanceOf', args: [req.trader] })) : Promise.resolve(0n),
+    opts.assume ? Promise.resolve(0n) : wethBalance(client, req.trader),
+    client.getGasPrice().catch(() => 100_000_000n),
+  ]);
+  if (prep instanceof Error) return empty([{ code: 'NO_ROUTE', message: prep.message }]);
+  const quote = qhooksQuote(prep, pool, req, slippageBps);
+
+  const calls: WalletCall[] = [];
+  if (req.side === 'buy') {
+    const wrap = req.amountIn > wethBal ? req.amountIn - wethBal : 0n;
+    if (wrap > 0n) calls.push({ label: 'wrap ETH', chainId: 4663, to: TRADE_ADDRESSES.weth, data: wrapEthData(), value: wrap, gas: QHOOKS_GAS.wrap });
+  }
+  if (prep.approval) calls.push({ label: 'approve for QHooks', chainId: 4663, to: prep.approval.to, data: prep.approval.data, value: 0n, gas: QHOOKS_GAS.approve });
+  calls.push({ label: 'swap', chainId: 4663, to: QHOOKS_FEE_ROUTER, data: prep.swap.data, value: 0n, gas: bigMax(QHOOKS_GAS.swap, prep.gasEstimate ? (prep.gasEstimate * 15n) / 10n : 0n) });
+
+  const gasCostWei = calls.reduce((s, c) => s + c.gas, 0n) * gasPrice * 2n;
+  // Buys spend ETH (wrapped here) plus any WETH already held; the guard sees both.
+  const { blockers, warnings } = evaluateGuards({ quote, settings, risk: opts.risk, acknowledgedHighRisk: !!opts.acknowledgedHighRisk, ethBalanceWei: req.side === 'buy' ? ethBal + wethBal : ethBal, tokenBalanceWei: tokenBal, gasCostWei });
+  warnings.push(`Routed through QHooks: ${calls.length} transactions, QHooks fee ${prep.routerFeeBps / 100}%.`);
+
+  if (!blockers.length && opts.simulate !== false) {
+    const simCalls: SimCall[] = calls.map((c) => ({ from: req.trader, to: c.to, data: c.data, value: c.value, label: c.label }));
+    try {
+      const sim = await simulateCalls(client, simCalls, opts.assume?.ethWei ? { fund: { [req.trader]: opts.assume.ethWei } } : {});
+      const bad = sim.calls.find((c) => !c.ok);
+      if (bad) blockers.push({ code: 'SIMULATION_REVERTED', message: `Would fail on-chain (${bad.label}): ${bad.error}` });
+      else sim.calls.forEach((c, i) => (calls[i]!.gas = bigMax(calls[i]!.gas, (c.gasUsed * 13n) / 10n + 20_000n)));
+    } catch (e) {
+      warnings.push(`Pre-send simulation unavailable: ${isTradeError(e) ? e.message : sanitizeRpcMessage(e)}`);
+    }
+  }
+
+  return {
+    ok: blockers.length === 0,
+    blockers,
+    warnings,
+    quote,
+    alternatives: [],
+    calls,
+    sellApprovals: [],
+    slippageBps,
+    gasCostWei,
+    quotedAt: now,
+    // QHooks plans expire after 600 s; our usual freshness window is far shorter.
+    expiresAt: now + settings.quoteMaxAgeMs,
+    record: draftTradeRecord(quote, cfg, QHOOKS_FEE_ROUTER, Math.floor(now / 1000)),
+    feeFollowUp: null,
+    pairLegs: null,
+    unwrapAfter: req.side === 'sell' ? { weth: TRADE_ADDRESSES.weth, before: wethBal } : null,
   };
 }

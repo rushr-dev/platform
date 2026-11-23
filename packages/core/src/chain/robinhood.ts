@@ -140,7 +140,7 @@ export const TOPICS = {
   transferWithScaledUI: '0x37e7f0db430edc9dd31bc66f25f8449353aa0818f503b906747dd8f286cd3802',
 } as const satisfies Record<string, Hex>;
 
-export type LaunchpadId = 'doppler' | 'liftfun' | 'pons' | 'vorta' | 'uniswap-v4' | 'uniswap-v3' | 'uniswap-v2';
+export type LaunchpadId = 'doppler' | 'liftfun' | 'pons' | 'vorta' | 'qhooks' | 'uniswap-v4' | 'uniswap-v3' | 'uniswap-v2';
 
 export interface Launchpad {
   id: LaunchpadId;
@@ -186,6 +186,17 @@ export const LAUNCHPADS: Launchpad[] = [
     launchesPer12h: 84,
     trades: 'v4-swap',
     notes: 'Paired with WETH. Launch event carries name, symbol and metadata URI (api.lift.fun).',
+  },
+  {
+    id: 'qhooks',
+    name: 'QHooks',
+    // Each QHooks launch factory is also its pools' hook (from QHooks' list_launches: `factory` = `key.hooks`).
+    launcher: '0x023623568f41c032ec2f4bba368dbafc123160cc',
+    hooks: ['0x023623568f41c032ec2f4bba368dbafc123160cc', '0x34ac8c4e6ca3d5b70a5321b648d0db9451c060cc'],
+    launchesPer12h: 2,
+    trades: 'v4-swap',
+    notes:
+      'qhooks.com. Launch pools are WETH-priced v4 pools with a QHooks hook; a launch bonds at a target price (progressBps / targetBps from list_launches). Rushr routes their trades through the QHooks fee router (packages/trade/src/qhooks.ts) and reads progress in apps/indexer/src/qhooks-sync.ts.',
   },
   {
     id: 'vorta',

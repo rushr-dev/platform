@@ -41,7 +41,7 @@ const QuickBuyButton = dynamic(() => import('@/components/trade/quick-buy-button
 /* ------------------------------------------------------------------ column rules (mirror the API) */
 
 /** Launchpads whose tokens trade on a bonding curve before graduating (mirrors the API). */
-const CURVE_LAUNCHPADS = new Set(['pons', 'liftfun']);
+const CURVE_LAUNCHPADS = new Set(['pons', 'liftfun', 'qhooks']);
 const ALMOST_BONDED = 0.5;
 
 function columnOf(t: TokenCard): Column {
@@ -550,7 +550,7 @@ function FilterBar({ value, onChange }: { value: Filters; onChange: (f: Filters)
           className="rounded-lg border border-white/[0.06] bg-black/30 px-2 py-1.5 text-xs outline-none"
         >
           <option value="">All</option>
-          {['pons', 'doppler', 'lift.fun', 'uniswap-v4'].map((l) => (
+          {['pons', 'doppler', 'lift.fun', 'qhooks', 'uniswap-v4'].map((l) => (
             <option key={l} value={l}>
               {LAUNCHPAD_LABEL[l] ?? l}
             </option>

@@ -23,6 +23,8 @@ export interface Env {
    * show lift.fun tokens in Almost bonded. Off by default: existing lift.fun tokens stay in New/Migrated.
    */
   LIFTFUN_ENABLED?: string;
+  /** '0' turns off the QHooks launch sync (qhooks-sync.ts: bonding progress, tagging). On by default. */
+  QHOOKS_SYNC?: string;
   /** fomoapi.io key (secret): FOMO theses and big trades for chart markers (fomo.ts). Unset = off. */
   FOMOAPI_KEY?: string;
   /** Minutes between FOMO polls (default 2). */

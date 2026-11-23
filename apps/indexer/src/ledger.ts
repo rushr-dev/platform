@@ -23,7 +23,7 @@
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, feeCommands, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
+import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, QHOOKS_FEE_ROUTER, feeCommands, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -286,6 +286,23 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     }
     const usdgMoved = tokenFlow(logs, QUOTES.USDG, from) !== 0n;
     s = { token: t.token, side: t.net > 0n ? 'buy' : 'sell', pool: '', quote: usdgMoved ? QUOTES.USDG : NATIVE_ETH, venue: null, dex: null };
+  }
+  // QHooks launch tokens trade through QHooks' fee router (packages/trade/src/qhooks.ts): WETH in or out, no
+  // Rushr fee in the transaction (QHooks charges its own and credits Rushr's referral share on its router).
+  // Recorded as a fee-free QHooks trade, not as a missed Rushr fee.
+  if (String(tx.to ?? '').toLowerCase() === QHOOKS_FEE_ROUTER.toLowerCase() && !pairRoute) {
+    // Rushr's QHooks trades name the treasury as referrer in the router call; one placed elsewhere doesn't.
+    const viaRushr = String(tx.input ?? '').toLowerCase().includes(DEFAULT_TRADE_CONFIG.feeRecipient.toLowerCase().slice(2));
+    const weth = tokenFlow(logs, QUOTES.WETH, from);
+    const tokenNet = tokenFlow(logs, s.token, from);
+    const amountIn = s.side === 'buy' ? (weth < 0n ? -weth : 0n) : tokenNet < 0n ? -tokenNet : 0n;
+    const amountOut = s.side === 'buy' ? (tokenNet > 0n ? tokenNet : 0n) : weth > 0n ? weth : 0n;
+    await sql`update trades_ledger set status = 'confirmed', block_number = ${block.toString()}, ts = ${ts}, side = ${s.side}, token = ${s.token},
+      quote_asset = 'ETH', venue = 'qhooks', pool_id = ${s.pool || null}, router = ${QHOOKS_FEE_ROUTER.toLowerCase()},
+      amount_in = ${amountIn.toString()}, amount_out = ${amountOut.toString()}, fee_token = ${QUOTES.WETH}, base_fee_bps = 0, fee_bps = 0,
+      fee_amount = '0', referrer = null, referral_code = null, referral_discount = '0', referrer_share_bps = 0, referrer_accrual = '0',
+      flags = ${[...flags, 'via_qhooks', ...(viaRushr ? [] : ['qhooks_no_rushr_referrer'])]}, updated_at = now() where id = ${row.id}`;
+    return 'done';
   }
   // A Universal Router call whose fee command pays the treasury in ETH is an ETH trade, whatever its last hop
   // is quoted in (a multi-hop route through USDG or a stock token).

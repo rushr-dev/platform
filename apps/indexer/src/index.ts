@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { refreshRaetoRecords } from './agents/raeto';
 import { pollFomo } from './fomo';
+import { applyQHooks, fetchQHooksLaunches } from './qhooks-sync';
+import { LAUNCHPADS } from '@rushr/core';
 import { cors } from 'hono/cors';
 import postgres from 'postgres';
 import { dbUrl, holderHistory, poolHistory, positionsJob, poller as pollerOf, type Env, type EnrichMessage } from './env';
@@ -621,6 +623,19 @@ export default {
         if (added) console.log(`fomo: ${added} new`);
       } catch (err) {
         console.error('fomo poll failed', err);
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 5 minutes: QHooks launches' bonding progress and tags (qhooks-sync.ts).
+    if (env.QHOOKS_SYNC !== '0' && minute % 5 === 4) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        const r = await applyQHooks(sql, await fetchQHooksLaunches(), LAUNCHPADS.find((l) => l.id === 'qhooks')?.hooks ?? []);
+        if (r.changed) console.log(`qhooks: ${r.changed} tokens updated`);
+        if (r.newHooks.length) console.warn(`qhooks: launches use hooks not in the registry yet: ${r.newHooks.join(', ')}`);
+      } catch (err) {
+        console.error('qhooks sync failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }

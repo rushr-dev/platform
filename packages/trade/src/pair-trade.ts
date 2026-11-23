@@ -299,6 +299,7 @@ export async function preparePairCurveTrade(
     record: draftTradeRecord(quote, cfg, cfg.universalRouter, nowS),
     feeFollowUp: null,
     pairLegs: legs,
+    unwrapAfter: null,
   };
 }
 

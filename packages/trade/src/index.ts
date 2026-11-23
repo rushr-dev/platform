@@ -28,3 +28,4 @@ export * from './fee-audit';
 export * from './fee-sim';
 export * from './pair-route';
 export * from './pair-trade';
+export * from './qhooks';

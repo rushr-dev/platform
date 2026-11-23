@@ -122,6 +122,8 @@ export interface Quote {
   /** PONS curve buys that hit graduation: quote-asset amount the curve refunds (0 otherwise). */
   expectedRefund: bigint;
   warnings: string[];
+  /** Set when the trade goes through a partner's router instead of ours (the fee shown is theirs). */
+  via?: 'qhooks';
 }
 
 export interface Approval {

@@ -45,7 +45,7 @@ export async function tokenSummaries(sql: Sql, where: { addresses?: string[] } =
 }
 
 /** Launchpads whose tokens trade on a bonding curve before graduating. */
-export const CURVE_LAUNCHPADS = ['pons', 'liftfun'];
+export const CURVE_LAUNCHPADS = ['pons', 'liftfun', 'qhooks'];
 /**
  * Curve launchpads whose progress we keep current, so they can show in Almost bonded. lift.fun's
  * progress only updates while LIFTFUN_ENABLED=1; otherwise a frozen value would leave stale cards there.

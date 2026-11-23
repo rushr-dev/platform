@@ -79,7 +79,7 @@ export function TokenAvatar({
 /** What the ring around a token's avatar shows. */
 export type AvatarRing = { kind: 'progress'; value: number } | { kind: 'migrated' } | { kind: 'none' };
 
-const CURVE_LAUNCHPADS = new Set(['pons', 'liftfun', 'lift.fun']);
+const CURVE_LAUNCHPADS = new Set(['pons', 'liftfun', 'lift.fun', 'qhooks']);
 const GOLD = '#f5c542';
 
 /**

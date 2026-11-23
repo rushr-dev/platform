@@ -47,6 +47,7 @@ export const LAUNCHPAD_LABEL: Record<string, string> = {
   lift: 'lift.fun',
   'uniswap-v4': 'Uniswap',
   vorta: 'Vorta',
+  qhooks: 'QHooks',
 };
 
 /** Longer age for headers: "42s", "12m 5s", "5h 12m", "119d 4h". */

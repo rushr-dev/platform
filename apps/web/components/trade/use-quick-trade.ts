@@ -24,6 +24,7 @@ import {
   SendError,
   tradeFollowUpFee,
   TxPipeline,
+  unwrapWethData,
   type ApiPoolRow,
   type PairLegs,
   type Pool,
@@ -348,6 +349,8 @@ export function useQuickTrade(tokenArg: TradeToken) {
         simulate: trader !== GUEST,
         // Curves priced in another token: the ETH route to that token (pool keys from the Rushr API).
         pairApiPools: pairApiPools,
+        // QHooks launch tokens trade through QHooks' fee router, Rushr as referrer (packages/trade/src/qhooks.ts).
+        qhooks: true,
       };
       let t = side === 'buy' ? await quickBuy(client, { token: token.address, ethWei: amount, trader }, opts) : await quickSell(client, { token: token.address, trader, amount }, opts);
       // The bonding curve completed since the pools were read, or the token migrated after this page cached an
@@ -543,6 +546,21 @@ export function useQuickTrade(tokenArg: TradeToken) {
         // next nonce (before any pre-approval below); it runs in the background.
         const feeCall = swap ? tradeFollowUpFee(t, swap.receipt) : null;
         if (swap && feeCall) void sendFollowUpFee(pipe, feeCall, swap.hash);
+        // QHooks sells pay WETH: turn what the swap added back into ETH. If this step fails the sale still
+        // stands and the WETH stays in the wallet (shown with the other balances), so it never fails the trade.
+        if (swap && t.unwrapAfter) {
+          const u = t.unwrapAfter;
+          try {
+            const after = await chainClient().readContract({ address: u.weth, abi: erc20Abi, functionName: 'balanceOf', args: [wallet], blockNumber: swap.receipt.blockNumber });
+            const amount = after > u.before ? after - u.before : 0n;
+            if (amount > 0n) {
+              setStatus({ kind: 'sending', step: total + 1, total: total + 1, label: 'unwrap WETH' });
+              await sendWithRetry(pipe, { label: 'unwrap WETH', chainId: 4663, to: u.weth, data: unwrapWethData(amount), value: 0n, gas: 80_000n }, () => undefined);
+            }
+          } catch (err) {
+            console.warn('QHooks sell: unwrapping WETH failed; it stays in the wallet as WETH', err);
+          }
+        }
         const done = performance.now();
         const tm: TradeTimings = {
           side: r.side,
