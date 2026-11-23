@@ -6,6 +6,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChefHat,
   Crosshair,
+  Fire,
+  Megaphone,
+  Star,
   Crown,
   Detective,
   Funnel,
@@ -30,6 +33,9 @@ import { tradingAvailable } from '@/components/trade/flag';
 import { migrateQuickBuyToUsd, QUICK_USD_PRESETS, updateSettings, useSettings } from '@/lib/settings';
 import { useEthUsd } from '@/lib/profile';
 import { RingedAvatar, ringOf, SocialLinks } from './bits';
+import { CallCard } from './calls-feed';
+import { useFeed } from '@/lib/callouts';
+import { useWatchlist } from '@/lib/watchlist';
 import { SHOW_RISK, SHOW_SERIAL_DEV } from '@/lib/risk-labels';
 
 /** Loaded only when trading is on (one chunk shared by every row). */
@@ -78,6 +84,29 @@ const COLUMNS: { id: Column; title: string; icon: typeof Plant }[] = [
 ];
 
 const PER_COLUMN = 60;
+
+/**
+ * The left column is tabs (the middle and right stay Almost bonded and Migrated): Calls first, since calls
+ * are what Rushr adds over a plain terminal, then Trending (last hour's volume), the reader's Watchlist, and
+ * New pairs for snipers. The last tab used is remembered.
+ */
+type LeftTab = 'calls' | 'trending' | 'watchlist' | 'new';
+const LEFT_TABS: { id: LeftTab; title: string; icon: typeof Plant }[] = [
+  { id: 'calls', title: 'Calls', icon: Megaphone },
+  { id: 'trending', title: 'Trending', icon: Fire },
+  { id: 'watchlist', title: 'Watchlist', icon: Star },
+  { id: 'new', title: 'New', icon: Sparkle },
+];
+const LEFT_KEY = 'rushr.trenches.left';
+/** Phone tabs: one scrollable row with the left column's tabs, then the other two columns. */
+type MobileTab = LeftTab | 'almost' | 'migrated';
+const MOBILE_TABS: { id: MobileTab; title: string }[] = [
+  ...LEFT_TABS.map((t) => ({ id: t.id as MobileTab, title: t.title })),
+  { id: 'almost', title: 'Almost' },
+  { id: 'migrated', title: 'Migrated' },
+];
+/** A token card with Trending's numbers (GET /tokens/trending). */
+type TrendCard = TokenCard & { trend?: { volume1h: number; trades1h: number; calls1h: number; featured: boolean } };
 
 /* ------------------------------------------------------------------ filters */
 
@@ -165,7 +194,26 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
   const [now, setNow] = useState(serverNow);
   const [filters, setFilters] = useState<Record<Column, Filters>>({ new: NO_FILTERS, almost: NO_FILTERS, migrated: NO_FILTERS });
   const [paused, setPaused] = useState<Partial<Record<Column, string[]>>>({});
-  const [mobileCol, setMobileCol] = useState<Column>('new');
+  const [leftTab, setLeftTabState] = useState<LeftTab>('calls');
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(LEFT_KEY) as LeftTab | null;
+      if (saved && LEFT_TABS.some((t) => t.id === saved)) setLeftTabState(saved);
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+  const setLeftTab = useCallback((t: LeftTab) => {
+    setLeftTabState(t);
+    try {
+      localStorage.setItem(LEFT_KEY, t);
+    } catch {
+      // storage unavailable
+    }
+  }, []);
+  // Phones show one column at a time: the left panel (any of its tabs) or one of the other two.
+  const [mobileCol, setMobileCol] = useState<'left' | 'almost' | 'migrated'>('left');
+  const mobileActive: MobileTab = mobileCol === 'left' ? leftTab : mobileCol;
   const [showSpam, setShowSpam] = useState(false);
   const [showPlain, setShowPlain] = useState(false);
   // One-tap buy amounts in dollars (P1/P2): shared with the settings page.
@@ -293,15 +341,21 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
       <Toolbar showSpam={showSpam} onShowSpam={setShowSpam} showPlain={showPlain} onShowPlain={setShowPlain} quick={quick} onQuick={changeQuick} />
       <RushBanner />
       {/* Mobile: one column at a time */}
-      <div className="flex gap-1 px-2 pb-2 md:hidden">
-        {COLUMNS.map((c) => (
+      <div className="flex gap-1 overflow-x-auto px-2 pb-2 [scrollbar-width:none] md:hidden">
+        {MOBILE_TABS.map((m) => (
           <button
-            key={c.id}
+            key={m.id}
             type="button"
-            onClick={() => setMobileCol(c.id)}
-            className={`flex-1 rounded-lg py-2 text-xs font-semibold ${mobileCol === c.id ? 'bg-white/[0.08] text-ink' : 'text-muted'}`}
+            onClick={() => {
+              if (m.id === 'almost' || m.id === 'migrated') setMobileCol(m.id);
+              else {
+                setLeftTab(m.id);
+                setMobileCol('left');
+              }
+            }}
+            className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${mobileActive === m.id ? 'bg-white/[0.08] text-ink' : 'text-muted'}`}
           >
-            {c.title}
+            {m.title}
           </button>
         ))}
       </div>
@@ -314,8 +368,15 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
             ? frozen.map((a) => byAddress.get(a)).filter((t): t is TokenCard => !!t)
             : live.slice(0, PER_COLUMN);
           const waiting = frozen ? live.filter((t) => !frozen.includes(t.address)).length : 0;
+          const tabs = c.id === 'new' ? <LeftTabs value={leftTab} onChange={setLeftTab} /> : null;
+          const hidden = c.id === 'new' ? (mobileCol === 'left' ? '' : 'hidden md:flex') : mobileCol === c.id ? '' : 'hidden md:flex';
+          if (c.id === 'new' && leftTab !== 'new')
+            return (
+              <LeftPanel key="left" tab={leftTab} tabs={tabs!} serverNow={serverNow} nowMs={now} quick={quick} quick2={quick2} className={hidden} />
+            );
           return (
             <ColumnPanel
+              tabs={tabs}
               key={c.id}
               col={c}
               tokens={shown}
@@ -334,7 +395,7 @@ export function Trenches({ initial, serverNow }: { initial: TokenCard[]; serverN
               onPause={(on) =>
                 setPaused((p) => ({ ...p, [c.id]: on ? live.slice(0, PER_COLUMN).map((t) => t.address) : undefined }))
               }
-              className={mobileCol === c.id ? '' : 'hidden md:flex'}
+              className={hidden}
             />
           );
         })}
@@ -446,7 +507,10 @@ function ColumnPanel({
   onFilters,
   onPause,
   className,
+  tabs = null,
 }: {
+  /** The left column's tab bar, shown above the header (New pairs is one of the left tabs). */
+  tabs?: React.ReactNode;
   col: (typeof COLUMNS)[number];
   tokens: TokenCard[];
   total: number;
@@ -469,6 +533,7 @@ function ColumnPanel({
   const n = activeCount(filters);
   return (
     <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-surface ${className}`}>
+      {tabs}
       <header className="flex items-center gap-2 border-b border-white/[0.05] px-4 py-3">
         <Icon size={16} weight="fill" className="text-brand" />
         <h2 className="text-sm font-semibold">{col.title}</h2>
@@ -680,6 +745,7 @@ const Row = memo(function Row({
   enter,
   quick,
   quick2,
+  note = null,
 }: {
   t: TokenCard;
   col: Column;
@@ -688,6 +754,8 @@ const Row = memo(function Row({
   enter: boolean;
   quick: number;
   quick2: number;
+  /** An extra line under the stats (Trending's hour numbers). */
+  note?: React.ReactNode;
 }) {
   const created = ts(t.created_at);
   const ref = useRef<HTMLLIElement>(null);
@@ -793,6 +861,7 @@ const Row = memo(function Row({
               </>
             )}
           </div>
+          {note && <div className="mt-1 flex min-w-0 items-center gap-1.5 overflow-hidden whitespace-nowrap text-[11px] text-muted">{note}</div>}
         </div>
         {/* Right-aligned stack: small muted labels right before each value. */}
         <div className="flex shrink-0 flex-col items-end gap-0.5 font-mono">
@@ -849,3 +918,251 @@ const Row = memo(function Row({
     </li>
   );
 });
+
+/* ------------------------------------------------------------------ left column tabs */
+
+function LeftTabs({ value, onChange }: { value: LeftTab; onChange: (t: LeftTab) => void }) {
+  return (
+    <div role="tablist" aria-label="Left column" className="hidden gap-1 border-b border-white/[0.05] px-2 pt-2 md:flex">
+      {LEFT_TABS.map((t) => {
+        const on = value === t.id;
+        const Icon = t.icon;
+        return (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={on}
+            type="button"
+            onClick={() => onChange(t.id)}
+            className={`flex items-center gap-1.5 rounded-t-lg border-b-2 px-2.5 pb-2 pt-1 text-xs font-semibold transition-colors ${
+              on ? 'border-brand text-ink' : 'border-transparent text-muted hover:text-ink'
+            }`}
+          >
+            <Icon size={13} weight={on ? 'fill' : 'regular'} className={on ? 'text-brand' : ''} />
+            {t.title}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Calls, Trending or Watchlist in the left column (New pairs uses the regular column panel). */
+function LeftPanel({
+  tab,
+  tabs,
+  serverNow,
+  nowMs,
+  quick,
+  quick2,
+  className,
+}: {
+  tab: Exclude<LeftTab, 'new'>;
+  tabs: React.ReactNode;
+  serverNow: number;
+  nowMs: number;
+  quick: number;
+  quick2: number;
+  className: string;
+}) {
+  return (
+    <section className={`flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-surface ${className}`}>
+      {tabs}
+      {tab === 'calls' && <CallsTab nowMs={nowMs} />}
+      {tab === 'trending' && <TrendingTab serverNow={serverNow} quick={quick} quick2={quick2} />}
+      {tab === 'watchlist' && <WatchlistTab serverNow={serverNow} quick={quick} quick2={quick2} />}
+    </section>
+  );
+}
+
+function TabHeader({ title, sub, right }: { title: string; sub: string; right?: React.ReactNode }) {
+  return (
+    <header className="flex items-center gap-2 border-b border-white/[0.05] px-4 py-2.5">
+      <h2 className="text-sm font-semibold">{title}</h2>
+      <span className="text-[11px] text-muted">{sub}</span>
+      <div className="ml-auto flex items-center gap-1.5 text-[11px]">{right}</div>
+    </header>
+  );
+}
+
+const LiveDot = () => (
+  <span className="flex items-center gap-1.5 text-muted">
+    <span className="size-1.5 animate-pulse rounded-full bg-brand" /> Live
+  </span>
+);
+
+function ListSkeleton() {
+  return (
+    <ul className="space-y-2 p-3" aria-busy>
+      {[0, 1, 2, 3].map((i) => (
+        <li key={i} className="h-20 animate-pulse rounded-xl bg-white/[0.03]" />
+      ))}
+    </ul>
+  );
+}
+
+function EmptyNote({ children }: { children: React.ReactNode }) {
+  return <div className="grid flex-1 place-items-center p-8 text-center text-sm text-muted">{children}</div>;
+}
+
+/** The latest calls from humans and agents, newest first, with the move since each call. */
+function CallsTab({ nowMs }: { nowMs: number }) {
+  const feed = useFeed('global');
+  return (
+    <>
+      <TabHeader
+        title="Calls"
+        sub="humans and AI agents"
+        right={
+          <>
+            <LiveDot />
+            <Link href="/feed" className="rounded-full border border-white/[0.08] px-2.5 py-1 text-muted hover:text-ink">
+              Open feed
+            </Link>
+          </>
+        }
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {feed.incoming.length > 0 && (
+          <button type="button" onClick={feed.showIncoming} className="sticky top-0 z-10 mx-auto my-2 block rounded-full bg-brand px-3 py-1 text-xs font-semibold text-bg shadow">
+            {feed.incoming.length} new call{feed.incoming.length > 1 ? 's' : ''}
+          </button>
+        )}
+        {feed.items == null ? (
+          <ListSkeleton />
+        ) : feed.items.length === 0 ? (
+          <EmptyNote>No calls yet. Call a token from its page.</EmptyNote>
+        ) : (
+          <ul className="space-y-2 p-2">
+            {feed.items.slice(0, 40).map((c) => (
+              <CallCard key={c.id} c={c} nowMs={nowMs} showToken />
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** Tokens by swap volume over the last hour (GET /tokens/trending, refreshed every 2 minutes server side). */
+function TrendingTab({ serverNow, quick, quick2 }: { serverNow: number; quick: number; quick2: number }) {
+  const [rows, setRows] = useState<TrendCard[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = () =>
+      fetch(`${API_URL}/tokens/trending`)
+        .then((r) => (r.ok ? (r.json() as Promise<{ tokens: TrendCard[] }>) : null))
+        .then((b) => live && b && setRows(b.tokens))
+        .catch(() => undefined);
+    void load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, []);
+  return (
+    <>
+      <TabHeader title="Trending" sub="by volume, last hour" right={<LiveDot />} />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {rows == null ? (
+          <ListSkeleton />
+        ) : rows.length === 0 ? (
+          <EmptyNote>Nothing traded in the last hour yet.</EmptyNote>
+        ) : (
+          <ul>
+            {rows.map((t, i) => (
+              <Row
+                key={t.address}
+                t={t}
+                col={t.status === 'migrated' ? 'migrated' : 'new'}
+                serverNow={serverNow}
+                flashAt={0}
+                enter={false}
+                quick={quick}
+                quick2={quick2}
+                note={
+                  t.trend && (
+                    <>
+                      {t.trend.featured ? (
+                        <span className="rounded bg-brand/15 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-brand">Featured</span>
+                      ) : (
+                        <span className="font-mono text-ink/70">#{i + 1 - rows.filter((r, j) => j < i && r.trend?.featured).length}</span>
+                      )}
+                      <Dot />
+                      <span>
+                        <span className="font-mono text-ink/75">{usd(t.trend.volume1h)}</span> vol 1h
+                      </span>
+                      <Dot />
+                      <span>
+                        <span className="font-mono text-ink/75">{compact(t.trend.trades1h)}</span> trades
+                      </span>
+                      {t.trend.calls1h > 0 && (
+                        <>
+                          <Dot />
+                          <span className="flex items-center gap-1 text-brand">
+                            <Megaphone size={11} weight="fill" /> {t.trend.calls1h} call{t.trend.calls1h > 1 ? 's' : ''}
+                          </span>
+                        </>
+                      )}
+                    </>
+                  )
+                }
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+
+/** The reader's starred tokens (lib/watchlist, this browser), live cards from the API. */
+function WatchlistTab({ serverNow, quick, quick2 }: { serverNow: number; quick: number; quick2: number }) {
+  const list = useWatchlist();
+  const [cards, setCards] = useState<Map<string, TokenCard>>(new Map());
+  const key = list.join(',');
+  useEffect(() => {
+    if (!key) return;
+    let live = true;
+    const load = async () => {
+      const got = await Promise.all(
+        key.split(',').map((a) =>
+          fetch(`${API_URL}/tokens/${a}`)
+            .then((r) => (r.ok ? (r.json() as Promise<TokenCard>) : null))
+            .catch(() => null),
+        ),
+      );
+      if (live) setCards(new Map(got.filter((t): t is TokenCard => !!t?.address).map((t) => [t.address, t])));
+    };
+    void load();
+    const id = setInterval(load, 30_000);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
+  }, [key]);
+  const shown = list.map((a) => cards.get(a)).filter((t): t is TokenCard => !!t);
+  return (
+    <>
+      <TabHeader title="Watchlist" sub={list.length ? `${list.length} starred` : 'on this device'} />
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {!list.length ? (
+          <EmptyNote>
+            Star a token on its page to keep it here.
+            <br />
+            Your watchlist stays on this device.
+          </EmptyNote>
+        ) : !shown.length ? (
+          <ListSkeleton />
+        ) : (
+          <ul>
+            {shown.map((t) => (
+              <Row key={t.address} t={t} col={t.status === 'migrated' ? 'migrated' : 'new'} serverNow={serverNow} flashAt={0} enter={false} quick={quick} quick2={quick2} />
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}

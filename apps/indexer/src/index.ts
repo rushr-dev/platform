@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { refreshRaetoRecords } from './agents/raeto';
 import { pollFomo } from './fomo';
+import { refreshTrending } from './trending';
 import { applyQHooks, applyQHooksMarkets, fetchQHooksLaunches, fetchQHooksMarkets } from './qhooks-sync';
 import { LAUNCHPADS } from '@rushr/core';
 import { cors } from 'hono/cors';
@@ -610,6 +611,17 @@ export default {
             and coalesce((select min(x.block) from transfers x where x.token = t.address), 0) > t.created_block + 100
           order by t.volume_24h_usd desc nulls last limit 20`;
         if (rows.length) await holderHistory(env).enqueueHolders(rows.map((r) => r.address));
+      } finally {
+        await sql.end({ timeout: 5 });
+      }
+    }
+    // Every 2 minutes: Trending (last hour's volume per token, trending.ts).
+    if (minute % 2 === 1) {
+      const sql = postgres(dbUrl(env), { max: 1, fetch_types: false, prepare: false });
+      try {
+        await refreshTrending(sql);
+      } catch (err) {
+        console.error('trending refresh failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }

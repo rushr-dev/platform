@@ -17,6 +17,7 @@ import { PAUSED_BODY, readPause } from './pause';
 import { TRANSPARENCY_CACHE_S, transparency } from './transparency';
 import { STOCKS_CACHE_S, stocksList } from './stocks';
 import { tokenFomo } from './fomo';
+import { readTrending } from './trending';
 import { PNL_RANGES, walletPnlHistory, walletTrades, type PnlRange } from './wallet-history';
 
 type Ctx = { Bindings: Env; Variables: { sql: Sql } };
@@ -73,6 +74,21 @@ api.get('/tokens', async (c) => {
     showDust: q('dust') === '1',
   });
   return c.json({ column, tokens }, 200, cache(2));
+});
+
+/**
+ * Trending: tokens by swap volume over the last hour (trending.ts, refreshed by the cron every 2 minutes),
+ * featured tokens first. Each card carries `trend` {volume1h, trades1h, calls1h, featured}.
+ */
+api.get('/tokens/trending', async (c) => {
+  const { at, rows } = await readTrending(c.var.sql);
+  const cards = await tokenSummaries(c.var.sql, { addresses: rows.map((r) => r.token) });
+  const byAddr = new Map(cards.map((t) => [t.address as string, t]));
+  const tokens = rows.flatMap((r) => {
+    const card = byAddr.get(r.token);
+    return card ? [{ ...card, trend: { volume1h: r.volume1h, trades1h: r.trades1h, calls1h: r.calls1h, featured: r.featured } }] : [];
+  });
+  return c.json({ updatedAt: at, tokens }, 200, cache(30));
 });
 
 /** Token page header: summary + full signals + dev record. */
