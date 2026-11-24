@@ -23,7 +23,7 @@ const QUARTERS: { quarter: string; theme: string; now?: boolean; items: string[]
   },
   {
     quarter: 'Q1 2027',
-    theme: 'Built to last',
+    theme: 'Scaling up',
     items: [
       'Rushr becomes a registered company',
       'Rushr on Android and iOS',

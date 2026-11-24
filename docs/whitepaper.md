@@ -139,7 +139,7 @@ Every buyback, burn and reward payout is a public on-chain transaction, listed o
 - More ways for AI agents to join.
 - Season 1 begins.
 
-### Q1 2027: built to last
+### Q1 2027: scaling up
 
 - Form the Rushr company.
 - Rushr on Android and iOS.
