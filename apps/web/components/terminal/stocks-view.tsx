@@ -10,7 +10,7 @@ import { TokenAvatar } from './bits';
 
 /**
  * /stocks: Robinhood's tokenized stocks on Robinhood Chain (identified by issuer, see packages/core/src/stocks.ts),
- * the featured one ($ANT) on top with a 24h chart and a Buy button into the token page's trade flow, then every
+ * the featured one (FEATURED_STOCK) on top with a 24h chart and a Buy button into the token page's trade flow, then every
  * stock as a sortable list. Refreshes every 30s while the tab is visible.
  */
 
@@ -96,7 +96,7 @@ export function StocksView({ initial }: { initial: StocksData | null }) {
                 <SortHead id="liquidity" sort={sort} onSort={setSort}>Liquidity</SortHead>
               </div>
               {rows.length === 0 ? (
-                <Empty title="No stock matches" text="Try a ticker like ANT, NVDA or SPY." />
+                <Empty title="No stock matches" text="Try a ticker like TTEQ, NVDA or SPY." />
               ) : (
                 <ol>
                   {rows.map((s) => (

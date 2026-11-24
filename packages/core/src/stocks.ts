@@ -23,13 +23,19 @@ export const STOCK_TOKEN_BEACON: Address = '0xe10b6f6b275de231345c20d14ab812db62
 /** EIP-1967 beacon slot: bytes32(uint256(keccak256('eip1967.proxy.beacon')) - 1). */
 export const EIP1967_BEACON_SLOT = '0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50' as const;
 
-/** Accounts that deploy Robinhood stock tokens (lowercase). */
-export const STOCK_DEPLOYERS: Address[] = ['0x2b94105fff37630f98e1f24811dad588fc5c3a87'];
+/**
+ * Accounts that deploy Robinhood stock tokens (lowercase). The second deployed TTEQ (T. Rowe Price Technology
+ * ETF, 2026-11-23); its beacon slot held STOCK_TOKEN_BEACON when checked.
+ */
+export const STOCK_DEPLOYERS: Address[] = ['0x2b94105fff37630f98e1f24811dad588fc5c3a87', '0xd516673281e167e22347fea72c8045aedf26edf1'];
 
 export const STOCK_NAME_SUFFIX = ' • Robinhood Token';
 
-/** The stock shown first on /stocks: Anthropic, PBC Class A Common Stock (ANT). */
-export const FEATURED_STOCK: Address = '0xbbb6c29bcc3a1028a2b54310df73f4f7a3bcb373';
+/**
+ * The stock shown first on /stocks: T. Rowe Price Technology ETF (TTEQ), Robinhood's first actively managed
+ * ETF stock token (launched 2026-11-23). Before it: Anthropic (ANT), 0xbbb6c29bcc3a1028a2b54310df73f4f7a3bcb373.
+ */
+export const FEATURED_STOCK: Address = '0x80e10255a83b257f5a8674d363f547842aa53b8e';
 
 /** True for a Robinhood stock token by the index rule (deployer + name). */
 export function isStockToken(t: { deployer?: string | null; name?: string | null }): boolean {
