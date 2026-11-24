@@ -260,6 +260,10 @@ export const INFRA_ADDRESSES: Address[] = [
   '0x204faca1764b154221e35c0d20abb3c525710498', // Universal Router (current; the one Rushr builds swaps for)
   UNISWAP.permit2,
   '0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789', // ERC-4337 EntryPoint v0.6
+  // Routers the FOMO app trades through (curve and pool trades): they receive the token and forward it to
+  // the user in the same tx, so they are never the trader. Seen on NEARL, 24 Nov 2026.
+  '0x0005ea38eb0a69d1253508ebdbdb9ea8cb26b5ef',
+  '0x8f10b468b06c6fd214b65f87778827f7d113f996',
   '0x0000000000000000000000000000000000000000',
   '0x000000000000000000000000000000000000dead',
 ];

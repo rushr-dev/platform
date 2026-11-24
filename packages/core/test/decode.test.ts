@@ -94,6 +94,34 @@ describe('decodeLogs: PONS curve', () => {
     ]);
   });
 
+  it('credits a router-routed curve trade (FOMO) to the wallet the tokens came from or went to', () => {
+    const curve = '0xd6915857f90dec51141f26970be3368967c28f54' as Address;
+    const creator = '0x39bdee788bd249d199cdaef9e69c98402f78f182' as Address;
+    const router = '0x0005ea38eb0a69d1253508ebdbdb9ea8cb26b5ef' as Address; // FOMO's router
+    const t = (a: Address) => pad(a, { size: 32 });
+    const words = (...v: bigint[]) => encodeAbiParameters(v.map(() => ({ type: 'uint256' })), v);
+    const amt = 5n * 10n ** 23n;
+    const logs = [
+      log('0xe33e9e479df8802cb0866d5d05258bec4cf62948', [TOPICS.ponsLaunch, t(TOKEN), t(curve), t(creator)], words(0n, 2n * 10n ** 16n, 10n ** 24n)),
+      // Buy: the curve pays the router, the router forwards to the user. The event names the router.
+      transferLog(TOKEN, curve, router, amt, '0x02'),
+      log(curve, [TOPICS.ponsBuy, t(router), t(router)], words(10n ** 16n, amt, 1n, 1n), '0x02'),
+      transferLog(TOKEN, router, USER, amt, '0x02'),
+      // Sell: the user pays the router, the router pays the curve.
+      transferLog(TOKEN, USER, router, amt, '0x03'),
+      transferLog(TOKEN, router, curve, amt, '0x03'),
+      log(curve, [TOPICS.ponsSell, t(router), t(router)], words(amt, 10n ** 15n, 1n, 1n), '0x03'),
+      // No Transfers in the batch (live socket): falls back to the event's address.
+      log(curve, [TOPICS.ponsBuy, t(router), t(router)], words(10n ** 16n, amt, 1n, 1n), '0x04'),
+    ];
+    const r = decodeLogs(logs, emptyCtx);
+    expect(r.swaps.map((s) => [s.side, s.trader])).toEqual([
+      ['buy', USER],
+      ['sell', USER],
+      ['buy', router],
+    ]);
+  });
+
   it('maps a PONS v2 launch (migrator event, real FRI13 log) to its curve, with no dev-buy price', () => {
     const token = '0x9c25ec97e7041b455d4b25849f8e861951049705' as Address;
     const curve = '0x3a532dec75793987a65ebe7daede1b6074a03f88' as Address;

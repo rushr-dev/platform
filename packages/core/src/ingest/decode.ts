@@ -398,7 +398,9 @@ export function decodeLogs(logs: RawLog[], ctx: DecodeContext): DecodeResult {
       const buy = t0 === TOPICS.ponsBuy;
       out.swaps.push({
         ...m, pool: pool.id, token: pool.token, quote: pool.quote, side: buy ? 'buy' : 'sell',
-        trader: topicAddr(l.topics[2] ?? l.topics[1]),
+        // The event names whoever called the curve, which is a router when an app (e.g. FOMO) routes the
+        // trade; the token's Transfers in the same tx say which wallet ended up with it, as for pool swaps.
+        trader: resolveTrader(txTransfers.get(m.tx), pool.token, buy ? 'buy' : 'sell', topicAddr(l.topics[2] ?? l.topics[1]), isPool),
         // buy: [quoteIn, tokensOut, fee, fee]; sell: [tokensIn, quoteOut, fee, fee] (quote = ETH or USDG)
         tokenAmount: buy ? uint(l.data, 1) : uint(l.data, 0),
         quoteAmount: buy ? uint(l.data, 0) : uint(l.data, 1),
