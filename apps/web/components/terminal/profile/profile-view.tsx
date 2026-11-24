@@ -446,7 +446,7 @@ function Positions({ state, positions, handle, own }: { state: 'loading' | 'read
       ) : !rows.length ? (
         <Empty text={tab === 'open' ? 'No open positions.' : 'No closed positions yet.'} />
       ) : (
-        <ul>
+        <ul className="max-h-[36rem] overflow-y-auto overscroll-contain">
           {rows.map(({ p, held, value, pnl, pnlPct, open }) => {
             const tone = pnl >= 0 ? 'text-brand' : 'text-risk-high';
             const pct = pnlPct != null ? `${pnl >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%` : null;
@@ -515,6 +515,8 @@ function heldTokens(p: Position): number {
 }
 
 /* ------------------------------------------------------------------ activity */
+// Positions, Transactions and Calls scroll inside their card past a max height, so a long history doesn't
+// stretch the whole profile page.
 
 function Activity({ handle, wallet }: { handle: string | null; wallet: string | null }) {
   const [tab, setTab] = useState<'calls' | 'tx'>('calls');
@@ -576,7 +578,7 @@ function TradeList({ items }: { items: WalletTrade[] }) {
   const now = useNow(Date.now());
   if (!items.length) return <Empty text="No trades yet." />;
   return (
-    <ul>
+    <ul className="max-h-[36rem] overflow-y-auto overscroll-contain">
       {items.map((t) => (
         <li key={`${t.tx}:${t.logIndex}`} className="border-t border-white/[0.03] first:border-0">
           <Link href={`/token/${t.token}`} className="flex items-center gap-3 px-3 py-2.5 hover:bg-white/[0.02]">
@@ -609,7 +611,7 @@ function CalloutList({ items }: { items: Callout[] }) {
   const now = useNow(Date.now());
   if (!items.length) return <Empty text="No calls yet." sub="Calls are posted from a token page: your take, timestamped and tracked from the market cap at the time." />;
   return (
-    <ul className="space-y-2 p-2">
+    <ul className="max-h-[48rem] space-y-2 overflow-y-auto overscroll-contain p-2">
       {items.map((c) => (
         <CallCard key={c.id} c={c} nowMs={now} showToken />
       ))}
