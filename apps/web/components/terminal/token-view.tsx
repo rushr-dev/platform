@@ -24,6 +24,7 @@ import { AboutCard, PositionCard, ThesisBox } from './simple-rail';
 import { SafetyGrid } from './safety-grid';
 import { useTokenCallouts, type Callout } from '@/lib/callouts';
 import { CallsFeed } from './calls-feed';
+import { FomoTheses, thesisCount } from './fomo-theses';
 import { useTokenFomo } from '@/lib/fomo';
 import { useEthUsd } from '@/lib/profile';
 
@@ -77,8 +78,10 @@ export function TokenView({
   const [tab, setTab] = useState<Tab>('trades');
   // Members' calls on this token: the feed column (or Calls tab) and the chart markers.
   const calls = useTokenCallouts(t.address);
-  // FOMO theses and big FOMO trades: chart markers only.
+  // FOMO theses and big FOMO trades: chart markers, and the theses also as a list next to the calls.
   const fomo = useTokenFomo(t.address);
+  const theses = thesisCount(fomo);
+  const [column, setColumn] = useState<'calls' | 'fomo'>('calls');
   const [selectedCall, setSelectedCall] = useState<string | null>(null);
   const [callsOpen, setCallsOpen] = useStoredFlag('rushr.calls.open', true);
   const wide = useMediaQuery('(min-width: 1280px)');
@@ -143,8 +146,10 @@ export function TokenView({
       setTab={setTab}
       holdersCount={t.holders}
       callsCount={calls.items?.length ?? null}
+      thesesCount={theses}
       body={
         <>
+          {tab === 'fomo' && <FomoTheses symbol={t.symbol} items={fomo} serverNow={serverNow} />}
           {tab === 'calls' && <CallsPanel symbol={t.symbol} items={calls.items} selected={selectedCall} onSelect={setSelectedCall} serverNow={serverNow} />}
           {tab === 'trades' && <TradesTable trades={trades} ctx={ctx} supply={supply} serverNow={serverNow} maker={maker} onMaker={showMaker} />}
           {tab === 'holders' && (
@@ -192,15 +197,35 @@ export function TokenView({
           <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.06] bg-surface" aria-label={`Calls on ${t.symbol}`}>
             {callsOpen ? (
               <>
-                <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-2.5">
-                  <h2 className="text-sm font-semibold">Calls on ${t.symbol}</h2>
-                  {calls.items && <span className="font-mono text-xs text-muted">{calls.items.length}</span>}
+                <div className="flex items-center gap-1 border-b border-white/[0.05] px-2 py-2">
+                  <h2 className="sr-only">Calls on ${t.symbol}</h2>
+                  {(
+                    [
+                      ['calls', 'Calls', calls.items?.length ?? null],
+                      ['fomo', 'FOMO theses', theses],
+                    ] as const
+                  ).map(([id, label, n]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setColumn(id)}
+                      aria-pressed={column === id}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-medium ${column === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'}`}
+                    >
+                      {label}
+                      {n ? <span className="ml-1 font-mono text-[11px] text-muted">{n}</span> : null}
+                    </button>
+                  ))}
                   <button type="button" onClick={() => setCallsOpen(false)} aria-label="Hide calls" title="Hide calls" className="ml-auto rounded-md p-1 text-muted hover:bg-white/[0.05] hover:text-ink">
                     <CaretLeft size={14} />
                   </button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto [scrollbar-width:thin]">
-                  <CallsPanel symbol={t.symbol} items={calls.items} selected={selectedCall} onSelect={setSelectedCall} serverNow={serverNow} />
+                  {column === 'fomo' ? (
+                    <FomoTheses symbol={t.symbol} items={fomo} serverNow={serverNow} />
+                  ) : (
+                    <CallsPanel symbol={t.symbol} items={calls.items} selected={selectedCall} onSelect={setSelectedCall} serverNow={serverNow} />
+                  )}
                 </div>
               </>
             ) : (
@@ -242,7 +267,10 @@ export function TokenView({
               onSelectCall={(id) => {
                 setSelectedCall(id);
                 if (id && !wide) setTab('calls');
-                if (id) setCallsOpen(true);
+                if (id) {
+                  setCallsOpen(true);
+                  setColumn('calls');
+                }
               }}
             />
           </div>
@@ -878,7 +906,7 @@ function DevStat({ k, v, bad, good }: { k: string; v: string; bad?: boolean; goo
 
 /* ------------------------------------------------------------------ bottom tabs */
 
-type Tab = 'trades' | 'calls' | 'holders' | 'traders' | 'early' | 'bubbles' | 'dev';
+type Tab = 'trades' | 'calls' | 'fomo' | 'holders' | 'traders' | 'early' | 'bubbles' | 'dev';
 
 /** The calls feed with its own clock (time-ago labels), so the page doesn't re-render every second. */
 function CallsPanel(props: { symbol: string; items: Callout[] | null; selected: string | null; onSelect: (id: string | null) => void; serverNow: number }) {
@@ -916,17 +944,20 @@ function Tabs({
   setTab,
   holdersCount,
   callsCount,
+  thesesCount,
   body,
 }: {
   tab: Tab;
   setTab: (t: Tab) => void;
   holdersCount: number;
   callsCount: number | null;
+  thesesCount: number | null;
   body: React.ReactNode;
 }) {
   const tabs: [Tab, string][] = [
     ['trades', 'Trades'],
     ['calls', callsCount ? `Calls ${callsCount}` : 'Calls'],
+    ['fomo', thesesCount ? `FOMO theses ${thesesCount}` : 'FOMO theses'],
     ['holders', `Holders ${nf.format(holdersCount)}`],
     ['traders', 'Top traders'],
     ['early', 'Early buyers'],
@@ -941,7 +972,7 @@ function Tabs({
             key={id}
             type="button"
             onClick={() => setTab(id)}
-            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${tab === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'} ${id === 'calls' ? 'xl:hidden' : ''}`}
+            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium ${tab === id ? 'bg-white/[0.08] text-ink' : 'text-muted hover:text-ink'} ${id === 'calls' || id === 'fomo' ? 'xl:hidden' : ''}`}
           >
             {label}
           </button>
