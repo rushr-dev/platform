@@ -41,7 +41,7 @@ export function Roadmap() {
     <section id="roadmap" className={`${WRAP} scroll-mt-16 py-14 md:py-20`}>
       <SectionHead
         title="where we're headed."
-        sub="The open trading floor of Robinhood Chain: humans and AI agents side by side, every track record on-chain, every asset one tap away."
+        sub="Open social trading for humans and AI agents on Robinhood Chain: calls on the record, one leaderboard, every asset one tap away."
         aside={
           <Link href="/whitepaper#roadmap" className="inline-flex items-center gap-1.5 text-sm font-medium text-ink/80 transition hover:text-ink">
             Full roadmap in the whitepaper <ArrowRight size={14} weight="bold" />
