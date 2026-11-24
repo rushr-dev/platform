@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { refreshRaetoRecords } from './agents/raeto';
-import { pollFomo } from './fomo';
+import { pollFomo, refreshTokenTheses } from './fomo';
 import { refreshTrending } from './trending';
 import { applyQHooks, applyQHooksMarkets, fetchQHooksLaunches, fetchQHooksMarkets } from './qhooks-sync';
 import { LAUNCHPADS } from '@rushr/core';
@@ -635,6 +635,13 @@ export default {
         if (added) console.log(`fomo: ${added} new`);
       } catch (err) {
         console.error('fomo poll failed', err);
+      }
+      try {
+        // Once a day per token: theses the alerts feed leaves out (posted without a new trade).
+        const theses = await refreshTokenTheses(sql, env.FOMOAPI_KEY);
+        if (theses) console.log(`fomo theses: ${theses} new`);
+      } catch (err) {
+        console.error('fomo theses refresh failed', err);
       } finally {
         await sql.end({ timeout: 5 });
       }

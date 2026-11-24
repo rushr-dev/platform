@@ -151,3 +151,75 @@ export async function tokenFomo(sql: postgres.Sql, token: string, limit = 100): 
     ts: r.ts.toISOString(),
   }));
 }
+
+/**
+ * Theses posted without a new trade (attached to an older one) never reach the alerts feed above, so
+ * for a few tokens we also read FOMO's per-token thesis list. It costs 1,250 credits a call, so each
+ * token is refreshed at most once a day; THESIS_TOKENS is the whole list (only $RUSHR for now).
+ */
+export const THESIS_TOKENS = ['0xa8ceeeb747fcf136947c35c5de6187ee90d6bfed'];
+const THESIS_EVERY_MS = 24 * 3_600_000;
+
+export interface TokenThesis {
+  id: string;
+  handle: string | null;
+  userId?: string | null;
+  avatar?: string | null;
+  text: string | null;
+  ts: string;
+  networkId?: number | null;
+  token?: { address?: string | null } | null;
+}
+
+/** One thesis from /v2/thesis/token → a fomo_events row, or null when it is unusable. */
+export function thesisRow(t: TokenThesis, token: string): FomoRow | null {
+  const ts = Date.parse(t.ts);
+  const addr = (t.token?.address ?? token).toLowerCase();
+  if (!t.id || !t.handle || !Number.isFinite(ts) || addr !== token || (t.networkId != null && t.networkId !== 4663)) return null;
+  const body = t.text?.trim() || null;
+  if (!body) return null;
+  return {
+    id: t.id,
+    kind: 'thesis',
+    token,
+    handle: t.handle,
+    user_id: t.userId ?? null,
+    avatar_url: t.avatar && /^https:\/\//.test(t.avatar) ? t.avatar : null,
+    body,
+    usd: null,
+    ts: new Date(ts),
+  };
+}
+
+/**
+ * Refresh THESIS_TOKENS whose last refresh is over a day old. The same thesis can also arrive through
+ * the alerts feed under another id, so a row is skipped when that trader already has that text there.
+ * Returns how many rows were new.
+ */
+export async function refreshTokenTheses(sql: postgres.Sql, key: string, now = Date.now()): Promise<number> {
+  let added = 0;
+  for (const token of THESIS_TOKENS) {
+    const stateKey = `fomo:theses:${token}`;
+    const [state] = await sql<{ updated_at: Date }[]>`select updated_at from indexer_state where key = ${stateKey}`;
+    if (state && now - state.updated_at.getTime() < THESIS_EVERY_MS) continue;
+    // Mark first, so a failing call is not retried (and charged) every cron tick.
+    await sql`
+      insert into indexer_state (key, value, updated_at) values (${stateKey}, ${sql.json({})}, now())
+      on conflict (key) do update set updated_at = now()`;
+    const r = await fetch(`${BASE}/v2/thesis/token/${token}?chain=robinhood`, {
+      headers: { authorization: `Bearer ${key}`, accept: 'application/json' },
+    });
+    if (!r.ok) throw new Error(`fomoapi theses ${r.status}`);
+    const b = (await r.json()) as { theses?: TokenThesis[] };
+    for (const row of (b.theses ?? []).map((t) => thesisRow(t, token)).filter((x): x is FomoRow => x != null)) {
+      const res = await sql`
+        insert into fomo_events (id, kind, token, handle, user_id, avatar_url, body, usd, ts)
+        select ${row.id}, 'thesis', ${row.token}, ${row.handle}, ${row.user_id}, ${row.avatar_url}, ${row.body}, null, ${row.ts}
+        where not exists (
+          select 1 from fomo_events where token = ${row.token} and kind = 'thesis' and handle = ${row.handle} and body = ${row.body})
+        on conflict (id) do nothing`;
+      added += res.count;
+    }
+  }
+  return added;
+}
