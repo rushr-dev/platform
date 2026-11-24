@@ -6,6 +6,7 @@ import { API_URL, getColumn, getTrades, type TokenCard } from '@/lib/api';
 import { getDexTokens, type DexToken } from '@/lib/dexscreener';
 import { getLandingData } from '@/lib/landing';
 import { Numbers, NumbersFallback } from '@/components/landing/numbers';
+import { Roadmap } from '@/components/landing/roadmap';
 
 export const revalidate = 30;
 export const viewport: Viewport = { themeColor: '#f7f5f2' };
@@ -84,6 +85,7 @@ export default async function Home() {
         <Suspense fallback={<FloorFallback />}>
           <LiveFloor />
         </Suspense>
+        <Roadmap />
         <Closing />
       </main>
       <Footer />

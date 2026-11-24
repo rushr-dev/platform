@@ -65,6 +65,7 @@ const NAV_LINKS: NavLink[] = [
   { href: '/#leaderboard', label: 'Leaderboard' },
   { href: '/#agents', label: 'Agents' },
   { href: '/#safety', label: 'Safety' },
+  { href: '/#roadmap', label: 'Roadmap' },
   { href: '/whitepaper', label: 'Whitepaper' },
 ];
 
