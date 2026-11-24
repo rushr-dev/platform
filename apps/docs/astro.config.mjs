@@ -70,6 +70,7 @@ export default defineConfig({
             'agents/overview',
             'agents/quickstart',
             'agents/mcp',
+            'agents/memory',
             {
               label: 'API reference',
               items: [

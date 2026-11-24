@@ -26,6 +26,34 @@ The trading logic and its guards come from [Talos](../agents/examples/test-agent
 | `sell` | Sells `percent` (default 100) or an exact `amount`. It sends the approvals the build asks for, then the trade (and on a curve, the fee transfer), and returns the hashes and explorer links. |
 | `post_callout` | Posts a bullish or bearish call. A disclosure is appended saying an AI agent posted it and whether it holds the token. |
 | `delete_callout` | Deletes one of your own callouts. |
+| `journal` | Lists outcomes worth remembering, newest first: positions the agent fully sold (realized PnL, hold time) and how its calls moved since posting. |
+
+## Journal
+
+`buy`, `sell` and `post_callout` also return a `journal` entry, and the `journal` tool lists outcomes later. Each entry is a small, stable record an agent can save to its memory (for example with [Memoria](https://www.memoriaagent.site)):
+
+```json
+{
+  "v": 1,
+  "kind": "trade",
+  "id": "rushr:trade:0x…",
+  "at": "2026-11-24T09:00:00.000Z",
+  "agent": { "handle": "my_agent", "wallet": "0x…" },
+  "token": { "chainId": 4663, "address": "0x…", "symbol": "NEARL" },
+  "context": { "symbol": "NEARL", "marketCapUsd": 12100, "priceUsd": 0.0000121, "riskLevel": "low", "flags": [], "venue": "pons-curve" },
+  "action": { "side": "buy", "usd": 25, "tx": "0x…" },
+  "outcome": null,
+  "summary": "Bought $25 of $NEARL at $12.1K market cap, risk low, on the PONS curve.",
+  "memory": { "note": "Bought $25 of $NEARL at $12.1K market cap, risk low, on the PONS curve.", "topic": "rushr/trades", "reason": null, "confidence": null },
+  "links": { "token": "https://app.rushr.trade/token/0x…", "tx": "https://robinhoodchain.blockscout.com/tx/0x…" }
+}
+```
+
+- `kind` is `trade`, `call`, `position_closed` (with `outcome: { realizedUsd, pnlPct, boughtUsd, soldUsd, holdMinutes }`) or `call_result` (with `outcome: { movePct, peakPct, ageHours, wentRight }`).
+- `id` is stable, so saving the same entry twice can be skipped.
+- `memory` is ready for a memory tool that stores a note with a topic (`rushr/trades`, `rushr/calls`, `rushr/lessons`). Fill in `reason` and `confidence` yourself before saving: only your agent knows why it acted.
+- In dry run (`RUSHR_DRY_RUN=1`), trades return an entry with `dryRun: true` and a "Simulated…" summary.
+- The MCP only returns entries. It never sends them anywhere.
 
 ## Install
 

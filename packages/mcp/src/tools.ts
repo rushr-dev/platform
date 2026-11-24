@@ -31,6 +31,7 @@ export const schemas = {
     before: z.string().max(200).optional().describe('`next` from the previous page.'),
   },
   my_status: {},
+  journal: { limit: z.number().int().min(1).max(100).default(30).describe('Most entries to return, newest first.') },
   create_wallet: {},
   register: {
     handle: handle.describe('Public handle, 3-20 characters of a-z, 0-9 and _.'),
@@ -90,6 +91,8 @@ export function registerTools(server: McpServer, r: Rushr) {
   server.registerTool('leaderboard', { title: 'Leaderboard', description: 'Rushr leaderboard: humans and agents ranked by USD PnL from indexed swaps.', inputSchema: schemas.leaderboard, annotations: read }, (a) => run(() => r.leaderboard(a)));
 
   server.registerTool('feed', { title: 'Callout feed', description: 'Recent callouts (calls with a stance and a tracked entry), newest first. Filter by token or member, or read the members you follow.', inputSchema: schemas.feed, annotations: read }, (a) => run(() => r.feed(a as Parameters<Rushr['feed']>[0])));
+
+  server.registerTool('journal', { title: 'Journal', description: "Outcomes worth remembering, newest first: positions this agent fully sold (realized PnL, hold time) and how its calls moved since posting. Each entry has a stable id, a one-line summary and a `memory` block (note, topic) ready for a memory tool. buy, sell and post_callout also return a `journal` entry when they happen.", inputSchema: schemas.journal, annotations: read }, (a) => run(() => r.journal(a)));
 
   server.registerTool('my_status', { title: 'My status', description: "This agent's wallet: ETH balance and what's spendable, token holdings, PnL, leaderboard rank, recent callouts, and how much of the daily cap is left.", inputSchema: schemas.my_status, annotations: read }, () => run(() => r.myStatus()));
 

@@ -7,6 +7,7 @@ import type { Config } from './config.ts';
 import { checkBuyCaps, checkFeeUnpaid, checkImpact, checkSafety, GuardError, isCurve, isPairCurve, probeAmount, splitImpact, vetBuild, type Built, type FeeUnpaid, type ImpactSplit, type PairRoute, type Quote, type Safety, type SpendLedger, type UnsignedTx } from './guards.ts';
 import { usdToWei, weiToUsd } from './price.ts';
 import { createWalletFile, type AgentWallet } from './wallet.ts';
+import { callEntry, callResultEntry, closedEntry, tradeEntry, type CalloutRow, type JournalEntry, type PnlPosition, type TokenContext } from './journal.ts';
 
 export interface SendTx {
   to: Address;
@@ -227,6 +228,19 @@ export class Rushr {
 
   private now = () => (this.d.now ? this.d.now() : Date.now());
 
+  /** Market context for a journal entry, best effort: a failed token read leaves nulls, never fails the trade. */
+  private async journalContext(token: Address, venue: string | null, safety: Safety | null): Promise<TokenContext> {
+    const t = await this.d
+      .api<{ symbol?: string; market_cap_usd?: number | null; price_usd?: number | null; risk?: string | null }>('GET', `/tokens/${token}`, { auth: false })
+      .catch(() => null);
+    return { symbol: t?.symbol ?? null, marketCapUsd: t?.market_cap_usd ?? null, priceUsd: t?.price_usd ?? null, riskLevel: safety?.riskLevel ?? t?.risk ?? null, flags: safety?.flags ?? [], venue };
+  }
+
+  private journalAgent() {
+    const w = this.wallet();
+    return { handle: w.handle() ?? null, wallet: w.address.toLowerCase() };
+  }
+
   private async buyAmount(a: BuyAmount): Promise<{ wei: bigint; usd: number; ethUsd: number }> {
     if ((a.usd === undefined) === (a.amountEth === undefined)) throw new GuardError('invalid_amount', 'give exactly one of usd or amountEth');
     const ethUsd = await this.d.ethUsd();
@@ -358,16 +372,18 @@ export class Rushr {
     const fee = b.followUp ? BigInt(b.followUp.amount) : 0n;
     if (fee > 0n) warnings.push(...checkBuyCaps({ usd: usd + weiToUsd(fee, ethUsd), amountWei: wei + fee, maxTradeUsd: this.d.cfg.maxTradeUsd, dailyUsd: this.d.cfg.dailyUsd, spent24hUsd: this.d.ledger.spent24h(this.now()), freeWei: free, dryRun: this.d.cfg.dryRun }));
     const summary = { token, side: 'buy' as const, amountInEth: formatEther(wei), usd: round2(usd), expectedOut: b.quote.amountOut, minOut: b.quote.minAmountOut, feeBps: b.quote.fee.feeBps, impact, venue: b.quote.pool.venue, riskLevel: safety.riskLevel, ...this.curveFeeView(b), ...pairView(b) };
-    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: [...warnings, ...b.warnings], note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${dryRunTail(b)}` };
+    const ctx = await this.journalContext(token, b.quote.pool.venue, safety);
+    const journal = (hash: string | null, dryRun = false): JournalEntry => tradeEntry({ agent: this.journalAgent(), token, side: 'buy', usd, hash, context: ctx, dryRun, at: new Date(this.now()) });
+    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: [...warnings, ...b.warnings], note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${dryRunTail(b)}`, journal: journal(null, true) };
     if (isPairCurve(b)) {
       const p = await this.sendPairSteps(b, 'buy');
       // The ETH went out with the swap step: it counts toward the cap even if the curve step failed.
       if (p.swapHash) this.d.ledger.record(usd, p.swapHash, this.now());
-      return { ...summary, ...p, ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings };
+      return { ...summary, ...p, ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings, journal: journal(p.curveHash ?? p.swapHash) };
     }
     const sent = await this.sendBuilt(b);
     this.d.ledger.record(usd, sent.hash, this.now());
-    return this.result(summary, sent, b, feePaidFirst, ethUsd);
+    return { ...this.result(summary, sent, b, feePaidFirst, ethUsd), journal: journal(sent.hash) };
   }
 
   async sell(i: { token: Address } & SellAmount) {
@@ -387,10 +403,16 @@ export class Rushr {
     const curveOnChain = isCurve(b.quote) ? await this.d.chain.ponsCurve(token).catch(() => null) : undefined;
     vetBuild(b, 'sell', token, amount, { trader: w.address, curveOnChain });
     const summary = { token, side: 'sell' as const, amount: amount.toString(), heldBefore: held.toString(), expectedEthOut: formatEther(BigInt(b.quote.amountOut)), minEthOut: formatEther(BigInt(b.quote.minAmountOut)), feeBps: b.quote.fee.feeBps, impactBps: b.quote.priceImpactBps, venue: b.quote.pool.venue, approvalsNeeded: isPairCurve(b) ? (b.steps ?? []).filter((s) => s.kind === 'approve').map((s) => s.label) : b.approvals.map((a) => a.kind), ...this.curveFeeView(b), ...pairView(b) };
-    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: b.warnings, note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${dryRunTail(b)}` };
-    if (isPairCurve(b)) return { ...summary, ...(await this.sendPairSteps(b, 'sell')), ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings };
+    const [ctx, ethUsd] = await Promise.all([this.journalContext(token, b.quote.pool.venue, null), this.d.ethUsd().catch(() => null)]);
+    const sellUsd = ethUsd ? weiToUsd(BigInt(b.quote.amountOut), ethUsd) : null;
+    const journal = (hash: string | null, dryRun = false): JournalEntry => tradeEntry({ agent: this.journalAgent(), token, side: 'sell', usd: sellUsd, hash, context: ctx, dryRun, at: new Date(this.now()) });
+    if (this.d.cfg.dryRun) return { status: 'dry_run', ...summary, simulation: compactSim(b.simulation), warnings: b.warnings, note: `RUSHR_DRY_RUN=1: built and simulated, nothing signed or sent.${dryRunTail(b)}`, journal: journal(null, true) };
+    if (isPairCurve(b)) {
+      const p = await this.sendPairSteps(b, 'sell');
+      return { ...summary, ...p, ...(feePaidFirst ? { overdueFeePaid: feePaidFirst } : {}), warnings: b.warnings, journal: journal(p.swapHash ?? p.curveHash) };
+    }
     const sent = await this.sendBuilt(b);
-    return this.result(summary, sent, b, feePaidFirst, await this.d.ethUsd().catch(() => null));
+    return { ...this.result(summary, sent, b, feePaidFirst, ethUsd), journal: journal(sent.hash) };
   }
 
   /** The curve fee as the tools show it (nothing for Uniswap builds, whose fee is inside the swap). */
@@ -617,9 +639,34 @@ export class Rushr {
     const symbol = detail.symbol ?? token.slice(0, 8);
     const body = withDisclosure(i.body, symbol, held > 0n);
     if (body.length > 500) throw new GuardError('invalid_body', `callout is ${body.length} characters with the disclosure; the limit is 500. Shorten it by ${body.length - 500}.`);
-    if (this.d.cfg.dryRun) return { status: 'dry_run', token, stance: i.stance, body, note: 'RUSHR_DRY_RUN=1: not posted.' };
+    const ctx = await this.journalContext(token, null, null);
+    const journal = (callId: string | null) => callEntry({ agent: this.journalAgent(), token, stance: i.stance, body, callId, context: ctx, at: new Date(this.now()) });
+    if (this.d.cfg.dryRun) return { status: 'dry_run', token, stance: i.stance, body, note: 'RUSHR_DRY_RUN=1: not posted.', journal: journal(null) };
     const r = await this.d.api<{ callout: { id: string } }>('POST', '/v1/callouts', { body: { token, stance: i.stance, body } });
-    return { status: 'posted', id: r.callout.id, token, stance: i.stance, body };
+    return { status: 'posted', id: r.callout.id, token, stance: i.stance, body, journal: journal(r.callout.id) };
+  }
+
+  /**
+   * Outcomes worth remembering, newest first: positions this agent has fully sold (what it made or lost)
+   * and how its calls have moved since posting. Each entry has a stable `id`, so saving the same one twice
+   * can be skipped. Read-only.
+   */
+  async journal(i: { limit: number }) {
+    const w = this.wallet();
+    const key = w.apiKey();
+    const me = key ? await this.d.api<{ member?: { handle: string } }>('GET', '/v1/agents/me').catch(() => null) : null;
+    const handle = me?.member?.handle ?? w.handle() ?? null;
+    const agent = { handle, wallet: w.address.toLowerCase() };
+    const [positions, calls] = await Promise.all([
+      this.d.api<{ positions?: PnlPosition[] }>('GET', `/wallets/${agent.wallet}/pnl`, { auth: false }).then((r) => r.positions ?? []).catch(() => [] as PnlPosition[]),
+      handle ? this.d.api<{ items?: CalloutRow[] }>('GET', `/v1/members/${handle}/callouts`, { query: { limit: 50 } }).then((r) => r.items ?? []).catch(() => [] as CalloutRow[]) : Promise.resolve([] as CalloutRow[]),
+    ]);
+    const now = new Date(this.now());
+    const entries = [...positions.map((p) => closedEntry(agent, p)), ...calls.map((c) => callResultEntry(agent, c, now))]
+      .filter((e): e is JournalEntry => e != null)
+      .sort((a, b) => b.at.localeCompare(a.at))
+      .slice(0, i.limit);
+    return { format: 'rushr-journal/1', entries, note: 'Trades and calls also return a `journal` entry when they happen. `memory` is ready for a memory tool: add your own reason and confidence before saving.' };
   }
 
   async deleteCallout(id: string) {
