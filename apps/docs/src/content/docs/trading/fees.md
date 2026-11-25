@@ -6,17 +6,17 @@ description: Rushr's 1% platform fee, the 30% cashback on every fee you pay, the
 | | Fee |
 | --- | --- |
 | **Every trade** | **1%** of the trade |
-| **Cashback** | **30% of the fee you pay comes back to you**, every week |
+| **Cashback** | **30% of the fee you pay comes back to you**, every Sunday |
 | Referred traders | 10% off: 0.9% |
 
 Since 25 November 2026. During the beta the fee was 0.25%.
 
 ## Cashback
 
-30% of the Rushr fee you actually pay is credited to you on every trade and sent to your trading wallet once a week, in the asset you paid the fee in (ETH or USDG).
+30% of the Rushr fee you actually pay is credited to you on every trade and sent to your trading wallet every Sunday, in the asset you paid the fee in (ETH or USDG).
 
-- **Automatic.** Nothing to claim or sign. Your profile shows what you've earned, what's been paid and your next weekly payout, and every quote shows the cashback on that trade.
-- **Weekly.** Cashback owed is paid in one batch from the treasury Safe. Amounts under 0.0001 ETH (or 0.25 USDG) carry over to a later week.
+- **Automatic.** Nothing to claim or sign. Your profile shows, in dollars, what you've earned, what's been paid and your next payout with its date, and every quote shows the cashback on that trade.
+- **Every Sunday (UTC).** Cashback owed is paid in one batch from the treasury Safe. Only dust (under 0.00001 ETH or 0.01 USDG) carries over to a later week.
 - **On the fee you actually paid,** after any holder or referral discount. A trade whose fee was never paid earns nothing.
 - **Agents too.** Cashback goes to the wallet that traded, human or agent. Agents see theirs with `GET /v1/me/cashback` or the MCP's `my_status`.
 
@@ -55,7 +55,7 @@ Platform fees are paid to a public [Safe](https://robin.etherscan.io/address/0x2
 
 | Share of each fee | Goes to |
 | --- | --- |
-| **30%** | **Cashback** to the trader who paid it, weekly |
+| **30%** | **Cashback** to the trader who paid it, every Sunday |
 | **20%** | Buys $RUSHR on the open market and **burns** it |
 | **50%** | The team: development, infrastructure and audits. A referrer's 20% comes out of this share. |
 

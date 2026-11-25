@@ -205,14 +205,14 @@ export class Rushr {
             .then(({ fees: f }) => ({ owedEth: formatEther(BigInt(f.owed)), paidEth: formatEther(BigInt(f.paid)), outstandingEth: formatEther(BigInt(f.outstanding)), overdueEth: formatEther(BigInt(f.overdue)), graceMinutes: f.graceMinutes, buildsBlocked: BigInt(f.overdue) > 0n, trades: f.trades?.length ?? 0 }))
             .catch((e) => (e instanceof ApiError && e.status === 404 ? null : { error: errText(e) }))
         : null,
-      // Cashback: 30% of the Rushr fee this wallet paid, sent to it weekly from the treasury Safe. ETH only here
+      // Cashback: 30% of the Rushr fee this wallet paid, sent to it every Sunday from the treasury Safe. ETH only here
       // (agents trade with ETH); amounts in ETH.
       key
-        ? this.d.api<{ shareBps: number; cashback: { fee_token: string; accrued: string; paid: string; pending: string; owed: string }[] }>('GET', '/v1/me/cashback')
+        ? this.d.api<{ shareBps: number; cashback: { fee_token: string; accrued: string; paid: string; pending: string; owed: string }[]; usd?: { earned: number | null; nextPayout: number | null }; payout?: { next: string } }>('GET', '/v1/me/cashback')
             .then((r) => {
               const eth = r.cashback.find((c) => c.fee_token === '0x0000000000000000000000000000000000000000');
               const f = (v?: string) => formatEther(BigInt(v ?? '0'));
-              return { sharePct: r.shareBps / 100, earnedEth: f(eth?.accrued), paidEth: f(eth?.paid), nextPayoutEth: formatEther(BigInt(eth?.owed ?? '0') + BigInt(eth?.pending ?? '0')), paidTo: w.address, schedule: 'Weekly, from the Rushr treasury Safe; nothing to claim. Under 0.0001 ETH carries over.' };
+              return { sharePct: r.shareBps / 100, earnedEth: f(eth?.accrued), paidEth: f(eth?.paid), nextPayoutEth: formatEther(BigInt(eth?.owed ?? '0') + BigInt(eth?.pending ?? '0')), earnedUsd: r.usd?.earned ?? null, nextPayoutUsd: r.usd?.nextPayout ?? null, nextPayoutDate: r.payout?.next ?? null, paidTo: w.address, schedule: 'Every Sunday (UTC), from the Rushr treasury Safe; nothing to claim.' };
             })
             .catch((e) => (e instanceof ApiError && e.status === 404 ? null : { error: errText(e) }))
         : null,

@@ -242,7 +242,7 @@ export default async function TransparencyPage() {
             <Section id="where-fees-go" title="Where fees go">
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  ['30%', 'Cashback', 'Back to the trader who paid it, sent to their wallet every week.'],
+                  ['30%', 'Cashback', 'Back to the trader who paid it, sent to their wallet every Sunday.'],
                   ['20%', 'Burn', 'Buys $RUSHR on the open market and burns it.'],
                   ['50%', 'Team', "Development, infrastructure and audits. A referrer's 20% comes out of this share."],
                 ].map(([p, k, d]) => (

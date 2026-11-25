@@ -23,13 +23,18 @@ export interface CashbackPayout {
   tx_hash: string | null;
   created_at: string;
   paid_at: string | null;
+  /** At today's ETH price. */
+  usd: number | null;
 }
 
 export interface Cashback {
   shareBps: number;
   cashback: CashbackRow[];
   payouts: CashbackPayout[];
-  payout: { schedule: 'weekly'; min: Record<string, string> };
+  /** USD totals at today's ETH price (null when the price is unknown). */
+  usd: { ethUsd: number | null; earned: number | null; paid: number | null; nextPayout: number | null };
+  /** `next`: the next payout day, YYYY-MM-DD (UTC). */
+  payout: { schedule: 'weekly'; next: string; weekday: string; min: Record<string, string> };
 }
 
 export async function getCashback(): Promise<Cashback | null> {

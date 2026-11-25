@@ -47,7 +47,7 @@ Rushr charges a platform fee on trades made through Rushr:
 | | Fee |
 | --- | --- |
 | Every trade | **1%** of the trade (0.25% during the beta, until 25 November 2026) |
-| Cashback | **30% of the fee paid goes back to the trader**, weekly |
+| Cashback | **30% of the fee paid goes back to the trader**, every Sunday |
 | Referred traders | 10% off the fee |
 | $RUSHR holders | 10% off with 1M held, 25% with 10M, 50% with 50M (stacks with the referral discount) |
 
@@ -57,7 +57,7 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 
 | Share of platform fees | Use |
 | --- | --- |
-| **30%** | **Cashback** to the trader who paid it, sent to their wallet weekly |
+| **30%** | **Cashback** to the trader who paid it, sent to their wallet every Sunday |
 | **20%** | Buy $RUSHR on the open market and **burn** it |
 | **50%** | The team: development, infrastructure (indexing, RPC, hosting) and audits. A referrer's 20% comes out of this share. |
 

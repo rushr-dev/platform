@@ -11,13 +11,23 @@ import { encodeFunctionData, erc20Abi, getAddress, type Address } from 'viem';
 export const NATIVE_FEE_TOKEN = '0x0000000000000000000000000000000000000000';
 
 /**
- * Smallest amount paid out, per fee token (raw units); anything below waits for the next week. Set so a
- * payout is always worth more than it costs to send: 0.0001 ETH, 0.25 USDG.
+ * Smallest amount paid out, per fee token (raw units): dust only, so almost every payout goes out on the next
+ * payout day; anything below carries over. 0.00001 ETH (a few cents), 0.01 USDG.
  */
 export const CASHBACK_MIN: Record<string, bigint> = {
-  [NATIVE_FEE_TOKEN]: 10n ** 14n,
-  '0x5fc5360d0400a0fd4f2af552add042d716f1d168': 250_000n,
+  [NATIVE_FEE_TOKEN]: 10n ** 13n,
+  '0x5fc5360d0400a0fd4f2af552add042d716f1d168': 10_000n,
 };
+
+/** Cashback is paid weekly on this day (UTC, 0 = Sunday), from the treasury Safe. */
+export const CASHBACK_PAYOUT_WEEKDAY = 0;
+
+/** The next payout day on or after `now` (UTC date, YYYY-MM-DD); today counts until the end of the day. */
+export function nextPayoutDate(now = new Date()): string {
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  d.setUTCDate(d.getUTCDate() + ((CASHBACK_PAYOUT_WEEKDAY - d.getUTCDay() + 7) % 7));
+  return d.toISOString().slice(0, 10);
+}
 
 export interface Owed {
   wallet: string;

@@ -327,6 +327,9 @@ describe.skipIf(!pg)('trade ledger', () => {
     expect(row).toEqual({ cashback_share_bps: 3000, cashback_accrual: cb.toString() });
     const before = await t.call('GET', '/me/cashback', { auth: bob });
     expect(before.headers.get('cache-control')).toBe('private, no-store');
+    expect(before.json.payout).toMatchObject({ schedule: 'weekly', weekday: 'Sunday', next: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+    expect(new Date(`${before.json.payout.next}T00:00:00Z`).getUTCDay()).toBe(0);
+    expect(before.json.usd).toHaveProperty('nextPayout');
     expect(before.json).toMatchObject({ shareBps: 3000, cashback: [{ fee_token: ETH, trades: 1, accrued: cb.toString(), paid: '0', pending: '0', owed: cb.toString() }], payouts: [] });
     // A paid batch and a batch still waiting for the Safe's signers both stop counting as owed; a voided one doesn't.
     await t.sql`insert into cashback_payouts (id, batch, wallet, fee_token, amount, status, tx_hash, paid_at) values

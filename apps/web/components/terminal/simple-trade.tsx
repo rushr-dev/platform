@@ -405,7 +405,7 @@ function TradeSettings({ trade, side, token, ethUsd, onClose }: { trade: QuickTr
               <Line k="You receive (est.)" v={`${fmtOut(q.amountOut)} ${outSym}`} />
               <Line k={`Min received (${(trade!.slippageBps / 100).toFixed(1)}%)`} v={`${fmtOut(q.minAmountOut)} ${outSym}`} />
               <Line k={feeLine(q)} v={`${whole(q.fee.feeAmount, 18).toFixed(6)} ETH`} />
-              {q.fee.cashbackAmount > 0n && <Line k="Cashback, paid weekly" v={`${whole(q.fee.cashbackAmount, 18).toFixed(6)} ETH`} />}
+              {q.fee.cashbackAmount > 0n && <Line k="Cashback, paid Sunday" v={`${whole(q.fee.cashbackAmount, 18).toFixed(6)} ETH`} />}
               <Line k="Route" v={q.pool.venueFeeLabel} />
               {q.priceImpactBps != null && <Line k="Price impact" v={`${(q.priceImpactBps / 100).toFixed(2)}%`} />}
               <Line k="Network fee (est.)" v={trade!.gasCostWei ? (ethUsd ? usd(whole(trade!.gasCostWei, 18) * ethUsd) : `${whole(trade!.gasCostWei, 18).toFixed(6)} ETH`) : 'Automatic'} />

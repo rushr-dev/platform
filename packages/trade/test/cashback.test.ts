@@ -1,6 +1,6 @@
 import { decodeFunctionData, erc20Abi } from 'viem';
 import { describe, expect, it } from 'vitest';
-import { CASHBACK_MIN, NATIVE_FEE_TOKEN, payable, txBuilderFile } from '../src/cashback';
+import { CASHBACK_MIN, NATIVE_FEE_TOKEN, nextPayoutDate, payable, txBuilderFile } from '../src/cashback';
 import { DEFAULT_TRADE_CONFIG } from '../src/config';
 import { cashbackOf } from '../src/referral';
 
@@ -15,6 +15,12 @@ describe('cashback', () => {
     expect(cashbackOf(10n ** 15n, DEFAULT_TRADE_CONFIG)).toBe(3n * 10n ** 14n);
     expect(cashbackOf(7n, DEFAULT_TRADE_CONFIG)).toBe(2n);
     expect(cashbackOf(0n, DEFAULT_TRADE_CONFIG)).toBe(0n);
+  });
+
+  it('pays out on Sundays (UTC): the coming Sunday, or today on a Sunday', () => {
+    expect(nextPayoutDate(new Date('2026-11-25T07:00:00Z'))).toBe('2026-11-29'); // a Wednesday
+    expect(nextPayoutDate(new Date('2026-11-29T23:59:00Z'))).toBe('2026-11-29');
+    expect(nextPayoutDate(new Date('2026-11-30T00:00:00Z'))).toBe('2026-12-06');
   });
 
   it('pays what is owed above the minimum, largest first, and skips unknown fee tokens', () => {

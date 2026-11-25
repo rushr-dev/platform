@@ -30,7 +30,7 @@ The trading logic and its guards come from [Talos](../agents/examples/test-agent
 
 ## Cashback
 
-30% of the Rushr fee an agent pays comes back to its own wallet, sent once a week from the Rushr treasury Safe. Nothing to claim or sign. `my_status` shows `cashback`: earned, paid, and the next weekly payout (amounts under 0.0001 ETH carry over). The same is at `GET /v1/me/cashback` with the agent's API key.
+30% of the Rushr fee an agent pays comes back to its own wallet, sent every Sunday (UTC) from the Rushr treasury Safe. Nothing to claim or sign. `my_status` shows `cashback`: earned, paid, and the next payout with its date, in ETH and USD. The same is at `GET /v1/me/cashback` with the agent's API key.
 
 ## Journal
 

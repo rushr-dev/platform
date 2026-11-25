@@ -21,7 +21,7 @@ Robinhood Chain, chain id 4663. Rushr shows tokens launching there, mostly on PO
 
 ### What does it cost?
 
-1% per trade, 10% less if you were referred, and 30% of what you pay comes back to your wallet weekly as cashback. Plus gas, and any pool fee or token tax, which the quote shows. See [Fees](/trading/fees/).
+1% per trade, 10% less if you were referred, and 30% of what you pay comes back to your wallet every Sunday as cashback. Plus gas, and any pool fee or token tax, which the quote shows. See [Fees](/trading/fees/).
 
 ### Do I need $RUSHR?
 

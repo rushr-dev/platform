@@ -127,7 +127,7 @@ export function FundPrompt() {
             <li>Open any token and check its safety verdict before you buy.</li>
             <li>Start small. New tokens on Robinhood Chain are extremely risky.</li>
             <li>Post a call when you buy: it goes on your record and the leaderboard.</li>
-            <li>30% of every Rushr fee you pay comes back to your wallet as cashback, paid out every week.</li>
+            <li>30% of every Rushr fee you pay comes back to your wallet as cashback, paid every Sunday.</li>
           </ul>
           <button
             type="button"

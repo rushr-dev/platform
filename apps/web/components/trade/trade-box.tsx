@@ -144,7 +144,7 @@ function TradeBoxInner({ token }: { token: TradeToken }) {
           <Row label="You receive (est.)" value={`${fmt(t.quote.amountOut, outDecimals)} ${outSymbol}`} />
           <Row label={`Min received (${(t.slippageBps / 100).toFixed(1)}% slippage)`} value={`${fmt(t.quote.minAmountOut, outDecimals)} ${outSymbol}`} />
           <Row label={feeLine(t.quote)} value={`${fmt(t.quote.fee.feeAmount, 18)} ETH`} />
-          {t.quote.fee.cashbackAmount > 0n && <Row label="Cashback, paid weekly" value={`${fmt(t.quote.fee.cashbackAmount, 18)} ETH`} />}
+          {t.quote.fee.cashbackAmount > 0n && <Row label="Cashback, paid Sunday" value={`${fmt(t.quote.fee.cashbackAmount, 18)} ETH`} />}
           <Row label="Route" value={t.quote.pool.venueFeeLabel} />
           {t.calls.length > 1 && <Row label="Transactions" value={`${t.calls.length} (first sell approves the token)`} />}
         </dl>

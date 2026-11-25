@@ -1,10 +1,10 @@
 // Cashback: 30% of the platform fee each trader paid, accrued per confirmed trade in trades_ledger (ledger.ts) and
-// paid weekly from the treasury Safe in one batch (packages/trade/scripts/cashback-batch.ts), which both owners sign.
+// paid every Sunday (UTC) from the treasury Safe in one batch (packages/trade/scripts/cashback-batch.ts), which both owners sign.
 //
 //   GET  /v1/me/cashback   earned, paid, in this week's batch and owed per fee token, and recent payouts
 import { Hono } from 'hono';
 import type { Sql, TransactionSql } from 'postgres';
-import { CASHBACK_MIN, DEFAULT_TRADE_CONFIG } from '@rushr/trade';
+import { CASHBACK_MIN, DEFAULT_TRADE_CONFIG, NATIVE_FEE_TOKEN, nextPayoutDate } from '@rushr/trade';
 import { limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 
 type Db = Sql | TransactionSql;
@@ -42,18 +42,46 @@ cashback.get('/me/cashback', async (c) => {
   const m = requireMember(c);
   await limit(c, 'read');
   const sql = c.var.sql;
-  const [rows, payouts] = await Promise.all([
+  const [rows, payouts, [eth]] = await Promise.all([
     owedFor(sql, m.wallet),
-    sql`select batch, fee_token, amount::text, status, tx_hash, created_at, paid_at from cashback_payouts
+    sql<{ batch: string; fee_token: string; amount: string; status: string; tx_hash: string | null; created_at: Date; paid_at: Date | null }[]>`
+      select batch, fee_token, amount::text, status, tx_hash, created_at, paid_at from cashback_payouts
       where wallet = ${m.wallet} and status <> 'void' order by created_at desc limit 20`,
+    sql<{ value: { usd: number } }[]>`select value from indexer_state where key = 'eth_usd'`,
   ]);
+  // USD at today's ETH price (USDG at face value), so a member reads one number. null when the price is unknown.
+  const ethUsd = eth?.value.usd ?? null;
+  const usdOf = (raw: string | bigint, token: string): number | null => {
+    const v = BigInt(raw);
+    if (token.toLowerCase() === NATIVE_FEE_TOKEN) return ethUsd == null ? null : (Number(v) / 1e18) * ethUsd;
+    return Number(v) / 1e6;
+  };
+  const usdSum = (pick: (r: OwedRow) => bigint): number | null => {
+    let t = 0;
+    for (const r of rows) {
+      const u = usdOf(pick(r), r.fee_token);
+      if (u == null) return null;
+      t += u;
+    }
+    return Math.round(t * 10_000) / 10_000;
+  };
   return c.json(
     {
       shareBps: DEFAULT_TRADE_CONFIG.cashbackShareBps,
       cashback: rows,
-      payouts,
+      payouts: payouts.map((p) => ({ ...p, usd: usdOf(p.amount, p.fee_token) })),
+      /** USD totals at today's ETH price. nextPayout = owed + already in this week's batch. */
+      usd: {
+        ethUsd,
+        earned: usdSum((r) => BigInt(r.accrued)),
+        paid: usdSum((r) => BigInt(r.paid)),
+        nextPayout: usdSum((r) => BigInt(r.owed) + BigInt(r.pending)),
+      },
       payout: {
         schedule: 'weekly',
+        /** The next payout day (UTC). */
+        next: nextPayoutDate(),
+        weekday: 'Sunday',
         /** Owed below this waits for a later week (raw units per fee token). */
         min: Object.fromEntries(Object.entries(CASHBACK_MIN).map(([k, v]) => [k, v.toString()])),
       },

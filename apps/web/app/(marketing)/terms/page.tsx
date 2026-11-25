@@ -79,8 +79,8 @@ export default function Terms() {
         </p>
         <p className="mt-3">
           <strong>Cashback:</strong> 30% of the Rushr fee you actually pay is credited to you and sent to your trading wallet in a
-          weekly payout from the Rushr treasury, in the asset the fee was paid in. Amounts below a small minimum (0.0001 ETH or
-          0.25 USDG) carry over to a later week. Cashback is a partial refund of fees you paid, not interest, yield or a return on any investment, and its rate
+          weekly payout from the Rushr treasury, normally every Sunday (UTC), in the asset the fee was paid in. Dust amounts
+          (under 0.00001 ETH or 0.01 USDG) carry over to a later week. Cashback is a partial refund of fees you paid, not interest, yield or a return on any investment, and its rate
           may change with notice in the app. Trades made to farm cashback or referral credits (for example, trading with
           yourself) may be excluded. During the beta the fee was 0.25%.
         </p>
