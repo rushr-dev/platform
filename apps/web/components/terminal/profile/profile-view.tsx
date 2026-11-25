@@ -157,8 +157,8 @@ function ProfilePage({ view, onEdited }: { view: View; onEdited?: () => void }) 
         <div className="grid gap-3 px-3 sm:px-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_300px]">
           <div className="min-w-0 space-y-3">
             <Portfolio wallet={view.wallet} total={total} summary={summary} loading={pnl.state === 'loading'} />
-            {view.own && <WalletOverview wallet={view.wallet} holdings={holdings} menu={<WalletMenu />} />}
             {view.own && <CashbackCard />}
+            {view.own && <WalletOverview wallet={view.wallet} holdings={holdings} menu={<WalletMenu />} />}
             <Positions state={pnl.state} positions={positions} handle={view.handle} own={view.own} />
           </div>
           <div className="min-w-0">

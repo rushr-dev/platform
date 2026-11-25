@@ -38,10 +38,24 @@ export async function getCashback(): Promise<Cashback | null> {
   return (await r.json().catch(() => null)) as Cashback | null;
 }
 
-/** The member's cashback, read once when `enabled` turns true. */
+/** Ledger confirmation takes from a few seconds to a couple of minutes. */
+const AFTER_TRADE_MS = [20_000, 60_000, 150_000];
+
+/** The member's cashback: read when `enabled` turns true, and again after each of the member's trades. */
 export function useCashback(enabled: boolean): { data: Cashback | null; state: 'loading' | 'ready' | 'unavailable' } {
   const [data, setData] = useState<Cashback | null>(null);
   const [state, setState] = useState<'loading' | 'ready' | 'unavailable'>('loading');
+  const [tick, setTick] = useState(0);
+  // After the member's own trade (the `rushr:trade` event), read again once the ledger has had time to confirm it.
+  useEffect(() => {
+    const timers: number[] = [];
+    const onTrade = () => AFTER_TRADE_MS.forEach((ms) => timers.push(window.setTimeout(() => setTick((n) => n + 1), ms)));
+    window.addEventListener('rushr:trade', onTrade);
+    return () => {
+      window.removeEventListener('rushr:trade', onTrade);
+      timers.forEach((t) => window.clearTimeout(t));
+    };
+  }, []);
   useEffect(() => {
     if (!enabled) return;
     let live = true;
@@ -53,6 +67,6 @@ export function useCashback(enabled: boolean): { data: Cashback | null; state: '
     return () => {
       live = false;
     };
-  }, [enabled]);
+  }, [enabled, tick]);
   return { data, state };
 }
