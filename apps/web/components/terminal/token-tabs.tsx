@@ -474,16 +474,15 @@ export function DevTokensTab({ deployer, self, serverNow }: { deployer: string; 
 /* ------------------------------------------------------------------ bubble map */
 
 /**
- * Bubblemaps' own map (iframe.bubblemaps.io), shown next to ours when we have a partner id.
- * NEXT_PUBLIC_BUBBLEMAPS_PARTNER_ID is set at build time once Bubblemaps whitelists our domain; without it,
- * local dev uses their `demo` id (it only works on localhost) and production hides the switch.
+ * Bubblemaps' own map (iframe.bubblemaps.io), shown next to ours.
+ * Our partner id is public by design (Bubblemaps checks the embedding domain, not the id), so it lives here;
+ * NEXT_PUBLIC_BUBBLEMAPS_PARTNER_ID can override it. Local dev uses their `demo` id, which only works on localhost.
  */
-const BUBBLEMAPS_PARTNER_ID = process.env.NEXT_PUBLIC_BUBBLEMAPS_PARTNER_ID ?? '';
+const BUBBLEMAPS_PARTNER_ID = process.env.NEXT_PUBLIC_BUBBLEMAPS_PARTNER_ID || 'k0QFODquzQ3k8oZS4B8a';
 
-function bubblemapsPartnerId(): string | null {
-  if (BUBBLEMAPS_PARTNER_ID) return BUBBLEMAPS_PARTNER_ID;
+function bubblemapsPartnerId(): string {
   if (typeof window !== 'undefined' && ['localhost', '127.0.0.1', '0.0.0.0'].includes(window.location.hostname)) return 'demo';
-  return null;
+  return BUBBLEMAPS_PARTNER_ID;
 }
 
 function BubblemapsFrame({ address, partnerId }: { address: string; partnerId: string }) {
