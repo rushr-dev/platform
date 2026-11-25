@@ -2,7 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowSquareOut } from '@phosphor-icons/react';
+import { createPortal } from 'react-dom';
+import { ArrowSquareOut, ArrowsOut, X } from '@phosphor-icons/react';
 import { API_URL, type TokenCard } from '@/lib/api';
 import { age, compact, EXPLORER, nf, pct, short, usd, usdSigned } from '@/lib/format';
 import { useNow } from '@/lib/now';
@@ -485,7 +486,7 @@ function bubblemapsPartnerId(): string {
   return BUBBLEMAPS_PARTNER_ID;
 }
 
-function BubblemapsFrame({ address, partnerId }: { address: string; partnerId: string }) {
+function BubblemapsFrame({ address, partnerId, className = 'h-[520px]' }: { address: string; partnerId: string; className?: string }) {
   const src = `https://iframe.bubblemaps.io/map?chain=robinhood&address=${address}&partnerId=${encodeURIComponent(partnerId)}`;
   return (
     <iframe
@@ -494,7 +495,7 @@ function BubblemapsFrame({ address, partnerId }: { address: string; partnerId: s
       allow="clipboard-write"
       loading="lazy"
       referrerPolicy="strict-origin-when-cross-origin"
-      className="block h-[520px] w-full border-0 bg-surface-2"
+      className={`block w-full border-0 bg-surface-2 ${className}`}
     />
   );
 }
@@ -508,13 +509,10 @@ function RushrMap({ address }: { address: string }) {
   return <BubbleMap data={data} />;
 }
 
-export function BubblesTab({ address }: { address: string }) {
-  const [partnerId, setPartnerId] = useState<string | null>(null);
-  const [view, setView] = useState<'rushr' | 'bubblemaps'>('rushr');
-  // Read the hostname after mount so the server and client render the same first frame.
-  useEffect(() => setPartnerId(bubblemapsPartnerId()), []);
-  if (!partnerId) return <RushrMap address={address} />;
-  const opt = (v: typeof view, label: string) => (
+type MapView = 'rushr' | 'bubblemaps';
+
+function MapSwitch({ view, setView }: { view: MapView; setView: (v: MapView) => void }) {
+  const opt = (v: MapView, label: string) => (
     <button
       type="button"
       onClick={() => setView(v)}
@@ -524,13 +522,107 @@ export function BubblesTab({ address }: { address: string }) {
     </button>
   );
   return (
+    <>
+      {opt('rushr', 'Rushr map')}
+      {opt('bubblemaps', 'Bubblemaps')}
+    </>
+  );
+}
+
+/**
+ * The bubble map, expanded to (nearly) the whole window. Rendered into document.body so no
+ * backdrop-filtered ancestor clips the fixed overlay. Esc, the backdrop and the close button close it.
+ */
+function BubblesPopup({
+  address,
+  partnerId,
+  view,
+  setView,
+  onClose,
+}: {
+  address: string;
+  partnerId: string;
+  view: MapView;
+  setView: (v: MapView) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[80] p-2 sm:p-6" role="dialog" aria-modal="true" aria-label="Bubble map">
+      <button type="button" aria-label="Close" onClick={onClose} className="absolute inset-0 bg-black/75 backdrop-blur-[2px]" />
+      <div className="relative mx-auto flex h-full max-w-[1600px] flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-surface shadow-2xl">
+        <div className="flex items-center gap-1.5 border-b border-white/[0.06] px-3 py-2 text-xs text-muted">
+          <span className="mr-2 text-sm font-semibold text-ink">Bubble map</span>
+          <MapSwitch view={view} setView={setView} />
+          {view === 'bubblemaps' && <span className="ml-3 hidden text-muted/70 sm:inline">Map by Bubblemaps</span>}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close bubble map"
+            className="ml-auto rounded-lg p-1.5 text-muted hover:bg-white/[0.05] hover:text-ink"
+          >
+            <X size={18} />
+          </button>
+        </div>
+        {view === 'rushr' ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-[1200px]">
+              <RushrMap address={address} />
+            </div>
+          </div>
+        ) : (
+          <BubblemapsFrame address={address} partnerId={partnerId} className="min-h-0 flex-1" />
+        )}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+export function BubblesTab({ address }: { address: string }) {
+  const [partnerId, setPartnerId] = useState<string | null>(null);
+  const [view, setView] = useState<MapView>('rushr');
+  const [expanded, setExpanded] = useState(false);
+  // Read the hostname after mount so the server and client render the same first frame.
+  useEffect(() => setPartnerId(bubblemapsPartnerId()), []);
+  if (!partnerId) return <RushrMap address={address} />;
+  return (
     <div>
       <div className="flex items-center gap-1.5 border-b border-white/[0.04] px-3 py-1.5 text-[11px] text-muted">
-        {opt('rushr', 'Rushr map')}
-        {opt('bubblemaps', 'Bubblemaps')}
-        {view === 'bubblemaps' && <span className="ml-auto text-muted/70">Map by Bubblemaps</span>}
+        <MapSwitch view={view} setView={setView} />
+        <span className="ml-auto flex items-center gap-2">
+          {view === 'bubblemaps' && <span className="text-muted/70">Map by Bubblemaps</span>}
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            aria-label="Expand bubble map"
+            title="Expand"
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 hover:bg-white/[0.06] hover:text-ink"
+          >
+            <ArrowsOut size={13} weight="bold" />
+            Expand
+          </button>
+        </span>
       </div>
-      {view === 'rushr' ? <RushrMap address={address} /> : <BubblemapsFrame address={address} partnerId={partnerId} />}
+      {expanded ? (
+        <div className="grid h-[520px] place-items-center text-xs text-muted">Showing in the expanded view</div>
+      ) : view === 'rushr' ? (
+        <RushrMap address={address} />
+      ) : (
+        <BubblemapsFrame address={address} partnerId={partnerId} />
+      )}
+      {expanded && (
+        <BubblesPopup address={address} partnerId={partnerId} view={view} setView={setView} onClose={() => setExpanded(false)} />
+      )}
     </div>
   );
 }
