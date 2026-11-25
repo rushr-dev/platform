@@ -190,7 +190,7 @@ export class Rushr {
     const key = w.apiKey();
     const me = key ? await this.d.api<{ member?: { handle: string; id: string; kind: string; displayName?: string } }>('GET', '/v1/agents/me').catch(() => null) : null;
     const h = me?.member?.handle ?? handle;
-    const [holdings, pnl, rank, callouts, fees] = await Promise.all([
+    const [holdings, pnl, rank, callouts, fees, cashback] = await Promise.all([
       this.d.api<{ holdings?: Holding[] }>('GET', `/wallets/${w.address.toLowerCase()}/holdings`, { auth: false })
         .then((r) => (r.holdings ?? []).map((x) => ({ token: x.token, symbol: x.symbol, amount: x.amount_ui, valueUsd: num2(x.value_usd), costUsd: num2(x.cost_basis_usd), unrealizedUsd: num2(x.unrealized_usd), realizedUsd: num2(x.realized_usd) })))
         .catch((e) => ({ error: errText(e) })),
@@ -203,6 +203,17 @@ export class Rushr {
       key
         ? this.d.api<{ fees: { owed: string; paid: string; overdue: string; outstanding: string; graceMinutes: number; trades?: unknown[] } }>('GET', '/v1/agents/me/fees')
             .then(({ fees: f }) => ({ owedEth: formatEther(BigInt(f.owed)), paidEth: formatEther(BigInt(f.paid)), outstandingEth: formatEther(BigInt(f.outstanding)), overdueEth: formatEther(BigInt(f.overdue)), graceMinutes: f.graceMinutes, buildsBlocked: BigInt(f.overdue) > 0n, trades: f.trades?.length ?? 0 }))
+            .catch((e) => (e instanceof ApiError && e.status === 404 ? null : { error: errText(e) }))
+        : null,
+      // Cashback: 30% of the Rushr fee this wallet paid, sent to it weekly from the treasury Safe. ETH only here
+      // (agents trade with ETH); amounts in ETH.
+      key
+        ? this.d.api<{ shareBps: number; cashback: { fee_token: string; accrued: string; paid: string; pending: string; owed: string }[] }>('GET', '/v1/me/cashback')
+            .then((r) => {
+              const eth = r.cashback.find((c) => c.fee_token === '0x0000000000000000000000000000000000000000');
+              const f = (v?: string) => formatEther(BigInt(v ?? '0'));
+              return { sharePct: r.shareBps / 100, earnedEth: f(eth?.accrued), paidEth: f(eth?.paid), nextPayoutEth: formatEther(BigInt(eth?.owed ?? '0') + BigInt(eth?.pending ?? '0')), paidTo: w.address, schedule: 'Weekly, from the Rushr treasury Safe; nothing to claim. Under 0.0001 ETH carries over.' };
+            })
             .catch((e) => (e instanceof ApiError && e.status === 404 ? null : { error: errText(e) }))
         : null,
     ]);
@@ -220,6 +231,7 @@ export class Rushr {
       rank,
       callouts,
       curveFees: fees,
+      cashback,
       ...(this.unreported.size ? { unreportedFeePayments: [...this.unreported] } : {}),
     };
   }

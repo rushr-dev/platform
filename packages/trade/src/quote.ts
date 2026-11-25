@@ -8,7 +8,7 @@ import { BPS, minOut, priceImpactBps, sellMinimums, splitBuyInput, splitSellOutp
 import { ponsBuyCapped, ponsSellOut, ponsSpotBuyOut, v2AmountOut, v2SpotOut } from './math';
 import { discoverPools, type DiscoverOptions } from './pools';
 import type { Pool, Quote, SwapRequest } from './types';
-import { effectiveFeeBps, referrerAccrual, savedBetween } from './referral';
+import { cashbackOf, effectiveFeeBps, referrerAccrual, savedBetween } from './referral';
 import { readHolderDiscountBps } from './holder';
 
 const Q192 = 1n << 192n;
@@ -132,6 +132,7 @@ export async function quotePool(client: PublicClient, pool: Pool, req: SwapReque
     holderDiscountAmount: holderBps ? savedBetween(basis, cfg.feeBps, holderOnlyBps) : 0n,
     referralDiscountAmount: req.referral ? savedBetween(basis, holderOnlyBps, feeBps) : 0n,
     referrerAccrual: referrerAccrual(amount, cfg, req.referral),
+    cashbackAmount: cashbackOf(amount, cfg),
     venueFeeBps: pool.venueFeeBps,
     venueFeeLabel: pool.venueFeeLabel,
   });

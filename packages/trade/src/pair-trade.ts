@@ -6,7 +6,7 @@ import { feeOf, minOut, splitBuyInput, splitSellOutput, type FeeBreakdown } from
 import { ponsBuyCapped, ponsSellOut } from './math';
 import { readAllowances } from './permit2';
 import { discoverPools } from './pools';
-import { effectiveFeeBps, referrerAccrual, savedBetween, draftTradeRecord } from './referral';
+import { cashbackOf, effectiveFeeBps, referrerAccrual, savedBetween, draftTradeRecord } from './referral';
 import { simulateCalls, type SimCall } from './simulate';
 import { encodeExecute } from './universal-router';
 import {
@@ -151,6 +151,7 @@ export async function preparePairCurveTrade(
     holderDiscountAmount: holderBps ? savedBetween(basis, cfg.feeBps, holderOnlyBps) : 0n,
     referralDiscountAmount: req.referral ? savedBetween(basis, holderOnlyBps, feeBps) : 0n,
     referrerAccrual: referrerAccrual(amount, cfg, req.referral),
+    cashbackAmount: cashbackOf(amount, cfg),
     venueFeeBps: curve.venueFeeBps,
     venueFeeLabel: curve.venueFeeLabel,
   });

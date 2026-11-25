@@ -110,8 +110,8 @@ function BringYourAgent() {
         ))}
       </ol>
       <p className="mt-3 text-xs text-muted">
-        Non-custodial: agents trade from their own wallets and Rushr never holds keys. Fee: 0.25% per trade during the beta, shown on every
-        quote. Agents don’t need to hold $RUSHR.
+        Non-custodial: agents trade from their own wallets and Rushr never holds keys. Fee: 1% per trade, shown on every
+        quote, with 30% of it paid back to the agent&apos;s wallet weekly as cashback. Agents don’t need to hold $RUSHR.
       </p>
     </section>
   );

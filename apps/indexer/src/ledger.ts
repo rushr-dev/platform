@@ -18,12 +18,13 @@
 // pair token the trader bought or sold, flagged `pair_leg_only`.
 //   GET  /v1/me/trades?before=&limit= the member's trades, newest first
 //   GET  /v1/me/referrals/accrued     confirmed fees and accruals of trades the member referred, per fee token
+//   (cashback, accrued here per trade, is served and claimed in cashback.ts)
 //
 // Mounted inside Agents' /v1 app, so auth (Privy humans, agent API keys with scope 'trade'), rate limits
 // and error format are theirs. Confirmation runs on the enrich queue ('trade-confirm').
 import { Hono } from 'hono';
 import type { Sql } from 'postgres';
-import { auditCurveFee, curveFillFromLogs, DEFAULT_TRADE_CONFIG, QHOOKS_FEE_ROUTER, feeCommands, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
+import { auditCurveFee, cashbackOf, curveFillFromLogs, DEFAULT_TRADE_CONFIG, QHOOKS_FEE_ROUTER, feeCommands, effectiveFeeBps, holderDiscountBps, LEGACY_TREASURIES, pairCurveFillFromLogs, type FeeTxInfo, type PairCurveFill } from '@rushr/trade';
 import { NATIVE_ETH, QUOTES } from '@rushr/core';
 import { fail, limit, requireMember, PRIVATE, type Ctx } from './agents/http';
 import { referralFor } from './agents/referrals';
@@ -111,7 +112,7 @@ trades.get('/me/trades', async (c) => {
   const rows = await c.var.sql`
     select id, status, chain_id, tx_hash, block_number::text, extract(epoch from ts)::int as ts, trader, source_kind, source_id, side, token,
       quote_asset, venue, pool_id, router, amount_in::text, amount_out::text, fee_token, base_fee_bps, fee_bps::float8, fee_amount::text,
-      referrer, referral_code, referral_discount::text, referrer_share_bps, referrer_accrual::text, flags
+      referrer, referral_code, referral_discount::text, referrer_share_bps, referrer_accrual::text, cashback_share_bps, cashback_accrual::text, flags
     from trades_ledger where trader = ${m.wallet} and ts < ${before} order by ts desc limit ${n}`;
   return c.json({ trades: rows }, 200, PRIVATE);
 });
@@ -300,7 +301,7 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
     await sql`update trades_ledger set status = 'confirmed', block_number = ${block.toString()}, ts = ${ts}, side = ${s.side}, token = ${s.token},
       quote_asset = 'ETH', venue = 'qhooks', pool_id = ${s.pool || null}, router = ${QHOOKS_FEE_ROUTER.toLowerCase()},
       amount_in = ${amountIn.toString()}, amount_out = ${amountOut.toString()}, fee_token = ${QUOTES.WETH}, base_fee_bps = 0, fee_bps = 0,
-      fee_amount = '0', referrer = null, referral_code = null, referral_discount = '0', referrer_share_bps = 0, referrer_accrual = '0',
+      fee_amount = '0', referrer = null, referral_code = null, referral_discount = '0', referrer_share_bps = 0, referrer_accrual = '0', cashback_share_bps = 0, cashback_accrual = '0',
       flags = ${[...flags, 'via_qhooks', ...(viaRushr ? [] : ['qhooks_no_rushr_referrer'])]}, updated_at = now() where id = ${row.id}`;
     return 'done';
   }
@@ -389,13 +390,16 @@ export async function confirmTrade(sql: Sql, env: Env, txHash: string, finalAtte
   const baseFee = (notional * BigInt(holderOnlyBps)) / 10_000n;
   const discount = ref && baseFee > fee ? baseFee - fee : 0n;
   const accrual = ref ? (fee * BigInt(cfg.referrerShareBps)) / 10_000n : 0n;
+  // Cashback: a share of the fee the treasury actually received (none when the fee was missed).
+  const cashback = cashbackOf(fee, cfg);
 
   await sql`update trades_ledger set status = 'confirmed', block_number = ${block.toString()}, ts = ${ts}, side = ${s.side}, token = ${s.token},
     quote_asset = ${quoteAsset}, venue = ${s.venue ?? (s.dex === 'uniswap-v4' ? 'uniswap' : s.dex)}, pool_id = ${s.pool || null},
     router = ${String(tx.to ?? '').toLowerCase()}, amount_in = ${amountIn.toString()}, amount_out = ${amountOut.toString()},
     fee_token = ${feeToken}, base_fee_bps = ${cfg.feeBps}, fee_bps = ${feeBps}, fee_amount = ${fee.toString()},
     referrer = ${ref?.referrer ?? null}, referral_code = ${ref?.code ?? null}, referral_discount = ${discount.toString()},
-    referrer_share_bps = ${ref ? cfg.referrerShareBps : 0}, referrer_accrual = ${accrual.toString()}, flags = ${flags}, updated_at = now()
+    referrer_share_bps = ${ref ? cfg.referrerShareBps : 0}, referrer_accrual = ${accrual.toString()},
+    cashback_share_bps = ${cashback > 0n ? cfg.cashbackShareBps : 0}, cashback_accrual = ${cashback.toString()}, flags = ${flags}, updated_at = now()
     where id = ${row.id}`;
   return 'done';
 }

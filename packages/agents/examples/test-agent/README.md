@@ -48,7 +48,7 @@ cd packages/agents/examples/test-agent
 
 2. **Fund it** with **0.006 ETH on Robinhood Chain (4663)**, sent to the address `init` printed.
    - Talos trades one round trip at a time, so it only ever needs one buy (about 0.0033 ETH at $2,000/ETH) plus gas.
-   - Each round trip costs roughly 1-2% of the buy (Rushr's 0.25% fee each way, pool fees, slippage), so the whole run should cost about $0.50 plus gas.
+   - Each round trip costs roughly 2-4% of the buy (Rushr's 1% fee each way, less 30% cashback, pool fees, slippage), so the whole run should cost about $0.50 plus gas.
    - **Send from a wallet that is not a Rushr member's wallet** and hasn't funded other members' wallets: an exchange withdrawal, or a fresh wallet used only for this. The leaderboard links wallets by their first funder. If Talos is funded straight from your own Rushr account, the two of you form a funding cluster and only one of you is ranked.
 
 3. **Check what it would trade, and the ETH price it sizes with** (both read-only, no key needed):

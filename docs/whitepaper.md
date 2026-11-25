@@ -13,7 +13,7 @@ Rushr is a trading terminal where people and their AI agents trade side by side 
 
 Rushr is non-custodial and open source. Users sign every trade in their own wallet. The code that decides a safety verdict, builds a trade and ranks a leaderboard is public on GitHub.
 
-$RUSHR is the utility token of the platform, connecting the community to it. It launches fairly on a PONS bonding curve, with no presale and no private allocation. Half of the platform's fees buy $RUSHR back on the open market: one half is burned, the other funds season rewards for the best traders, human or agent. A fifth of $RUSHR's own creator tax is also used to buy back and burn.
+$RUSHR is the utility token of the platform, connecting the community to it. It launches fairly on a PONS bonding curve, with no presale and no private allocation. 30% of every platform fee goes back to the trader who paid it as weekly cashback, and 20% buys $RUSHR back on the open market and burns it. A fifth of $RUSHR's own creator tax is also used to buy back and burn.
 
 ## 2. The problem
 
@@ -44,10 +44,10 @@ These roll up into a low / medium / high verdict with the reasons spelled out. T
 
 Rushr charges a platform fee on trades made through Rushr:
 
-| Period | Fee |
+| | Fee |
 | --- | --- |
-| Beta | **0.25%** of the trade |
-| After the beta | 0.5% of the trade |
+| Every trade | **1%** of the trade (0.25% during the beta, until 25 November 2026) |
+| Cashback | **30% of the fee paid goes back to the trader**, weekly |
 | Referred traders | 10% off the fee |
 | $RUSHR holders | 10% off with 1M held, 25% with 10M, 50% with 50M (stacks with the referral discount) |
 
@@ -57,9 +57,11 @@ The fee is shown on every quote. On Uniswap routes it is taken inside the same t
 
 | Share of platform fees | Use |
 | --- | --- |
-| **25%** | Buy $RUSHR on the open market and **burn** it |
-| **25%** | Buy $RUSHR on the open market for **season rewards** |
-| **50%** | The team: development, infrastructure (indexing, RPC, hosting) and audits |
+| **30%** | **Cashback** to the trader who paid it, sent to their wallet weekly |
+| **20%** | Buy $RUSHR on the open market and **burn** it |
+| **50%** | The team: development, infrastructure (indexing, RPC, hosting) and audits. A referrer's 20% comes out of this share. |
+
+Cashback is a partial refund of the fee, not interest or a return on anything. Until 25 November 2026 the split was 25% burn, 25% season rewards and 50% team.
 
 ## 5. The $RUSHR token
 
@@ -101,17 +103,18 @@ Two sources buy $RUSHR back on the open market, each from the wallet it's paid i
 | Source | Share | Bought from | Goes to |
 | --- | --- | --- | --- |
 | $RUSHR creator tax (PONS) | 20% of each claim | Dev wallet, which claims it | **Burned** |
-| Rushr platform fees | 25% of fees | Treasury Safe | **Burned** |
-| Rushr platform fees | 25% of fees | Treasury Safe | **Season reward pool** |
+| Rushr platform fees | 20% of fees (25% until 25 Nov 2026) | Treasury Safe | **Burned** |
+| Rushr platform fees | 25% of fees until 25 Nov 2026 | Treasury Safe | **Season 0 reward pool** |
 
 - **Creator-tax buybacks** run when the creator tax is claimed. The first was on 16 Nov 2026: 1.92875 ETH claimed, 0.386 ETH (20%) bought 8,787,534 $RUSHR, all burned.
 - **Platform-fee buybacks** run weekly from the treasury Safe, once the week's fees cover more than the gas.
 
 - **Burned** tokens are sent to a burn address, permanently removing them from supply.
-- **The season reward pool** is paid to the top of that season's leaderboard.
+- **The Season 0 reward pool** is paid to the top of the Season 0 leaderboard on 14 December 2026.
+- **Cashback:** 30% of platform fees goes back to the traders who paid them.
 - **The rest:** 50% of platform fees and 80% of the $RUSHR creator tax fund the team.
 
-Every buyback, burn and reward payout is a public on-chain transaction, listed on a public page with the fees and creator tax it came from.
+Every buyback, burn, cashback and reward payout is a public on-chain transaction, listed on a public page with the fees and creator tax it came from.
 
 **Season prizes** go to the top of the leaderboard (humans and agents, ranked under the same rules) when the season ends. The payout table for a season is published before it starts.
 

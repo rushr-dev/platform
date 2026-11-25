@@ -2,7 +2,7 @@
 // data (traders appear only as a count), served from the edge cache for 60s.
 import type { Sql } from 'postgres';
 import { NATIVE_ETH, QUOTES, ROBINHOOD_CHAIN } from '@rushr/core';
-import { BETA_FEE_BPS, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, STANDARD_FEE_BPS } from '@rushr/trade';
+import { BETA_FEE_BPS, BUYBACK_SHARE_BPS, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, STANDARD_FEE_BPS } from '@rushr/trade';
 import { Rpc } from './rpc';
 import { creatorTax } from './creator-tax';
 
@@ -201,6 +201,21 @@ async function treasuryBalances(sql: Sql, sources: string[], treasury: string): 
   return last?.value ?? balanceMemo?.value ?? null;
 }
 
+/**
+ * Cashback totals per fee token (raw units): accrued on confirmed trades, paid from the Safe, and in a batch
+ * waiting for its signers. No wallets in the output.
+ */
+async function cashbackTotals(sql: Sql) {
+  const rows = await sql<{ fee_token: string; accrued: string; paid: string; pending: string; traders: number }[]>`
+    with a as (select lower(fee_token) as fee_token, sum(cashback_accrual) as accrued, count(distinct trader)::int as traders
+      from trades_ledger where status = 'confirmed' and cashback_accrual > 0 group by 1),
+    p as (select lower(fee_token) as fee_token, coalesce(sum(amount) filter (where status = 'paid'), 0) as paid,
+      coalesce(sum(amount) filter (where status = 'pending'), 0) as pending from cashback_payouts group by 1)
+    select a.fee_token, a.accrued::text, coalesce(p.paid, 0)::text as paid, coalesce(p.pending, 0)::text as pending, a.traders
+    from a left join p using (fee_token)`.catch(() => []);
+  return rows.map((r) => ({ feeToken: r.fee_token, accrued: r.accrued, paid: r.paid, pending: r.pending, traders: r.traders }));
+}
+
 /** The whole /transparency body. `rpcUrls`: where to read chain state, in order (see treasuryBalances). */
 export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAIN.publicRpc]) {
   const treasury = DEFAULT_TRADE_CONFIG.feeRecipient;
@@ -211,10 +226,11 @@ export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAI
     treasuryBalances(sql, rpcUrls, treasury),
   ]);
   const ethNow = eth?.value.usd ?? null;
-  const [allTime, seasonTotals, tax] = await Promise.all([
+  const [allTime, seasonTotals, tax, cashback] = await Promise.all([
     ledgerTotals(sql, ethNow),
     season ? ledgerTotals(sql, ethNow, { from: season.starts_at, to: season.ends_at }) : null,
     creatorTax(sql, rpcUrls, ethNow),
+    cashbackTotals(sql),
   ]);
   return {
     treasury: {
@@ -230,7 +246,16 @@ export async function transparency(sql: Sql, rpcUrls: string[] = [ROBINHOOD_CHAI
       standardBps: STANDARD_FEE_BPS,
       beta: DEFAULT_TRADE_CONFIG.feeBps === BETA_FEE_BPS,
       referralDiscountBps: DEFAULT_TRADE_CONFIG.referralDiscountBps,
+      /** Where each collected fee goes, in bps of the fee. A referrer's share comes out of the treasury's part. */
+      split: {
+        cashbackBps: DEFAULT_TRADE_CONFIG.cashbackShareBps,
+        buybackBps: BUYBACK_SHARE_BPS,
+        treasuryBps: 10_000 - DEFAULT_TRADE_CONFIG.cashbackShareBps - BUYBACK_SHARE_BPS,
+        referrerBps: DEFAULT_TRADE_CONFIG.referrerShareBps,
+      },
     },
+    /** Cashback to traders (raw units per fee token): accrued per trade, paid weekly from the treasury Safe. */
+    cashback: { schedule: 'weekly', byToken: cashback },
     fees: {
       source: 'trades_ledger, confirmed trades only',
       usdMethod: "USDG at face value; ETH at the trade's own swap price when indexed, else the current ETH price",

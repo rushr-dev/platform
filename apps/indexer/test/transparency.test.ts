@@ -76,7 +76,8 @@ describe.skipIf(!ok)('GET /transparency (local Postgres)', () => {
     const body = (await res.json()) as Awaited<ReturnType<typeof transparency>>;
     expect(body.treasury.address).toBe(RUSHR_TREASURY);
     expect(body.treasury.explorer).toBe(`https://robinhoodchain.blockscout.com/address/${RUSHR_TREASURY}`);
-    expect(body.feeRate).toMatchObject({ currentBps: 25, standardBps: 50, beta: true });
+    expect(body.feeRate).toMatchObject({ currentBps: 100, standardBps: 100, beta: false, split: { cashbackBps: 3000, buybackBps: 2000, treasuryBps: 5000, referrerBps: 2000 } });
+    expect(body.cashback).toMatchObject({ schedule: 'weekly', byToken: [] });
     expect(body.fees.allTime).toMatchObject({ trades: 3, traders: 2, volumeUsd: 1000, usd: 6.5 });
     expect(body.fees.allTime.byRoute.curve.trades).toBe(1);
     expect(body.fees.allTime.byRoute.uniswap.trades).toBe(2);

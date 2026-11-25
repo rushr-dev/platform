@@ -14,7 +14,7 @@ const TRADER: Address = '0x2222222222222222222222222222222222222222';
 const TOKEN: Address = '0x7d578ac588917519f339c70bdd991bf3aa9c0620'; // NVDAc
 const NVDA: Address = '0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec';
 const WETH = TRADE_ADDRESSES.weth;
-const cfg = resolveConfig();
+const cfg = resolveConfig({ feeBps: 25 }); // the beta rate these numbers were written for
 const fake = { getGasPrice: async () => 100_000_000n } as unknown as PublicClient;
 const E = (x: number) => BigInt(Math.round(x * 1e6)) * 10n ** 12n;
 

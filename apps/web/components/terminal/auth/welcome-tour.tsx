@@ -158,7 +158,7 @@ export function WelcomeTour() {
 }
 
 function FinalCard({ onClose }: { onClose: () => void }) {
-  const steps = ['Sign up with your email or a wallet', 'We create your own wallet on Robinhood Chain', 'Add ETH or USDG and make your first trade'];
+  const steps = ['Sign up with your email or a wallet', 'We create your own wallet on Robinhood Chain', 'Trade, and get 30% of every fee back each week'];
   return (
     <div className="animate-[rise_.3s_ease-out]">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-brand">Get started</div>

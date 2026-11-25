@@ -199,6 +199,8 @@ export function qhooksQuote(prep: QHooksPrepared, pool: V4Pool, req: { side: 'bu
     holderDiscountAmount: 0n,
     referralDiscountAmount: 0n,
     referrerAccrual: 0n,
+    // QHooks trades pay Rushr no platform fee, so there is nothing to give back.
+    cashbackAmount: 0n,
     venueFeeBps: pool.venueFeeBps,
     venueFeeLabel: pool.venueFeeLabel,
   };

@@ -181,6 +181,10 @@ export const tradesLedger = pgTable(
     referralDiscount: amount('referral_discount'),
     referrerShareBps: integer('referrer_share_bps'),
     referrerAccrual: amount('referrer_accrual'),
+    /** Cashback rate on this trade, in bps of the fee (3000 = 30%); 0 for trades before cashback. */
+    cashbackShareBps: integer('cashback_share_bps').notNull().default(0),
+    /** The trader's cashback on the fee actually paid, in fee_token's smallest unit. Paid weekly (cashback_payouts). */
+    cashbackAccrual: amount('cashback_accrual').notNull().default('0'),
     /** Anything that didn't match expectations (fee rate off, trader mismatch, no swap found, ...). */
     flags: text('flags').array().notNull().default([]),
     confirmAttempts: integer('confirm_attempts').notNull().default(0),
@@ -324,6 +328,24 @@ export const fomoEvents = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('fomo_events_token_ts_idx').on(t.token, t.ts.desc())],
+);
+
+/** Weekly cashback payouts from the treasury Safe: one row per wallet, fee token and batch (migration 0016). */
+export const cashbackPayouts = pgTable(
+  'cashback_payouts',
+  {
+    id: text('id').primaryKey(),
+    /** The batch it was paid in, e.g. '2026-12-01'. */
+    batch: text('batch').notNull(),
+    wallet: text('wallet').notNull(),
+    feeToken: text('fee_token').notNull(),
+    amount: amount('amount').notNull(),
+    status: text('status', { enum: ['pending', 'paid', 'void'] }).notNull().default('pending'),
+    txHash: text('tx_hash'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    paidAt: timestamp('paid_at', { withTimezone: true }),
+  },
+  (t) => [index('cashback_payouts_wallet_idx').on(t.wallet)],
 );
 
 export const indexerState = pgTable('indexer_state', {

@@ -37,7 +37,7 @@ const PERMIT2: Address = '0x000000000022d473030f116ddee9f6b43ac78ba3';
 const WETH = '0x0bd7d308f8e1639fab988df18a8011f41eacad73';
 const NATIVE_EMITTER = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-const BETA_FEE_BPS = 25n;
+const FEE_BPS = 100n; // Rushr's platform fee, 1% (since 2026-11-25)
 const RUN = Date.now().toString(36).slice(-5);
 const RUN_IP = `10.${rand(255)}.${rand(255)}.${rand(255)}`;
 
@@ -408,8 +408,8 @@ async function main() {
     const q = await tradeOf({ token, side: 'buy', amountIn: buyIn }, 'quote');
     if (!check(q.status === 200 && q.json?.quote, `${label}: buy quote`, q.status === 200 ? `${q.json.quote.pool?.venue} out=${q.json.quote.amountOut} fee=${q.json.quote.fee?.feeAmount} (${q.json.quote.fee?.feeBps}bps) ${q.ms}ms` : brief(q))) return;
     const quote = q.json.quote;
-    check(quote.fee?.feeBps === Number(BETA_FEE_BPS), `${label}: quoted fee is the 0.25% beta rate`, `${quote.fee?.feeBps} bps`);
-    check(BigInt(quote.fee.feeAmount) === (BigInt(buyIn) * BETA_FEE_BPS) / 10_000n, `${label}: buy fee = amountIn × 0.25%`, `${quote.fee.feeAmount}`);
+    check(quote.fee?.feeBps === Number(FEE_BPS), `${label}: quoted fee is the 1% platform rate`, `${quote.fee?.feeBps} bps`);
+    check(BigInt(quote.fee.feeAmount) === (BigInt(buyIn) * FEE_BPS) / 10_000n, `${label}: buy fee = amountIn × 1%`, `${quote.fee.feeAmount}`);
     if (label.startsWith('curve')) check(quote.pool?.venue === 'pons-curve', `${label}: a token still on its curve is quoted on the curve`, `venue=${quote.pool?.venue} pool=${quote.pool?.address ?? quote.pool?.id}`);
     const b = await tradeOf({ token, side: 'buy', amountIn: buyIn, acceptRisk: 'high' }, 'build');
     if (!check(b.status === 200 && b.json?.tx?.data, `${label}: build unsigned buy tx`, b.status === 200 ? `to=${b.json.tx.to} value=${b.json.tx.value} approvals=${b.json.approvals.length} deadline=${b.json.deadline}` : brief(b))) return;
@@ -438,7 +438,7 @@ async function main() {
       check(feePaid > 0n, `${label}: fee reaches the treasury in the same transaction`, `fee ${formatEther(feePaid)} ETH = ${bps(feePaid, BigInt(buyIn))}bps of amountIn, gas ${BigInt(last.gasUsed)}`, b.json.quote.pool?.venue === 'pons-curve' ? 'warn' : 'fail');
       if (feePaid === 0n && b.json.quote.pool?.venue === 'pons-curve') {
         const followUp = JSON.stringify(b.json).includes('feeFollowUp') || JSON.stringify(b.json).toLowerCase().includes('follow');
-        check(followUp, `${label}: response tells the agent to send the 0.25% follow-up fee transfer`, followUp ? '' : 'no follow-up fee instruction in the build response');
+        check(followUp, `${label}: response tells the agent to send the follow-up fee transfer`, followUp ? '' : 'no follow-up fee instruction in the build response');
       }
     }
 

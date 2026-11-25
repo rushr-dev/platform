@@ -20,7 +20,7 @@ Before you trade, the box shows the quote:
 | --- | --- |
 | You receive (est.) | Expected output at the current price. |
 | Min received | The least you'll get after slippage. The trade reverts if the price moves past it. Net of every fee. |
-| Rushr fee | "Rushr fee 0.25% (beta, half price)". See [Fees](/trading/fees/). |
+| Rushr fee | "Rushr fee 1% (30% back as cashback)", with the cashback amount below it. See [Fees](/trading/fees/). |
 | Route | Where the trade goes: a Uniswap pool, or the PONS curve with its fee and creator tax. |
 | Price impact | How far your trade moves the price. See [Price impact and pool tax](/trading/safety-checks/#price-impact-and-pool-tax). |
 | Network fee (est.) | Gas. |

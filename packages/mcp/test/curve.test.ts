@@ -48,9 +48,9 @@ describe('curve build checks', () => {
     ['fee transfer carries calldata', () => ({ ...buy(), followUp: { ...buy().followUp!, tx: { ...buy().followUp!.tx, data: '0xdeadbeef' } } }), CURVE],
     ['fee value differs from the follow-up amount', () => ({ ...buy(), followUp: { ...buy().followUp!, tx: { ...buy().followUp!.tx, value: '1' } } }), CURVE],
     ['follow-up amount differs from the quoted fee', () => ({ ...buy(), quote: { ...buy().quote, fee: { feeBps: 25, feeAmount: '1' } } }), CURVE],
-    ['fee above 25 bps of the trade', () => {
+    ['fee above 1% of the trade', () => {
       const b = buy();
-      const fee = ((AMOUNT * 30n) / 10_000n).toString();
+      const fee = ((AMOUNT * 130n) / 10_000n).toString();
       return { ...b, quote: { ...b.quote, fee: { feeBps: 25, feeAmount: fee } }, followUp: { ...b.followUp!, amount: fee, tx: { ...b.followUp!.tx, value: fee } } };
     }, CURVE],
     ['a buy asking for approvals', () => ({ ...buy(), approvals: sell().approvals }), CURVE],
@@ -62,9 +62,9 @@ describe('curve build checks', () => {
     const bad = { ...s, approvals: [{ ...s.approvals[0]!, tx: { ...s.approvals[0]!.tx, data: s.approvals[0]!.tx.data.replace(CURVE.slice(2), OTHER.slice(2)) as `0x${string}` } }] };
     expect(problems(vet(bad, 'sell'))).toEqual([expect.stringMatching(/unexpected approval/)]);
   });
-  it('refuses a sell fee above 25 bps of the gross ETH out', () => {
+  it('refuses a sell fee above 1% of the gross ETH out', () => {
     const s = sell();
-    const fee = ((BigInt(s.quote.amountOut) * 30n) / 10_000n).toString();
+    const fee = ((BigInt(s.quote.amountOut) * 130n) / 10_000n).toString();
     const bad = { ...s, quote: { ...s.quote, fee: { feeBps: 25, feeAmount: fee } }, followUp: { ...s.followUp!, amount: fee, tx: { ...s.followUp!.tx, value: fee } } };
     expect(refusal(vet(bad, 'sell'))).toBe('refused_unsafe_build');
   });

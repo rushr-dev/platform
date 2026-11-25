@@ -12,7 +12,7 @@ A new PONS token trades on its own **bonding curve**: a contract that sells and 
 - Rushr trades it **directly on the curve**, from your wallet, the same way the PONS site does.
 - The curve takes its own fee and the token's **creator tax** on every trade. The Route line shows both, for example "PONS curve · 1% fee + 1.5% creator tax".
 - Right after launch, PONS charges a short **snipe tax** that starts at 99% and drops to zero within seconds. Rushr blocks buys while it's active.
-- Rushr's 0.25% fee is a small, separate ETH transfer from your wallet, sent right after the trade confirms. You sign one trade; the fee follows in the background, and it's never charged on a trade that failed.
+- Rushr's 1% fee is a small, separate ETH transfer from your wallet, sent right after the trade confirms. You sign one trade; the fee follows in the background, and it's never charged on a trade that failed.
 
 These tokens sit in the **New pairs** and **Almost bonded** columns.
 
@@ -23,7 +23,7 @@ Some PONS curves are priced in another token instead of ETH: AMC, for example, i
 - **Buy:** ETH → ANT on Uniswap (through USDG when that's the route), then ANT → AMC on the curve.
 - **Sell:** AMC → ANT on the curve, then ANT → ETH on Uniswap.
 
-The Route line shows both legs. Rushr's 0.25% fee is taken in ETH inside the Uniswap leg, the same as any Uniswap trade, so there's no separate fee transfer. Any approvals go first, so the trade can only stop between its two legs.
+The Route line shows both legs. Rushr's 1% fee is taken in ETH inside the Uniswap leg, the same as any Uniswap trade, so there's no separate fee transfer. Any approvals go first, so the trade can only stop between its two legs.
 
 If the second leg fails (the price moved past your slippage, the curve graduated, you cancelled), you're left holding the ANT the first leg bought or the curve paid out. Nothing is lost: it's in your wallet, and the trade box tells you exactly how much ("You now hold 0.1 ANT; retry or sell it"), with buttons to retry the second leg or swap the ANT back to ETH. Swapping it back after a failed buy is free of Rushr's fee.
 

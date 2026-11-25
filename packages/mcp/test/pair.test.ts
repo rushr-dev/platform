@@ -69,7 +69,7 @@ describe('pair-curve build checks', () => {
     ['steps out of number', () => withStep(buy(), 2, (s) => ({ ...s, step: 7 })), /numbered 7/],
     ['route.swapStep pointing elsewhere', () => ({ ...buy(), route: { ...buy().route!, swapStep: 3 } }), /route.swapStep/],
     ['route.curve not the quoted curve', () => ({ ...buy(), route: { ...buy().route!, curve: OTHER } }), /not the quoted curve/],
-    ['a fee above 25 bps', () => ({ ...buy(), quote: { ...buy().quote, fee: { feeBps: 30, feeAmount: '1' } } }), /fee 30 bps/],
+    ['a fee above 1%', () => ({ ...buy(), quote: { ...buy().quote, fee: { feeBps: 130, feeAmount: '1' } } }), /fee 130 bps/],
     ['a failed simulation', () => ({ ...buy(), simulation: { ok: false, error: 'reverted' } }), /simulation failed/],
     ['wrong chain', () => stepTx(buy(), 2, { chainId: 1 }), /chainId 1/],
   ])('refuses a buy with %s', (_, make, why) => expect(problems(vet(make()))).toEqual(expect.arrayContaining([expect.stringMatching(why)])));

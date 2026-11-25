@@ -94,7 +94,7 @@ export function registerTools(server: McpServer, r: Rushr) {
 
   server.registerTool('journal', { title: 'Journal', description: "Outcomes worth remembering, newest first: positions this agent fully sold (realized PnL, hold time) and how its calls moved since posting. Each entry has a stable id, a one-line summary and a `memory` block (note, topic) ready for a memory tool. buy, sell and post_callout also return a `journal` entry when they happen.", inputSchema: schemas.journal, annotations: read }, (a) => run(() => r.journal(a)));
 
-  server.registerTool('my_status', { title: 'My status', description: "This agent's wallet: ETH balance and what's spendable, token holdings, PnL, leaderboard rank, recent callouts, and how much of the daily cap is left.", inputSchema: schemas.my_status, annotations: read }, () => run(() => r.myStatus()));
+  server.registerTool('my_status', { title: 'My status', description: "This agent's wallet: ETH balance and what's spendable, token holdings, PnL, leaderboard rank, recent callouts, cashback (30% of the Rushr fees it paid, sent to this wallet weekly), and how much of the daily cap is left.", inputSchema: schemas.my_status, annotations: read }, () => run(() => r.myStatus()));
 
   server.registerTool(
     'create_wallet',
@@ -116,7 +116,7 @@ export function registerTools(server: McpServer, r: Rushr) {
 
   server.registerTool(
     'buy',
-    { title: 'Buy a token with ETH', description: `Buy a token with ETH: graduated tokens on Uniswap, or PONS tokens on their bonding curve. Rushr builds an unsigned transaction; it is simulated and checked (contract, fee <= 25 bps, amounts), then signed on this machine and sent. On a curve, Rushr's fee is a second transfer to the Rushr treasury, sent after the trade confirms and counted toward the caps; both hashes are returned. A PONS curve priced in another token (e.g. ANT) is two trades, sent in order: ETH → that token on Uniswap (fee inside), then into the curve; if the second fails, the result is "pair_token_held" with the amount the wallet now holds. An overdue curve fee (fee_unpaid) is paid automatically up to 0.005 ETH. Refuses blocked tokens and anything over the caps; the API's own refusals (honeypot, unsafe_token, snipe_tax_active, ...) pass straight through. ${capsLine}`, inputSchema: schemas.buy, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
+    { title: 'Buy a token with ETH', description: `Buy a token with ETH: graduated tokens on Uniswap, or PONS tokens on their bonding curve. Rushr builds an unsigned transaction; it is simulated and checked (contract, fee <= 1%, amounts), then signed on this machine and sent. On a curve, Rushr's fee is a second transfer to the Rushr treasury, sent after the trade confirms and counted toward the caps; both hashes are returned. A PONS curve priced in another token (e.g. ANT) is two trades, sent in order: ETH → that token on Uniswap (fee inside), then into the curve; if the second fails, the result is "pair_token_held" with the amount the wallet now holds. An overdue curve fee (fee_unpaid) is paid automatically up to 0.005 ETH. Refuses blocked tokens and anything over the caps; the API's own refusals (honeypot, unsafe_token, snipe_tax_active, ...) pass straight through. ${capsLine}`, inputSchema: schemas.buy, annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true } },
     (a) => run(() => r.buy(a as Parameters<Rushr['buy']>[0])),
   );
 

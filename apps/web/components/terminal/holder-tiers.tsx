@@ -12,7 +12,7 @@ const cfg = DEFAULT_TRADE_CONFIG;
 const WEI = 10n ** 18n;
 /** Tier sizes as written in the docs: 1M, 10M, 50M. */
 const millions = (wei: bigint) => `${Number(wei / WEI / 1_000n) / 1_000}M`;
-const pct = (bps: number) => `${(bps / 100).toFixed(2).replace(/0$/, '')}%`;
+const pct = (bps: number) => `${+(bps / 100).toFixed(2)}%`;
 
 /**
  * "Hold $RUSHR, pay less", on the $RUSHR token page: the holder tiers (packages/trade HOLDER_TIERS) with the fee

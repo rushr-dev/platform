@@ -2,12 +2,12 @@ import { encodeFunctionData, maxUint256, type Address, type Hex, type PublicClie
 import { TRADE_ADDRESSES } from './addresses';
 import { erc20Abi, permit2Abi, ponsCurveAbi } from './abis';
 import { buildSwap } from './build';
-import { BETA_FEE_BPS, resolveConfig, STANDARD_FEE_BPS, type TradeConfig } from './config';
+import { CASHBACK_SHARE_BPS, resolveConfig, type TradeConfig } from './config';
 import { TradeError, isTradeError, sanitizeRpcMessage } from './errors';
 import { readAllowances } from './permit2';
 import { discoverPools, type DiscoverOptions } from './pools';
 import { quotePool, rankQuotes, withSlippage } from './quote';
-import { draftTradeRecord, effectiveFeeBps, referrerAccrual, savedBetween, type TradeRecord } from './referral';
+import { cashbackOf, draftTradeRecord, effectiveFeeBps, referrerAccrual, savedBetween, type TradeRecord } from './referral';
 import { readHolderDiscountBps } from './holder';
 import { feeOf } from './fees';
 import { CURVE_FEE_GAS, curveFeeCall, type CurveFeeFollowUp } from './curve-fee';
@@ -431,10 +431,10 @@ export function isFresh(t: Pick<QuickTrade, 'expiresAt'>, now = Date.now()): boo
 
 /** Fee summary for the trade box. */
 export function feeLine(q: Quote): string {
-  const pct = (q.fee.feeBps / 100).toFixed(2).replace(/0$/, '');
-  if (q.via === 'qhooks') return `QHooks fee ${+(q.fee.feeBps / 100).toFixed(2)}% (no Rushr fee)`;
+  const pct = +(q.fee.feeBps / 100).toFixed(2);
+  if (q.via === 'qhooks') return `QHooks fee ${pct}% (no Rushr fee)`;
   const notes = [
-    ...(q.fee.baseFeeBps === BETA_FEE_BPS && BETA_FEE_BPS * 2 === STANDARD_FEE_BPS ? ['beta, half price'] : []),
+    ...(q.fee.cashbackAmount > 0n ? [`${CASHBACK_SHARE_BPS / 100}% back as cashback`] : []),
     ...(q.fee.holderDiscountBps ? [`$RUSHR holder, ${q.fee.holderDiscountBps / 100}% off`] : []),
     ...(q.fee.referralDiscountAmount > 0n || (q.request.referral && q.fee.feeBps < q.fee.baseFeeBps) ? ['referral discount'] : []),
   ];
@@ -521,6 +521,7 @@ async function prepareCurveTrade(
         holderDiscountAmount: holderBps ? savedBetween(quote.swapAmountIn, cfg.feeBps, holderOnlyBps) : 0n,
         referralDiscountAmount: req.referral ? savedBetween(quote.swapAmountIn, holderOnlyBps, feeBps) : 0n,
         referrerAccrual: referrerAccrual(fee, cfg, req.referral),
+        cashbackAmount: cashbackOf(fee, cfg),
       },
     };
   }

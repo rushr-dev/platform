@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { ArrowUpRight } from '@phosphor-icons/react/dist/ssr';
 import { CopyAddress } from '@/components/landing/copy-address';
 import { Footer, Nav } from '@/components/landing/sections';
-import { BETA_RATE_BPS, TREASURY, getTransparency, type Totals } from '@/components/landing/transparency-data';
+import { FEE_RATE_BPS, TREASURY, getTransparency, type Totals } from '@/components/landing/transparency-data';
 import { WRAP } from '@/components/landing/ui';
 import { Pending } from '@/components/landing/whitepaper';
 import { EXPLORER, dateUtc, nf, short, usd } from '@/lib/format';
@@ -171,7 +171,7 @@ const EMPTY_ROUTES = { ...EMPTY, uniswap: EMPTY, curve: EMPTY };
 export default async function TransparencyPage() {
   const data = await getTransparency();
   const treasury = data?.treasury.address ?? TREASURY;
-  const rate = (data?.rateBps ?? BETA_RATE_BPS) / 100;
+  const rate = (data?.rateBps ?? FEE_RATE_BPS) / 100;
   const buybacks = data?.buybacks ?? [];
 
   return (
@@ -229,7 +229,7 @@ export default async function TransparencyPage() {
               aside={
                 <span className="text-sm text-muted">
                   Fee rate <span className="font-mono font-semibold tabular-nums text-brand-deep">{rate}%</span>
-                  {(data ? data.beta : true) ? ' during the beta' : ''}
+                  {data?.beta ? ' during the beta' : ''}
                 </span>
               }
             >
@@ -242,9 +242,9 @@ export default async function TransparencyPage() {
             <Section id="where-fees-go" title="Where fees go">
               <div className="grid gap-3 md:grid-cols-3">
                 {[
-                  ['25%', 'Burn', 'Buys $RUSHR on the open market and burns it.'],
-                  ['25%', 'Season rewards', 'Buys $RUSHR for the season prize pool.'],
-                  ['50%', 'Team', 'Development, infrastructure (indexing, RPC, hosting) and audits.'],
+                  ['30%', 'Cashback', 'Back to the trader who paid it, sent to their wallet every week.'],
+                  ['20%', 'Burn', 'Buys $RUSHR on the open market and burns it.'],
+                  ['50%', 'Team', "Development, infrastructure and audits. A referrer's 20% comes out of this share."],
                 ].map(([p, k, d]) => (
                   <div key={k} className="rounded-xl border border-line bg-surface p-5">
                     <div className="font-mono text-3xl font-semibold tabular-nums text-brand-deep">{p}</div>
@@ -254,6 +254,9 @@ export default async function TransparencyPage() {
                 ))}
               </div>
               <p className="mt-4 text-sm text-muted">
+                Since 25 November 2026. Fees paid before then were split 25% burn, 25% Season 0 rewards, 50% team.
+              </p>
+              <p className="mt-2 text-sm text-muted">
                 20% of the $RUSHR creator tax is also bought back and burned. Details in the whitepaper:{' '}
                 <Link href="/whitepaper#fees" className="text-ink underline underline-offset-2">Fees</Link> and{' '}
                 <Link href="/whitepaper#buyback-burn-and-season-prizes" className="text-ink underline underline-offset-2">

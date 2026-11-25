@@ -9,7 +9,7 @@ import type { ApiPoolRow } from './api-pools';
 import type { PathHop, Pool, Quote, SwapRequest, V2Pool, V3Pool, V4Pool } from './types';
 import type { TradeConfig } from './config';
 import { minOut, sellMinimums, splitBuyInput, splitSellOutput, type FeeBreakdown } from './fees';
-import { effectiveFeeBps, referrerAccrual, savedBetween } from './referral';
+import { cashbackOf, effectiveFeeBps, referrerAccrual, savedBetween } from './referral';
 import { launchpadForHook, STOCK_QUOTES } from '@rushr/core/chain/robinhood';
 
 /**
@@ -453,6 +453,7 @@ export async function quotePath(client: PublicClient, req: SwapRequest, cfg: Tra
     holderDiscountAmount: holderBps ? savedBetween(basis, cfg.feeBps, holderOnlyBps) : 0n,
     referralDiscountAmount: req.referral ? savedBetween(basis, holderOnlyBps, feeBps) : 0n,
     referrerAccrual: referrerAccrual(amount, cfg, req.referral),
+    cashbackAmount: cashbackOf(amount, cfg),
     venueFeeBps: parts.hops.reduce((s, h) => s + h.pool.venueFeeBps, 0),
     venueFeeLabel: label,
   });

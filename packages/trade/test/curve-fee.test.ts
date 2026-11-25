@@ -18,7 +18,7 @@ const live = {
   realQuoteReserve: 2169605092614506915n, graduationThreshold: 4200000000000000000n, sellableTokens: 150694114519569790724412824n,
   venueFeeBps: 300, venueFeeLabel: 'PONS curve · 1.00% fee + 2.00% creator tax',
 } as unknown as PonsPool;
-const opts = (o: object = {}) => ({ discover: { pools: [live] }, simulate: false, assume: { ethWei: E(1), tokenWei: 10n ** 24n }, settings: { slippageBps: 500 }, now: () => 1_000_000, ...o });
+const opts = (o: object = {}) => ({ discover: { pools: [live] }, simulate: false, assume: { ethWei: E(1), tokenWei: 10n ** 24n }, settings: { slippageBps: 500 }, now: () => 1_000_000, ...o, config: { feeBps: 25, ...(o as { config?: object }).config } });
 
 /** A CurveBuy / CurveSell log as the curve emits it (checked against a live simulation, see test/live/curve-fee.live.test.ts). */
 const fillLog = (side: 'buy' | 'sell', who: Address, quote: bigint, tokens: bigint, curve: Address = CURVE) => ({

@@ -6,7 +6,7 @@ A local [MCP](https://modelcontextprotocol.io) server that lets any MCP client (
 
 It trades two kinds of tokens:
 - **Graduated tokens** trade on Uniswap, through the Universal Router.
-- **PONS tokens still on their bonding curve** trade on the curve directly. Rushr's 0.25% fee is then a second, plain ETH transfer to the Rushr treasury, sent after the trade confirms (see [Curve trades](#curve-trades)).
+- **PONS tokens still on their bonding curve** trade on the curve directly. Rushr's 1% fee is then a second, plain ETH transfer to the Rushr treasury, sent after the trade confirms (see [Curve trades](#curve-trades)).
 
 The trading logic and its guards come from [Talos](../agents/examples/test-agent), Rushr's own test agent.
 
@@ -27,6 +27,10 @@ The trading logic and its guards come from [Talos](../agents/examples/test-agent
 | `post_callout` | Posts a bullish or bearish call. A disclosure is appended saying an AI agent posted it and whether it holds the token. |
 | `delete_callout` | Deletes one of your own callouts. |
 | `journal` | Lists outcomes worth remembering, newest first: positions the agent fully sold (realized PnL, hold time) and how its calls moved since posting. |
+
+## Cashback
+
+30% of the Rushr fee an agent pays comes back to its own wallet, sent once a week from the Rushr treasury Safe. Nothing to claim or sign. `my_status` shows `cashback`: earned, paid, and the next weekly payout (amounts under 0.0001 ETH carry over). The same is at `GET /v1/me/cashback` with the agent's API key.
 
 ## Journal
 
@@ -163,7 +167,7 @@ Every buy passes these checks before anything is signed:
   - chain 4663;
   - `tx.to` is the Universal Router;
   - the value and amount match the request;
-  - the fee is at most 25 bps;
+  - the fee is at most 1% (100 bps);
   - approvals go only to the token or Permit2;
   - there is no follow-up transaction;
   - and the simulation succeeded.
@@ -172,7 +176,7 @@ Every buy passes these checks before anything is signed:
   - the calldata is the curve's `buy` or `sell` with the requested amount, paying out to this wallet;
   - buys send exactly the requested ETH, and sells send none;
   - approvals (sells only) are `token.approve(curve)`;
-  - the fee follow-up is a plain transfer to the Rushr treasury Safe `0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3`, of exactly the quoted fee, at most 25 bps of the trade's ETH side;
+  - the fee follow-up is a plain transfer to the Rushr treasury Safe `0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3`, of exactly the quoted fee, at most 1% of the trade's ETH side;
   - and the simulation succeeded.
 - **Deadline:** a Uniswap build within 30 seconds of its deadline is refused; quote again. Curve builds have no deadline.
 

@@ -18,6 +18,7 @@ import { GATEWAY_COUNT, gateway } from './gateway';
 import { v1, adminV1 } from './agents/app';
 import { LLMS_TXT } from '@rushr/agents/llms-txt';
 import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
+import { cashback } from './cashback';
 import { PAUSED_REQUEUE_S, isPaused, readPause, writePause } from './pause';
 import { pendingSupply, pendingSupplyCount, refreshSupply } from './supply';
 import { reattributeSwaps } from './attribution';
@@ -486,6 +487,7 @@ app.use('*', async (c, next) => {
 // Trade ledger routes run inside /v1 (its auth, limits, errors). Hono copies routes on route(), so
 // they must be added before /v1 is mounted.
 v1.route('/', trades);
+v1.route('/', cashback);
 // Members, social, leaderboard and agents. Off unless AGENTS_ENABLED=1; after the edge
 // cache so public /v1 responses with s-maxage are cached; authenticated ones are private, no-store.
 app.route('/v1', v1);

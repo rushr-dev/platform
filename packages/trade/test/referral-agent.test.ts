@@ -16,8 +16,8 @@ const REFERRER: Address = '0x5555555555555555555555555555555555555555';
 const TOKEN: Address = '0x39dbed3a2bd333467115de45665cc57f813c4571';
 const noRpc = {} as PublicClient;
 // The standard rate (0.5%, 10% referee discount, 20% referrer share); the beta default is tested below.
-const cfg = resolveConfig({ feeRecipient: TREASURY, feeBps: STANDARD_FEE_BPS });
-const beta = resolveConfig({ feeRecipient: TREASURY }); // default during the beta: 0.25%
+const cfg = resolveConfig({ feeRecipient: TREASURY, feeBps: 50 });
+const beta = resolveConfig({ feeRecipient: TREASURY, feeBps: 25 }); // the beta rate, 0.25%
 
 const v2Pool: V2Pool = { venue: 'uniswap-v2', id: '0x8018ee3ad3000000000000000000000000000000', token: TOKEN, quote: TRADE_ADDRESSES.weth, reserveToken: 10n ** 24n, reserveQuote: 10n ** 20n, venueFeeBps: 30, venueFeeLabel: 'v2' };
 const req = (side: SwapRequest['side'], amountIn: bigint, referred = false): SwapRequest => ({
@@ -123,7 +123,7 @@ describe('PONS graduation cap (curve 0xdb0f…8050, eth_simulateV1 2026-11-12)',
     expect(q.swapAmountIn + q.fee.feeAmount + q.expectedRefund).toBe(q.amountIn);
     expect(q.fee.feeAmount).toBe((q.swapAmountIn * 50n) / 9_950n);
     expect(q.warnings.join(' ')).toMatch(/graduates/);
-    const withRouter = resolveConfig({ feeRecipient: TREASURY, ponsRouter: '0x3333333333333333333333333333333333333333' });
+    const withRouter = resolveConfig({ feeRecipient: TREASURY, feeBps: 25, ponsRouter: '0x3333333333333333333333333333333333333333' });
     const d = decodeFunctionData({ abi: rushrPonsRouterAbi, data: buildSwap(q, withRouter).tx.data });
     expect(d.args.at(-1)).toBe(false); // not referred
   });
@@ -135,7 +135,7 @@ describe('prepareSwap (server / agent entry point)', () => {
     expect(p.tx).toMatchObject({ chainId: 4663, to: TRADE_ADDRESSES.universalRouter, value: 0n });
     expect(p.commands).toEqual(['V2_SWAP_EXACT_IN', 'UNWRAP_WETH', 'PAY_PORTION', 'SWEEP']);
     expect(p.approvals.map((a) => a.kind)).toEqual(['erc20', 'permit2']);
-    expect(p.record.feeBps).toBe(45);
+    expect(p.record.feeBps).toBe(90); // STANDARD_FEE_BPS (1%) with the 10% referral discount
     expect(p.deadline).toBe(1_300n);
     const json = JSON.parse(JSON.stringify(toJsonSafe(p)));
     expect(json.tx.value).toBe('0');

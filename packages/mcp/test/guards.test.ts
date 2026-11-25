@@ -35,7 +35,7 @@ describe('vetBuild', () => {
     ['unknown router', built({ tx: { chainId: 4663, to: '0x1111111111111111111111111111111111111111', data: '0x', value: '1000' } })],
     ['wrong chain', built({ tx: { chainId: 1, to: UR, data: '0x', value: '1000' } })],
     ['value differs from amountIn', built({ tx: { chainId: 4663, to: UR, data: '0x', value: '2000' } })],
-    ['fee above 25 bps', built({ quote: { ...built().quote, fee: { feeBps: 50, feeAmount: '5' } } })],
+    ['fee above 1%', built({ quote: { ...built().quote, fee: { feeBps: 150, feeAmount: '5' } } })],
     ['failed simulation', built({ simulation: { ok: false, error: 'reverted' } })],
     ['missing simulation', built({ simulation: null })],
     ['buy asking for approvals', built({ approvals: [{ kind: 'erc20', token: TOKEN, spender: PERMIT2, amount: '1', tx: { to: TOKEN, data: '0x095ea7b3' as Hex, value: '0' } }] })],

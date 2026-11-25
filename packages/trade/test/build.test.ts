@@ -67,7 +67,7 @@ function fixedQuote(pool: V3Pool | V4Pool, side: SwapRequest['side']): Quote {
     minAmountOut: buy ? 990n : 970n,
     minGrossOut: buy ? 990n : 980n,
     slippageBps: 100,
-    fee: { side, feeToken: zeroAddress, feeBps: 100, baseFeeBps: 100, feeAmount: buy ? 10n ** 14n : 10n, holderDiscountBps: 0, holderDiscountAmount: 0n, referralDiscountAmount: 0n, referrerAccrual: 0n, venueFeeBps: 30, venueFeeLabel: '' },
+    fee: { side, feeToken: zeroAddress, feeBps: 100, baseFeeBps: 100, feeAmount: buy ? 10n ** 14n : 10n, holderDiscountBps: 0, holderDiscountAmount: 0n, referralDiscountAmount: 0n, referrerAccrual: 0n, cashbackAmount: 0n, venueFeeBps: 30, venueFeeLabel: '' },
     expectedRefund: 0n,
     priceImpactBps: 0,
     gasEstimate: null,

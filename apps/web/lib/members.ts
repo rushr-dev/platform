@@ -57,7 +57,7 @@ async function readError(r: Response): Promise<ApiError | null> {
   return body?.error ?? null;
 }
 
-async function authed(path: string, init: RequestInit = {}): Promise<Response> {
+export async function authed(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await auth.getAccessToken();
   return fetch(`${V1}${path}`, {
     ...init,

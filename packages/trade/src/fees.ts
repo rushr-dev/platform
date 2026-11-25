@@ -69,6 +69,8 @@ export interface FeeBreakdown {
   /** Referral: its share of the discount (on top of any holder discount), and the referrer's accrual (off-chain), both in feeToken. */
   referralDiscountAmount: bigint;
   referrerAccrual: bigint;
+  /** The trader's cashback on this fee (off-chain, paid weekly), in feeToken. */
+  cashbackAmount: bigint;
   /** Venue's own fees, informational (pool fee tier, PONS curve fee + creator tax). */
   venueFeeBps: number;
   venueFeeLabel: string;

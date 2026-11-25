@@ -54,8 +54,8 @@ describe('config', () => {
   it('defaults to the treasury; a placeholder treasury is still refused', () => {
     const cfg = resolveConfig();
     expect(cfg.feeBps).toBe(DEFAULT_TRADE_CONFIG.feeBps);
-    expect(cfg.feeBps).toBe(25); // beta rate (half price); 50 after the beta
-    expect([BETA_FEE_BPS, STANDARD_FEE_BPS]).toEqual([25, 50]);
+    expect(cfg.feeBps).toBe(100); // 1% since 2026-11-25, with 30% cashback
+    expect([BETA_FEE_BPS, STANDARD_FEE_BPS, DEFAULT_TRADE_CONFIG.feeBps, DEFAULT_TRADE_CONFIG.cashbackShareBps]).toEqual([25, 100, 100, 3_000]);
     expect([cfg.referralDiscountBps, cfg.referrerShareBps]).toEqual([1_000, 2_000]);
     expect(cfg.feeRecipient).toBe('0x2Ae062C61A757b66D3039154a6e965aa48Cd75F3');
     expect(() => assertSignable(cfg)).not.toThrow();

@@ -25,6 +25,11 @@ export function referrerAccrual(feeAmount: bigint, cfg: TradeConfig, referral?: 
   return referral ? (feeAmount * BigInt(cfg.referrerShareBps)) / BPS : 0n;
 }
 
+/** The trader's cashback on a collected fee (rounded down): `cashbackShareBps` of it, accrued off-chain. */
+export function cashbackOf(feeAmount: bigint, cfg: Pick<TradeConfig, 'cashbackShareBps'>): bigint {
+  return feeAmount > 0n ? (feeAmount * BigInt(cfg.cashbackShareBps)) / BPS : 0n;
+}
+
 /** What the referee saved vs. the base rate, given the fee basis (input on buys, gross output on sells). */
 export function referralDiscount(feeBasis: bigint, cfg: TradeConfig, appliedBps: number): bigint {
   return savedBetween(feeBasis, cfg.feeBps, appliedBps);

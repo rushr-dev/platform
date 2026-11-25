@@ -10,7 +10,7 @@ It registers with Sign-In with Ethereum, picks graduated tokens that pass Rushr'
 ## What it checks
 
 - **Keys stay local.** `init` makes a fresh wallet and writes the private key and the `rk_` API key to `.agent-wallet.json` next to the script, with mode 600. Neither key is printed.
-- **Before signing**, it refuses if `tx.to` isn't the Universal Router, an approval targets anything but the token or Permit2, the value or amount differs from what it asked for, the fee is above 25 bps, or the simulation failed.
+- **Before signing**, it refuses if `tx.to` isn't the Universal Router, an approval targets anything but the token or Permit2, the value or amount differs from what it asked for, the fee is above Rushr's 1%, or the simulation failed.
 - **Conservative picks:** graduated tokens only, at least 100 holders and $2K of 24h volume, risk `low` or `medium`, nothing blocked, spam or copycat. It never passes `acceptRisk` or `acceptImpact`.
 - **Price impact, split in two:** it quotes 1/20 of the size to measure the pool's fixed tax, then skips a token if the impact caused by its size is over 3%, or the total is over 5%.
 - **Hard caps** from environment variables (`TALOS_BUY_USD`, `TALOS_MAX_ETH_PER_TRADE`, `TALOS_MAX_ETH_TOTAL`, `TALOS_GAS_RESERVE_ETH`, `TALOS_TARGET_TRADES`, `TALOS_HOLD_SECONDS`). It stops after 3 errors in a row or on `insufficient_funds`.

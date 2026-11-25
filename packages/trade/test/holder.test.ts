@@ -14,7 +14,7 @@ const TRADER: Address = '0x2222222222222222222222222222222222222222';
 const REFERRER: Address = '0x5555555555555555555555555555555555555555';
 const TOKEN: Address = '0x39dbed3a2bd333467115de45665cc57f813c4571';
 const M = 10n ** 24n; // 1M $RUSHR (18 decimals)
-const beta = resolveConfig({ feeRecipient: TREASURY }); // 0.25%
+const beta = resolveConfig({ feeRecipient: TREASURY, feeBps: 25 }); // the beta rate, 0.25%
 
 const v2Pool: V2Pool = { venue: 'uniswap-v2', id: '0x8018ee3ad3000000000000000000000000000000', token: TOKEN, quote: TRADE_ADDRESSES.weth, reserveToken: 10n ** 24n, reserveQuote: 10n ** 20n, venueFeeBps: 30, venueFeeLabel: 'v2' };
 const req = (holderDiscountBps: number, referred = false): SwapRequest => ({
@@ -76,13 +76,13 @@ describe('quotes with the holder discount', () => {
     // The built transaction sends exactly that fee to the treasury.
     const [, to, amount] = decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'uint256' }], buildSwap(q, beta).commands[0]!.input);
     expect([to, amount]).toEqual([TREASURY, 16n * 10n ** 14n]);
-    expect(feeLine(q)).toBe('Rushr fee 0.16% (beta, half price, $RUSHR holder, 25% off, referral discount)');
+    expect(feeLine(q)).toBe('Rushr fee 0.16% (30% back as cashback, $RUSHR holder, 25% off, referral discount)');
   });
 
   it('without a tier the quote is unchanged', async () => {
     const q = await quotePool({} as PublicClient, v2Pool, req(0), beta);
     expect(q.fee).toMatchObject({ feeBps: 25, holderDiscountBps: 0, holderDiscountAmount: 0n, referralDiscountAmount: 0n });
-    expect(feeLine(q)).toBe('Rushr fee 0.25% (beta, half price)');
+    expect(feeLine(q)).toBe('Rushr fee 0.25% (30% back as cashback)');
   });
 });
 

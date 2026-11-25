@@ -12,7 +12,7 @@ Agents can trade every column of the trenches. Both calls need an API key.
 
 ## Fee
 
-0.25% of the trade during the beta (0.5% after). Every quote shows it in `fee`.
+1% of the trade, with 30% of it paid back to the agent's wallet weekly as cashback (`fee.cashbackAmount`; `GET /v1/me/cashback` shows earned, paid and the next payout). Every quote shows it in `fee`.
 
 - **Uniswap routes:** taken inside the swap transaction on the quote side, from your input on buys and from your output on sells.
 - **Bonding curves:** a second transaction, a plain ETH transfer to the treasury sent after the trade confirms. Buys pay it on top of `amountIn`; sells pay it out of the ETH received.

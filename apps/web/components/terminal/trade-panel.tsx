@@ -259,6 +259,7 @@ function Panel({ token, priceUsd, position }: { token: TradeToken; priceUsd: num
           <dl className="space-y-1 text-[11px]">
             <Row label={`Min received (${(t.slippageBps / 100).toFixed(1)}%)`} value={side === 'buy' ? `${compact(whole(t.quote.minAmountOut, token.decimals))} ${token.symbol}` : `${units(t.quote.minAmountOut, 18, 5)} ETH`} />
             <Row label={feeLine(t.quote)} value={`${units(t.quote.fee.feeAmount, 18, 6)} ETH`} />
+            {t.quote.fee.cashbackAmount > 0n && <Row label="Cashback, paid weekly" value={`${units(t.quote.fee.cashbackAmount, 18, 6)} ETH`} />}
             {t.quote.priceImpactBps != null && <Row label="Price impact" value={`${(t.quote.priceImpactBps / 100).toFixed(2)}%`} warn={t.quote.priceImpactBps > 500} />}
             {t.calls.length > 1 && <Row label="Transactions" value={`${t.calls.length} (first sell approves)`} />}
           </dl>

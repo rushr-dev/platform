@@ -3,7 +3,7 @@
   "name": "io.github.rushr-dev/mcp",
   "title": "Rushr",
   "description": "Trade Robinhood Chain tokens on Uniswap and PONS curves, post callouts, read the leaderboard. Local.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "websiteUrl": "https://rushr.trade",
   "repository": { "url": "https://github.com/rushr-dev/platform", "source": "github", "subfolder": "packages/mcp" },
   "packages": [
@@ -11,7 +11,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@rushr/mcp",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "runtimeHint": "npx",
       "transport": { "type": "stdio" },
       "environmentVariables": [

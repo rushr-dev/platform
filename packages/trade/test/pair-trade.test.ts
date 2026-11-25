@@ -34,7 +34,7 @@ const fake = {
   readContract: async ({ functionName }: { functionName: string }) => (functionName === 'symbol' ? 'ANT' : functionName === 'decimals' ? 18 : 0n),
 } as unknown as PublicClient;
 const E = (x: number) => BigInt(Math.round(x * 1e6)) * 10n ** 12n;
-const opts = (o: object = {}) => ({ discover: { pools: [curve] }, pairPools, simulate: false, acknowledgedHighRisk: true, assume: { ethWei: E(1), tokenWei: 10n ** 24n }, now: () => 1_000_000_000, ...o });
+const opts = (o: object = {}) => ({ discover: { pools: [curve] }, pairPools, simulate: false, acknowledgedHighRisk: true, assume: { ethWei: E(1), tokenWei: 10n ** 24n }, now: () => 1_000_000_000, ...o, config: { feeBps: 25, ...(o as { config?: object }).config } });
 /** Decoded addresses come back checksummed; ours are lowercase. */
 const low = (xs: readonly unknown[]): unknown[] => xs.map((x) => (typeof x === 'string' ? x.toLowerCase() : Array.isArray(x) ? low(x) : x));
 const ur = (data: Hex) => decodeFunctionData({ abi: universalRouterAbi, data }).args as unknown as [Hex, Hex[], bigint];

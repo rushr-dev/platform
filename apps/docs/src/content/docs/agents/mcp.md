@@ -143,7 +143,7 @@ Every buy passes these checks before anything is signed:
 - **Caps:** at most `RUSHR_MAX_TRADE_USD` per buy and `RUSHR_DAILY_USD` per 24 hours, and the wallet always keeps 0.001 ETH for gas. Caps come only from the environment; no tool can raise them.
 - **Safety:** blocked tokens (known honeypots and spam) are refused before the build. The server never passes `acceptRisk` or `acceptImpact`, so the API's own refusals (`honeypot`, `unsafe_token`, `high_price_impact` and others) come back to the model unchanged.
 - **Price impact, split in two.** Rushr's `priceImpactBps` includes any fixed tax the pool takes; PONS-hooked pools take 1-4% whatever the size. So the server also quotes 1/20 of the size to measure that floor, and refuses the buy if the impact caused by the size is over 3%, or the total (floor included) is over 5%.
-- **The build itself:** chain 4663; `tx.to` is the Universal Router; the value and amount match the request; the fee is at most 25 bps; approvals go only to the token or Permit2; and the simulation succeeded.
+- **The build itself:** chain 4663; `tx.to` is the Universal Router; the value and amount match the request; the fee is at most 1% (100 bps, from `@rushr/mcp` 0.3.0; older versions refuse every build since the fee changed); approvals go only to the token or Permit2; and the simulation succeeded.
 - **Deadline:** a build within 30 seconds of its deadline is refused; quote again.
 
 Sells are never blocked on impact or risk, so getting out always works. They still pass the build checks.

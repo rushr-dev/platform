@@ -4,9 +4,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { CURVE_BUY_TOPIC, CURVE_SELL_TOPIC, DEFAULT_TRADE_CONFIG, LEGACY_TREASURIES, cmd, effectiveFeeBps, encodeExecute } from '@rushr/trade';
 import { v1 } from '../src/agents/app';
 import { confirmTrade, ethReceived, sweepStuckTrades, tokenFlow, trades } from '../src/ledger';
+import { cashback } from '../src/cashback';
 import { pgAvailable, setup } from './harness';
 
 v1.route('/', trades);
+v1.route('/', cashback);
 
 const pg = await pgAvailable();
 // Agents' body guard lets exactly a top-level txHash through on POST /v1/trades (a tx hash has a
@@ -316,6 +318,28 @@ describe.skipIf(!pg)('trade ledger', () => {
     expect(acc.json.accrued).toEqual([
       { fee_token: '0x0000000000000000000000000000000000000000', trades: 1, confirmed_fee_amount: BUY_FEE.toString(), referrer_accrual: ((BUY_FEE * 2000n) / 10_000n).toString() },
     ]);
+  });
+
+  it("accrues 30% of the fee actually paid as the trader's cashback, and counts batched and paid payouts against it", async () => {
+    const ETH = '0x0000000000000000000000000000000000000000';
+    const cb = (BUY_FEE * 3000n) / 10_000n;
+    const [row] = await t.sql`select cashback_share_bps, cashback_accrual::text from trades_ledger where tx_hash = ${BUY_TX}`;
+    expect(row).toEqual({ cashback_share_bps: 3000, cashback_accrual: cb.toString() });
+    const before = await t.call('GET', '/me/cashback', { auth: bob });
+    expect(before.headers.get('cache-control')).toBe('private, no-store');
+    expect(before.json).toMatchObject({ shareBps: 3000, cashback: [{ fee_token: ETH, trades: 1, accrued: cb.toString(), paid: '0', pending: '0', owed: cb.toString() }], payouts: [] });
+    // A paid batch and a batch still waiting for the Safe's signers both stop counting as owed; a voided one doesn't.
+    await t.sql`insert into cashback_payouts (id, batch, wallet, fee_token, amount, status, tx_hash, paid_at) values
+      ('p1', '2026-12-01', ${BOB}, ${ETH}, ${(cb / 2n).toString()}, 'paid', ${`0x${'cd'.repeat(32)}`}, now()),
+      ('p2', '2026-12-08', ${BOB}, ${ETH}, ${(cb / 4n).toString()}, 'pending', null, null),
+      ('p3', '2026-12-08', ${CAROL}, ${ETH}, '1', 'void', null, null)`;
+    const after = await t.call('GET', '/me/cashback', { auth: bob });
+    expect(after.json.cashback[0]).toMatchObject({ paid: (cb / 2n).toString(), pending: (cb / 4n).toString(), owed: (cb - cb / 2n - cb / 4n).toString() });
+    expect(after.json.payouts.map((p: { batch: string; status: string }) => `${p.batch} ${p.status}`).sort()).toEqual(['2026-12-01 paid', '2026-12-08 pending']);
+    // Carol traded unreferred, but her cashback is the same 30% of what she paid.
+    const carolCb = await t.call('GET', '/me/cashback', { auth: carol });
+    expect(carolCb.json.cashback.length).toBeGreaterThan(0);
+    await t.sql`delete from cashback_payouts`;
   });
 
   describe('curve trades: the fee is a follow-up transfer at the next nonce', () => {

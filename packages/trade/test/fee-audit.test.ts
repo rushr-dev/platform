@@ -12,7 +12,7 @@ const TREASURY: Address = '0x1111111111111111111111111111111111111111';
 const TRADER: Address = '0x2222222222222222222222222222222222222222';
 const TOKEN: Address = '0x39dbed3a2bd333467115de45665cc57f813c4571';
 const UR = TRADE_ADDRESSES.universalRouter;
-const cfg = resolveConfig({ feeRecipient: TREASURY }); // beta default: 25 bps, 22 referred
+const cfg = resolveConfig({ feeRecipient: TREASURY, feeBps: 25 }); // the beta rate: 25 bps, 22 referred
 const pool: V2Pool = { venue: 'uniswap-v2', id: '0x8018ee3ad3000000000000000000000000000000', token: TOKEN, quote: TRADE_ADDRESSES.weth, reserveToken: 10n ** 24n, reserveQuote: 10n ** 20n, venueFeeBps: 30, venueFeeLabel: 'v2' };
 const req = (side: SwapRequest['side'], amountIn: bigint, referred = false): SwapRequest => ({ side, token: TOKEN, quoteAsset: 'ETH', amountIn, trader: TRADER, slippageBps: 100, referral: referred ? { referrer: '0x5555555555555555555555555555555555555555' } : null });
 const eth = (to: Address, value: bigint): CallFrame => ({ type: 'CALL', from: UR, to, value: toHex(value) });

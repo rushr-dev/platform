@@ -107,8 +107,8 @@ export const PERMIT2 = TRADE_ADDRESSES.permit2.toLowerCase();
 export const CHAIN_ID = TRADE_ADDRESSES.chainId;
 const SELECTOR_ERC20_APPROVE = '0x095ea7b3';
 const SELECTOR_PERMIT2_APPROVE = '0x87517c45';
-/** Rushr's beta fee. A build asking for more is refused. */
-export const MAX_FEE_BPS = 25;
+/** Rushr's platform fee, 1% (30% of it comes back as cashback). A build asking for more is refused. */
+export const MAX_FEE_BPS = 100;
 
 /** Refuses a build that doesn't look like what llms.txt describes. Throws GuardError `refused_unsafe_build`. */
 export function vetBuild(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint, opts: { requireSimulation?: boolean; trader?: Address; curveOnChain?: Address | null } = {}): void {
@@ -261,7 +261,7 @@ function feeTxProblems(tx: UnsignedTx | null | undefined, value: bigint, label: 
  *   `sell(amountIn, min, this wallet)` on it;
  * - buys send exactly `amountIn` (the fee is on top), sells send no ETH;
  * - approvals (sells only) are `token.approve(curve)`;
- * - `followUp` is a transfer to the treasury Safe of exactly `quote.fee.feeAmount`, at most 25 bps of the
+ * - `followUp` is a transfer to the treasury Safe of exactly `quote.fee.feeAmount`, at most MAX_FEE_BPS (1%) of the
  *   trade's ETH side;
  * - the simulation succeeded.
  */
@@ -332,7 +332,7 @@ const universalRouterAbi = parseAbi(['function execute(bytes commands, bytes[] i
  *   buys and 0 on sells;
  * - the curve step calls the curve with value 0: `buy(minPairAmount, min, this wallet)` or
  *   `sell(amountIn, min, this wallet)`;
- * - the fee is at most 25 bps and the simulation succeeded.
+ * - the fee is at most MAX_FEE_BPS (1%) and the simulation succeeded.
  * The swap's commands (route, fee, recipient) aren't decoded here: the simulation checks what arrives.
  */
 export function vetPairCurveBuild(b: Built, side: 'buy' | 'sell', token: Address, amountIn: bigint, opts: { trader?: Address; curveOnChain?: Address | null; requireSimulation?: boolean } = {}): void {

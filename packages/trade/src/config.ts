@@ -24,8 +24,18 @@ export const LEGACY_TREASURIES: readonly Address[] = ['0x447a590b70cd55Cc6B62CEa
 /** Kept for tests and forks: a config using it is refused by `assertSignable`. */
 export const PLACEHOLDER_FEE_RECIPIENT: Address = '0x000000000000000000000000000000000000fee1';
 
-/** The standard platform fee (decided 2026-11-12): 0.5%. */
-export const STANDARD_FEE_BPS = 50;
+/**
+ * The platform fee (decided 2026-11-25): 1%, with 30% of it paid back to the trader as cashback (CASHBACK_SHARE_BPS).
+ * It replaced the 0.25% beta rate and the earlier 0.5% standard (decided 2026-11-12, never switched on).
+ */
+export const STANDARD_FEE_BPS = 100;
+/**
+ * Split of every collected fee (decided 2026-11-25), in bps of the fee: 30% back to the trader as cashback, 20% buys
+ * $RUSHR and burns it, the rest goes to the treasury. A referrer's share (`referrerShareBps`) comes out of the
+ * treasury's part. The cashback accrues off-chain in the trade ledger and is paid weekly from the treasury Safe.
+ */
+export const CASHBACK_SHARE_BPS = 3_000;
+export const BUYBACK_SHARE_BPS = 2_000;
 /**
  * Beta rate (decided 2026-11-13): half price, 0.25%, on every route. Universal Router routes take it
  * inside the swap; PONS curve trades pay it as a follow-up transfer (curve-fee.ts).
@@ -65,6 +75,8 @@ export interface TradeConfig {
   referralDiscountBps: number;
   /** Referrer's share of the fee actually collected, in bps of the fee (2000 = 20%). Accounted off-chain. */
   referrerShareBps: number;
+  /** Trader's cashback: share of the fee they actually paid, in bps of the fee (3000 = 30%). Accounted off-chain, paid weekly. */
+  cashbackShareBps: number;
   /** $RUSHR holder discount tiers, highest first (`holderDiscountBps`). Empty: no holder discount. */
   holderTiers: readonly HolderTier[];
   /** Token whose balance sets the holder tier. */
@@ -86,9 +98,10 @@ export interface TradeConfig {
 }
 
 export const DEFAULT_TRADE_CONFIG: TradeConfig = {
-  feeBps: BETA_FEE_BPS, // beta rate; STANDARD_FEE_BPS after the beta
+  feeBps: STANDARD_FEE_BPS,
   referralDiscountBps: 1_000,
   referrerShareBps: 2_000,
+  cashbackShareBps: CASHBACK_SHARE_BPS,
   holderTiers: HOLDER_TIERS,
   rushrToken: RUSHR_TOKEN,
   feeRecipient: RUSHR_TREASURY,

@@ -15,7 +15,7 @@ const curve = { venue: 'pons-curve', id: '0xdb0f18faf3e0c9e26733ceeaefc3b8a18802
 /** Only gas price is read from the "chain" (balances come from `assume`, quotes from v2 reserves). */
 const fake = { getGasPrice: async () => 100_000_000n } as unknown as PublicClient;
 const E = (x: number) => BigInt(Math.round(x * 1e6)) * 10n ** 12n;
-const opts = (o: object = {}) => ({ discover: { pools: [v2] }, simulate: false, assume: { ethWei: E(1), tokenWei: 10n ** 24n }, now: () => 1_000_000, ...o });
+const opts = (o: object = {}) => ({ discover: { pools: [v2] }, simulate: false, assume: { ethWei: E(1), tokenWei: 10n ** 24n }, now: () => 1_000_000, ...o, config: { feeBps: 25, ...(o as { config?: object }).config } });
 
 describe('automatic slippage', () => {
   it('5% base, up to 15% for young / volatile / high-impact tokens, plus tax on top', () => {
@@ -70,9 +70,10 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     expect(t.record).toMatchObject({ side: 'buy', feeBps: 25, baseFeeBps: 25, venue: 'uniswap-v2', source: { kind: 'web' } });
     expect(isFresh(t, 1_000_000 + 9_999)).toBe(true);
     expect(isFresh(t, 1_000_000 + 10_001)).toBe(false);
-    expect(feeLine(t.quote!)).toBe('Rushr fee 0.25% (beta, half price)');
+    expect(feeLine(t.quote!)).toBe('Rushr fee 0.25% (30% back as cashback)');
     const standard = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER }, opts({ config: { feeBps: STANDARD_FEE_BPS } }));
-    expect(feeLine(standard.quote!)).toBe('Rushr fee 0.5%');
+    expect(feeLine(standard.quote!)).toBe('Rushr fee 1% (30% back as cashback)');
+    expect(standard.quote!.fee.cashbackAmount).toBe((standard.quote!.fee.feeAmount * 3_000n) / 10_000n);
   });
 
   it('sell: approval calls first (ERC-20 → Permit2, Permit2 → Universal Router, 30 days), then the swap', async () => {
@@ -107,7 +108,7 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     expect(b.quote!.amountOut).toBe(out);
     // Buys: the whole amount goes into the curve; the 0.25% fee comes on top, after the trade.
     expect(b.quote!.fee).toMatchObject({ feeBps: 25, baseFeeBps: 25, feeAmount: E(0.00025) });
-    expect(feeLine(b.quote!)).toBe('Rushr fee 0.25% (beta, half price)');
+    expect(feeLine(b.quote!)).toBe('Rushr fee 0.25% (30% back as cashback)');
     expect(b.feeFollowUp).toEqual({ kind: 'curve-fee', side: 'buy', curve: live.curve, trader: TRADER, treasury: RUSHR_TREASURY, feeBps: 25, quotedFee: E(0.00025) });
     expect(decodeFunctionData({ abi: ponsCurveAbi, data: b.calls[0]!.data }).args).toEqual([E(0.1), (out * 9_500n) / 10_000n, TRADER]);
     expect(b.sellApprovals.map((c) => c.label)).toEqual(['approve token for the curve']);
@@ -161,7 +162,7 @@ describe('prepareQuickTrade (Universal Router, client-side signing)', () => {
     expect(risky.slippageBps).toBe(1000); // young token
     const ref = await quickBuy(fake, { token: TOKEN, ethWei: E(0.1), trader: TRADER, referral: { referrer: '0x5555555555555555555555555555555555555555' } }, opts());
     expect(ref.quote!.fee.feeBps).toBe(22);
-    expect(feeLine(ref.quote!)).toBe('Rushr fee 0.22% (beta, half price, referral discount)');
+    expect(feeLine(ref.quote!)).toBe('Rushr fee 0.22% (30% back as cashback, referral discount)');
     expect(explorerTxUrl('0xabc')).toBe('https://robinhoodchain.blockscout.com/tx/0xabc');
   });
 });
