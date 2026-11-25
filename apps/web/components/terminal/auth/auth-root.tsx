@@ -5,7 +5,9 @@ import { useEffect, useState } from 'react';
 import { onAuthLoadRequest, privyAppId, setAuthState } from '@/lib/auth';
 import { setMe, type MeResult } from '@/lib/members';
 import { readHint } from '@/lib/session-hint';
+import { FundPrompt } from './fund-prompt';
 import { MemberGate } from './onboarding';
+import { WelcomeTour } from './welcome-tour';
 
 const PrivyHost = dynamic(() => import('./privy-host'), { ssr: false });
 
@@ -63,6 +65,8 @@ export function AuthRoot() {
     <>
       {load && <PrivyHost />}
       <MemberGate />
+      <WelcomeTour />
+      <FundPrompt />
     </>
   );
 }

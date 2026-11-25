@@ -7,6 +7,7 @@ import { auth, useAuth, type AuthUser } from '@/lib/auth';
 import { captureInviteFromUrl, clearInvite, INVITE_RE, storedInvite } from '@/lib/invite';
 import { checkInvite, createMe, errorText, getMe, inviteStatusText, setMe, useMe, type InviteStatus } from '@/lib/members';
 import { UserAvatar } from './account-menu';
+import { REGISTERED_EVENT } from './fund-prompt';
 
 const HANDLE_RE = /^[a-z0-9_]{3,20}$/;
 const X_URL = 'https://x.com/rushrtrade';
@@ -110,6 +111,8 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
     }
     clearInvite();
     setMe({ status: 'registered', member: res.member });
+    // Next step: fund the wallet (fund-prompt.tsx).
+    window.dispatchEvent(new Event(REGISTERED_EVENT));
   };
 
   return (
