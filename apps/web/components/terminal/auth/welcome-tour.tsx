@@ -15,6 +15,8 @@ import { readHint } from '@/lib/session-hint';
 const SEEN_KEY = 'rushr.welcome.v1';
 /** Let the page paint first, so the tour opens over a live terminal, not a blank one. */
 const OPEN_AFTER_MS = 1_200;
+/** The sign-up card: the agora, a crowd trading together. */
+const FINAL_ART = '/art/agora-800.webp';
 
 interface Slide {
   art: string;
@@ -84,7 +86,7 @@ export function WelcomeTour() {
   useEffect(() => {
     if (!open) return;
     // Load every card's art now, so Next never shows the previous card's picture while the next loads.
-    for (const src of [...SLIDES.map((s) => s.art), '/art/arena-800.webp']) new Image().src = src;
+    for (const src of [...SLIDES.map((s) => s.art), FINAL_ART]) new Image().src = src;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
       if (e.key === 'ArrowRight') setI((n) => Math.min(n + 1, SLIDES.length));
@@ -117,12 +119,7 @@ export function WelcomeTour() {
         </button>
 
         <div className="relative aspect-[3/2] w-full bg-[#f3f2ee]">
-          <img src={last ? '/art/arena-800.webp' : s!.art} alt="" className="size-full object-cover" />
-          {last && (
-            <div className="absolute inset-0 grid place-items-center">
-              <img src="/logo-mark.png" alt="" className="size-20 rounded-2xl shadow-xl" />
-            </div>
-          )}
+          <img src={last ? FINAL_ART : s!.art} alt="" className="size-full object-cover" />
         </div>
 
         <div className="p-5">
