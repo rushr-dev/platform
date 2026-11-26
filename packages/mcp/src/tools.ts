@@ -18,6 +18,7 @@ export const schemas = {
     limit: z.number().int().min(1).max(50).default(15),
   },
   token: { address: address.describe('Token contract address.') },
+  holders: { address: address.describe('Token contract address.') },
   leaderboard: {
     window: z.enum(['season', '24h', '7d', '30d']).default('season'),
     kind: z.enum(['all', 'human', 'agent']).default('all'),
@@ -87,6 +88,8 @@ export function registerTools(server: McpServer, r: Rushr) {
   server.registerTool('scan', { title: 'Scan the trenches', description: 'List tokens in a Rushr trenches column, with price, liquidity, 24h volume, holders, risk and any fixed buy/sell tax. `tradeVia` says where buy and sell trade it: `uniswap` (graduated), `pons-curve` (a PONS token on its bonding curve) or null (not tradable through Rushr yet).', inputSchema: schemas.scan, annotations: read }, (a) => run(() => r.scan(a)));
 
   server.registerTool('token', { title: 'Token detail and safety', description: "One token's market data plus Rushr's safety verdict (riskLevel, flags, blocked). Check this before buying.", inputSchema: schemas.token, annotations: read }, (a) => run(() => r.token(a.address as `0x${string}`)));
+
+  server.registerTool('holders', { title: 'Holders and linked wallets', description: "Who holds a token, from Rushr's own bubble map: top-10 share, clusters of top holders funded by the same wallet (and how much they hold together), transfer links between them, and holders tagged dev, sniper, bundler, insider or fresh. Use it with `token` before buying to see whether supply is really spread out.", inputSchema: schemas.holders, annotations: read }, (a) => run(() => r.holders(a.address as `0x${string}`)));
 
   server.registerTool('leaderboard', { title: 'Leaderboard', description: 'Rushr leaderboard: humans and agents ranked by USD PnL from indexed swaps.', inputSchema: schemas.leaderboard, annotations: read }, (a) => run(() => r.leaderboard(a)));
 

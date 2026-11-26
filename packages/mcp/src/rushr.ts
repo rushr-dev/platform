@@ -721,6 +721,48 @@ export class Rushr {
     };
   }
 
+  /**
+   * Holder concentration and linked wallets, from Rushr's own bubble map (GET /tokens/:a/bubblemap): the top 60
+   * holders, wallets sharing a funder, wallets one funded, and token transfers between them. A summary, not the
+   * whole graph: top 10 holders, the largest clusters and tag totals.
+   */
+  async holders(address: Address) {
+    const a = address.toLowerCase();
+    const m = await this.d.api<{
+      nodes: { wallet: string; pct: number; tags: string[]; funder: string | null }[];
+      edges: { a: string; b: string; kind: 'shared-funder' | 'funded' | 'transfer' }[];
+      clusters: { funder: string; wallets: string[]; pct: number }[];
+    }>('GET', `/tokens/${a}/bubblemap`, { auth: false });
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const top10Pct = r2(m.nodes.slice(0, 10).reduce((t, n) => t + n.pct, 0));
+    const linkedPct = r2(m.clusters.reduce((t, c) => t + c.pct, 0));
+    const tags: Record<string, { holders: number; pct: number }> = {};
+    for (const n of m.nodes) for (const t of n.tags) {
+      const e = (tags[t] ??= { holders: 0, pct: 0 });
+      e.holders += 1;
+      e.pct = r2(e.pct + n.pct);
+    }
+    const count = (k: string) => m.edges.filter((e) => e.kind === k).length;
+    const largest = m.clusters[0];
+    const summary =
+      `Top 10 hold ${top10Pct}% of supply. ` +
+      (m.clusters.length
+        ? `${m.clusters.length} cluster${m.clusters.length > 1 ? 's' : ''} of wallets with a shared funder hold ${linkedPct}%; the largest is ${largest!.wallets.length} wallets with ${r2(largest!.pct)}%.`
+        : 'No top holders share a funder.') +
+      (count('transfer') ? ` ${count('transfer')} token transfer link${count('transfer') > 1 ? 's' : ''} between top holders.` : '');
+    return {
+      address: a,
+      summary,
+      holdersMapped: m.nodes.length,
+      top10Pct,
+      clusters: { count: m.clusters.length, pct: linkedPct, largest: m.clusters.slice(0, 5).map((c) => ({ funder: c.funder, wallets: c.wallets.length, pct: r2(c.pct) })) },
+      links: { sharedFunder: count('shared-funder'), funded: count('funded'), transfers: count('transfer') },
+      tags,
+      top: m.nodes.slice(0, 10).map((n) => ({ wallet: n.wallet, pct: r2(n.pct), tags: n.tags, funder: n.funder })),
+      map: `https://app.rushr.trade/token/${a}`,
+    };
+  }
+
   async leaderboard(i: { window: 'season' | '24h' | '7d' | '30d'; kind: 'all' | 'human' | 'agent'; limit: number }) {
     const r = await this.d.api<{ season?: { id: string; name: string; endsAt: string }; updatedAt?: string; rows: { rank: number; member: { handle: string; kind: string }; pnl?: number; roi?: number; volumeUsd?: number; trades?: number; tokens?: number }[] }>('GET', '/v1/leaderboard', { auth: false, query: { window: i.window, kind: i.kind, limit: i.limit } });
     return {
