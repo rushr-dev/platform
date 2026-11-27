@@ -7,7 +7,12 @@ import { authed } from './members';
 export interface CashbackRow {
   fee_token: string;
   trades: number;
+  /** Everything earned: cashback + referral share. */
   accrued: string;
+  /** Cashback on the member's own trades. */
+  cashback?: string;
+  /** The member's referral share of the fees paid by people they referred. */
+  referral?: string;
   paid: string;
   /** In a weekly batch waiting for the Safe's signers. */
   pending: string;
@@ -32,7 +37,7 @@ export interface Cashback {
   cashback: CashbackRow[];
   payouts: CashbackPayout[];
   /** USD totals at today's ETH price (null when the price is unknown). */
-  usd: { ethUsd: number | null; earned: number | null; paid: number | null; nextPayout: number | null };
+  usd: { ethUsd: number | null; earned: number | null; cashback?: number | null; referral?: number | null; paid: number | null; nextPayout: number | null };
   /** `next`: the next payout day, YYYY-MM-DD (UTC). */
   payout: { schedule: 'weekly'; next: string; weekday: string; min: Record<string, string> };
 }

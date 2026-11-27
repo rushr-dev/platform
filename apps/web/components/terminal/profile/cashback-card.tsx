@@ -8,7 +8,8 @@ import { EXPLORER } from '@/lib/format';
 
 /**
  * Own profile: the member's cashback, in dollars. 30% of every Rushr fee they pay comes back: it builds up with
- * every trade and is sent to their wallet every Sunday from the treasury Safe.
+ * every trade and is sent to their wallet every Sunday from the treasury Safe, together with any referral earnings
+ * (referral-card.tsx).
  */
 const ETH = '0x0000000000000000000000000000000000000000';
 const isEth = (t: string) => t.toLowerCase() === ETH;
@@ -40,6 +41,7 @@ export function CashbackCard() {
   const show = (v: number | null | undefined, pick: (r: CashbackRow) => bigint) => (v != null ? dollars(v) : tokens(rows, pick));
   const paidOut = (data?.payouts ?? []).filter((p) => p.status === 'paid' && p.tx_hash).slice(0, 3);
   const day = data ? payoutDay(data.payout.next) : null;
+  const hasReferral = rows.some((r) => BigInt(r.referral ?? '0') > 0n);
 
   return (
     <section className="rounded-2xl border border-white/[0.06] bg-surface p-4">
@@ -65,10 +67,11 @@ export function CashbackCard() {
               <CalendarBlank size={13} /> Sent to this wallet on {day}. Nothing to claim.
             </p>
           )}
+          {hasReferral && <p className="mt-1 text-[11px] text-muted">Includes your referral earnings, paid in the same transfer.</p>}
           <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
             <div className="rounded-xl bg-white/[0.03] px-3 py-2">
               <div className="text-muted">Earned so far</div>
-              <div className="mt-0.5 font-mono text-ink">{show(usd?.earned, (r) => BigInt(r.accrued))}</div>
+              <div className="mt-0.5 font-mono text-ink">{show(usd?.cashback ?? usd?.earned, (r) => BigInt(r.cashback ?? r.accrued))}</div>
               <div className="mt-0.5 text-[11px] text-muted">from {rows.reduce((n, r) => n + r.trades, 0)} trades</div>
             </div>
             <div className="rounded-xl bg-white/[0.03] px-3 py-2">

@@ -7,7 +7,7 @@ description: Rushr's 1% platform fee, the 30% cashback on every fee you pay, the
 | --- | --- |
 | **Every trade** | **1%** of the trade |
 | **Cashback** | **30% of the fee you pay comes back to you**, every Sunday |
-| Referred traders | 10% off: 0.9% |
+| Referred traders | 10% off: 0.9%, and [20% of it goes to whoever referred them](#referrals) |
 
 Since 25 November 2026. During the beta the fee was 0.25%.
 
@@ -21,6 +21,18 @@ Since 25 November 2026. During the beta the fee was 0.25%.
 - **Agents too.** Cashback goes to the wallet that traded, human or agent. Agents see theirs with `GET /v1/me/cashback` or the MCP's `my_status`.
 
 Cashback is a partial refund of the fee, not interest or a return on anything. Trades made only to farm it, such as trading with yourself, may be excluded.
+
+## Referrals
+
+Share your link and earn from the fees your friends pay.
+
+- **Your link:** `app.rushr.trade/?ref=<your handle>`. It's on your profile, with a copy button and a share-on-X button. Your handle is your code.
+- **They get 10% off** Rushr's fee on every trade (0.9% instead of 1%), stacked with the $RUSHR holder discount and their cashback.
+- **You get 20%** of the Rushr fee they actually pay, on every trade, with no end date. It's paid with your cashback every Sunday, in the same transfer.
+- **Set once, at sign-up.** Someone who opens your link and signs up within 30 days, on the same browser, is yours. They can also type your handle in "Referred by" when they sign up. It can't be added or changed later, and you can't refer yourself.
+- **Agents too.** An agent registers with `referralCode` (`POST /v1/agents/register`), and any member, human or agent, can share their own link. `GET /v1/me/referrals` shows your link, who joined, how many traded and what you've earned.
+
+Your profile shows who joined with your link, how many have traded and what you've earned, in dollars. Referral earnings come out of the team's half of the fee, never out of anyone's cashback. Self-referrals and trades made only to farm referral earnings may be excluded.
 
 ## Hold $RUSHR, pay less
 

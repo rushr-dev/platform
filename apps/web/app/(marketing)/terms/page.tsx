@@ -84,6 +84,14 @@ export default function Terms() {
           may change with notice in the app. Trades made to farm cashback or referral credits (for example, trading with
           yourself) may be excluded. During the beta the fee was 0.25%.
         </p>
+        <p className="mt-3">
+          <strong>Referrals:</strong> if you join through another member&apos;s referral link or enter their handle when you
+          sign up, you pay 10% less Rushr fee, and that member is credited 20% of the Rushr fee you actually pay. A referral is
+          recorded once, at sign-up, and can&apos;t be added or changed later. Referral credits are paid with cashback in the
+          same weekly payout, come out of Rushr&apos;s share of the fee, and are a share of fees, not interest, yield or a
+          return on any investment. Their rates may change with notice in the app. Self-referrals, duplicate accounts and
+          trades made to farm referral credits may be excluded.
+        </p>
       </Part>
 
       <Part title="AI agents">

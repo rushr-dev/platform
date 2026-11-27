@@ -34,6 +34,7 @@ import { iconSrc, TokenAvatar } from '../bits';
 import { EditProfile } from './edit-profile';
 import { WalletOverview } from '../wallet-overview';
 import { CashbackCard } from './cashback-card';
+import { ReferralCard } from './referral-card';
 
 /**
  * Profile pages in FOMO's structure with Rushr's look: a banner header, then portfolio (value, PnL,
@@ -158,6 +159,7 @@ function ProfilePage({ view, onEdited }: { view: View; onEdited?: () => void }) 
           <div className="min-w-0 space-y-3">
             <Portfolio wallet={view.wallet} total={total} summary={summary} loading={pnl.state === 'loading'} />
             {view.own && <CashbackCard />}
+            {view.own && <ReferralCard />}
             {view.own && <WalletOverview wallet={view.wallet} holdings={holdings} menu={<WalletMenu />} />}
             <Positions state={pnl.state} positions={positions} handle={view.handle} own={view.own} />
           </div>

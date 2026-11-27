@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CheckCircle, Warning, XLogo } from '@phosphor-icons/react';
 import { auth, useAuth, type AuthUser } from '@/lib/auth';
 import { captureInviteFromUrl, clearInvite, INVITE_RE, storedInvite } from '@/lib/invite';
+import { captureReferralFromUrl, checkReferral, clearReferral, normalizeRef, storedReferral } from '@/lib/referral';
 import { checkInvite, createMe, errorText, getMe, inviteStatusText, setMe, useMe, type InviteStatus } from '@/lib/members';
 import { UserAvatar } from './account-menu';
 import { REGISTERED_EVENT } from './fund-prompt';
@@ -43,7 +44,7 @@ export function LegalLine({ className = '' }: { className?: string }) {
 }
 
 /**
- * Keeps the invite code from the URL, loads the signed-in user's Rushr member, and asks new users
+ * Keeps the invite code and referral handle from the URL, loads the signed-in user's Rushr member, and asks new users
  * to finish sign-up (handle + invite) before they use the terminal as a member.
  */
 export function MemberGate() {
@@ -51,7 +52,10 @@ export function MemberGate() {
   const me = useMe();
   const checked = useRef<string | null>(null);
 
-  useEffect(() => captureInviteFromUrl(), []);
+  useEffect(() => {
+    captureInviteFromUrl();
+    captureReferralFromUrl();
+  }, []);
 
   useEffect(() => {
     // Until the SDK has answered, keep whatever member the page painted from the session hint.
@@ -77,6 +81,9 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
   const [error, setError] = useState<string | null>(null);
   const [full, setFull] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Who referred them: pre-filled from a ?ref= link, optional, checked as it's typed.
+  const [ref, setRef] = useState(() => storedReferral() ?? '');
+  const [refStatus, setRefStatus] = useState<string | false | null>(null);
 
   // Check the code as it's typed (debounced); the API only claims it on sign-up.
   useEffect(() => {
@@ -95,12 +102,21 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
     return () => clearTimeout(t);
   }, [invite]);
 
+  useEffect(() => {
+    setRefStatus(null);
+    const code = normalizeRef(ref);
+    if (!code) return;
+    const t = setTimeout(() => void checkReferral(code).then(setRefStatus), 350);
+    return () => clearTimeout(t);
+  }, [ref]);
+
   const handleOk = HANDLE_RE.test(handle);
   const inviteOk = !invitesRequired || INVITE_RE.test(invite);
   const submit = async () => {
     setBusy(true);
     setError(null);
-    const res = await createMe({ handle, inviteCode: invite || null });
+    // Only a handle the API confirmed; the API ignores unknown codes anyway.
+    const res = await createMe({ handle, inviteCode: invite || null, referralCode: refStatus ? refStatus : null });
     setBusy(false);
     if (!res.ok) {
       if (res.error.code === 'invite_full') {
@@ -110,6 +126,7 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
       return setError(errorText(res.error));
     }
     clearInvite();
+    clearReferral();
     setMe({ status: 'registered', member: res.member });
     // Next step: fund the wallet (fund-prompt.tsx).
     window.dispatchEvent(new Event(REGISTERED_EVENT));
@@ -148,6 +165,28 @@ function Onboarding({ user, invitesRequired }: { user: AuthUser; invitesRequired
           <span id="handle-hint" className={`mt-1 block text-[11px] ${handle && !handleOk ? 'text-risk-medium' : 'text-muted'}`}>
             3–20 characters: letters, numbers and _. Shown on your trades and calls.
           </span>
+        </label>
+
+        <label className="mt-4 block">
+          <span className="text-xs text-muted">Referred by <span className="text-muted/70">(optional)</span></span>
+          <div className="mt-1 flex items-center rounded-xl border border-white/[0.08] bg-bg px-3 py-2.5 focus-within:border-white/25">
+            <span className="text-muted">@</span>
+            <input
+              value={ref}
+              onChange={(e) => setRef(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 20))}
+              placeholder="handle"
+              className="ml-0.5 w-full bg-transparent outline-none"
+            />
+          </div>
+          {refStatus ? (
+            <span className="mt-1 flex items-center gap-1 text-[11px] text-brand">
+              <CheckCircle size={12} weight="fill" /> Referred by @{refStatus}: you get 10% off Rushr fees.
+            </span>
+          ) : refStatus === false ? (
+            <span className="mt-1 flex items-center gap-1 text-[11px] text-risk-medium">
+              <Warning size={12} weight="fill" /> No member with that handle.
+            </span>
+          ) : null}
         </label>
 
         {/* Without the invite gate the field is hidden; a code from an invite link is still sent, to record where people came from. */}

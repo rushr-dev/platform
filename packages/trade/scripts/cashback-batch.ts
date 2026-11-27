@@ -1,5 +1,5 @@
 /**
- * Cashback batch from the treasury Safe: the fallback when claims (POST /v1/me/cashback/claim, paid from the
+ * Cashback (and referral earnings) batch from the treasury Safe: the fallback when claims (POST /v1/me/cashback/claim, paid from the
  * payer wallet) are off, or to pay everyone at once. Claims and batches share cashback_payouts, so nothing is
  * owed twice. Nothing here signs or sends anything: it reads the trade ledger, writes a Safe
  * Transaction Builder file for the treasury Safe's owners to review and sign, and keeps the books.
@@ -52,8 +52,14 @@ const fmt = (p: Owed) => `${formatUnits(p.owed, p.feeToken === NATIVE_FEE_TOKEN 
 try {
   if (cmd === 'build') {
     const rows = await sql<{ wallet: string; fee_token: string; owed: string }[]>`
-      with a as (select trader as wallet, lower(fee_token) as fee_token, sum(cashback_accrual) as accrued from trades_ledger
-        where status = 'confirmed' and cashback_accrual > 0 group by 1, 2),
+      -- Owed per wallet: its cashback as a trader plus its referral share as a referrer, paid as one transfer.
+      with e as (
+        select trader as wallet, lower(fee_token) as fee_token, cashback_accrual as amount from trades_ledger
+        where status = 'confirmed' and cashback_accrual > 0
+        union all
+        select lower(referrer), lower(fee_token), referrer_accrual from trades_ledger
+        where status = 'confirmed' and referrer is not null and referrer_accrual > 0),
+      a as (select wallet, fee_token, sum(amount) as accrued from e group by 1, 2),
       -- Batches and claims both count: paid, or in flight.
       p as (select wallet, lower(fee_token) as fee_token, sum(amount) as out from cashback_payouts
         where status in ('paid', 'pending') group by 1, 2)

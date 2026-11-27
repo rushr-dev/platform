@@ -85,9 +85,9 @@ export async function getMe(): Promise<MeResult> {
 
 export type CreateResult = { ok: true; member: Member } | { ok: false; error: ApiError };
 
-export async function createMe(body: { handle: string; inviteCode?: string | null; displayName?: string | null }): Promise<CreateResult> {
+export async function createMe(body: { handle: string; inviteCode?: string | null; referralCode?: string | null; displayName?: string | null }): Promise<CreateResult> {
   try {
-    const r = await authed('/me', { method: 'POST', body: JSON.stringify({ ...body, inviteCode: body.inviteCode || undefined }) });
+    const r = await authed('/me', { method: 'POST', body: JSON.stringify({ ...body, inviteCode: body.inviteCode || undefined, referralCode: body.referralCode || undefined }) });
     if (r.ok) return { ok: true, member: ((await r.json()) as { member: Member }).member };
     const err = await readError(r);
     return { ok: false, error: err ?? { code: 'unavailable', message: 'Sign-up is not open yet. Try again soon.' } };
