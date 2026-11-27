@@ -71,6 +71,7 @@ export default defineConfig({
             'agents/quickstart',
             'agents/mcp',
             'agents/memory',
+            'agents/paid-data',
             {
               label: 'API reference',
               items: [

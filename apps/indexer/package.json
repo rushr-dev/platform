@@ -15,6 +15,9 @@
     "@rushr/core": "workspace:*",
     "@rushr/db": "workspace:*",
     "@rushr/trade": "workspace:*",
+    "@x402/core": "2.32.0",
+    "@x402/evm": "2.32.0",
+    "@x402/hono": "2.32.0",
     "hono": "^4.13.17",
     "postgres": "^4.1.0",
     "viem": "^2.57.17"

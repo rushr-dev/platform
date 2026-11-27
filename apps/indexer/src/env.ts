@@ -31,6 +31,12 @@ export interface Env {
   FOMO_POLL_MINUTES?: string;
   /** Cap on pools in the pair-swap socket subscription (default 75). */
   PAIR_SUB_MAX?: string;
+  /** x402 paid data (x402.ts): Priors facilitator merchant key (secret). Unset = paid routes answer 503. */
+  PRIORS_API_KEY?: string;
+  /** Where x402 payments go (USDG on Robinhood Chain): the address registered with the facilitator. */
+  X402_PAY_TO?: string;
+  /** Facilitator base URL (default https://facilitator.priors.trade). */
+  X402_FACILITATOR_URL?: string;
   CHAIN_POLLER: DurableObjectNamespace<ChainPoller>;
   LIVE_FEED: DurableObjectNamespace<LiveFeed>;
   BACKFILLER: DurableObjectNamespace<Backfiller>;

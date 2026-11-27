@@ -19,6 +19,7 @@ import { v1, adminV1 } from './agents/app';
 import { LLMS_TXT } from '@rushr/agents/llms-txt';
 import { CONFIRM_DELAYS_S, confirmTrade, sweepStuckTrades, trades } from './ledger';
 import { cashback } from './cashback';
+import { x402 } from './x402';
 import { PAUSED_REQUEUE_S, isPaused, readPause, writePause } from './pause';
 import { pendingSupply, pendingSupplyCount, refreshSupply } from './supply';
 import { reattributeSwaps } from './attribution';
@@ -494,6 +495,8 @@ app.route('/v1', v1);
 // Agents' admin endpoints, behind the /admin/* ADMIN_TOKEN check above.
 app.route('/admin/agents', adminV1);
 
+// x402 paid data (x402.ts): before the free API so /x402/* is matched here first.
+app.route('/', x402);
 app.route('/', api);
 
 /** Agent instructions (packages/agents/llms.txt), also served at rushr.trade/llms.txt. */

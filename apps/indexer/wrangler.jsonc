@@ -49,6 +49,9 @@
   "triggers": { "crons": ["* * * * *"] },
   "vars": {
     "CHAIN_ID": "4663",
+    // x402 paid data (src/x402.ts): USDG on Robinhood Chain, settled by the Priors facilitator. Payments go to this
+    // x402 treasury (registered with Priors). The merchant key is a secret: wrangler secret put PRIORS_API_KEY.
+    "X402_PAY_TO": "0x8422C2baF5538CC7681607e4Bb5c22e005D8DE32",
     "BLOCKSCOUT_API": "https://robinhoodchain.blockscout.com/api/v2",
     // Stream v3/v2 swaps of the busiest tracked pools (address-filtered, max 500) over the socket.
     // Approved 2026-11-12 at ~+4.3 GB/month; measured bytes are in /health live.socketBytes.
